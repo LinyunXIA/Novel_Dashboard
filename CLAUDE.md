@@ -52,3 +52,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **先读再改**：改任何人物/资产/账户/事件文件前，先读对应文件与 `时间线.md`，遵循其既有的表格格式与数值口径。
 - **改后必同步**：新增/修改档案或数据后，更新 `时间线.md` 的对应 decade 条目与"最后更新"日期，保持事件链完整。
 - 不确定某一设定是否已有 canon 时，先 `/webnovel-query` 查证，不要凭记忆新造设定。
+
+---
+
+## 项目是双层：写作线 + Dashboard 工程线
+
+本仓库同时承载**两条线**，上方 `项目性质`/`Design_Folder 结构` 描述的是**写作线**；另有 **Dashboard 数据工程线**（开发中）：
+
+- **写作线**：`Design_Folder/` 创作素材（走 webnovel-writer 插件，数值纪律见上，沿用原规则）。
+- **Dashboard 工程线**：一个**本地网文创作数据 Dashboard**（Postgres + FastAPI + ingest(Python) + React+Vite），把创作草稿解析→可视化，并提供界面更新数据能力（源 md 只读）。
+
+**权威文档（开发以此为准，先读再改）**：
+- `docs/PRD-webnovel-dashboard.md` —— 需求（分阶段导入、收益挂账、四类 UI 改数据操作、资产模型）
+- `docs/DESIGN-webnovel-dashboard.md` —— 技术设计（DDL、ingest、增量重算、健康校验、LLM 搜索、**开发功能清单 §20**）
+- `docs/ui-mockup/index.html` —— 10 屏 UI 原型
+
+**Dash价值前已锁定的核心约束（详见 DESIGN，此处仅指针）**：
+- 源 md（`Design_Folder/`）只读、绝不回写；数据更新走文件导入 + 少量 UI 派生。
+- 账务本金记账、展示层才折算 USD；BEF/LUF/NLG 2002 关池转 EUR；收益文件模块化挂账。
+- 开发进度以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单（状态图例 ⬜/🟨/✅）为准，完成一项勾一项。
+
+**仓库与 git**：
+- `Design_Folder/`（创作素材）已被 `.gitignore` 排除，**不入 git、不提交**；仅 `docs/` + `CLAUDE.md` + `.gitignore` 入版本库。
+- 远程：`origin` → github.com/LinyunXIA/Novel_Dashboard（private）。
