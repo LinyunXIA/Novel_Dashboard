@@ -804,7 +804,7 @@ class Importer(Protocol):
 
 | 编号 | 模块 | 功能 | 关键章节 | 状态 |
 |---|---|---|---|---|
-| F-P0-01 | **工程骨架** | config 三环境 / db / alembic 迁移 / ingest CLI | §3–§4 | ⬜ |
+| F-P0-01 | **工程骨架** | config 三环境 / db / alembic 迁移 / ingest CLI | §3–§4 | ✅ |
 | F-P0-02 | **Ingest** | detect 类别识别 + 解析器(bank/股票表/汇率/人物/时间线) + normalize | §6 | ⬜ |
 | F-P0-03 | **Ingest** | 导入前冲突检测 hard-block（conflict.py，§11.4 + 金额/余额等） | §11.4 | ⬜ |
 | F-P0-04 | **Phase1 摄入** | 初始资产建档(initial_asset) + 现金进余额 | §6.5 | ⬜ |
