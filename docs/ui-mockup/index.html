@@ -167,7 +167,7 @@
   <!-- 全局日历游标（E）：全 App 生效 · 可精确到年-月-日；源数据缺粒度按规则补全 -->
   <div class="panel" style="margin:16px 0 18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
     <div style="flex:1;min-width:300px">
-      <div class="label">全局日历游标 · 截至日期节点（全 App 生效 · 日历年，无财年）</div>
+      <div class="label">全局日历游标 · 截至日期节点（范围 1947–2026 · 全 App 生效 · 日历年，无财年）</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
         <select id="calYear" style="padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink);font-size:13px"></select>
         <select id="calMonth" style="padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink);font-size:13px"></select>
@@ -420,7 +420,7 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <select class="btn"><option>实体：Henri（人物）</option><option>实体：Peeters Luxembourg（公司）</option><option>实体：Frederik（人物）</option></select>
         <select class="btn"><option>全部</option><option>收入</option><option>支出</option></select>
-        <input type="range" min="1973" max="2025" value="2001" style="flex:1;max-width:280px" /><span class="mono" style="font-size:12px;color:var(--muted)">2001</span>
+        <input type="range" min="1947" max="2026" value="2001" style="flex:1;max-width:280px" /><span class="mono" style="font-size:12px;color:var(--muted)">2001</span>
       </div>
       <table>
         <tr><th>年份</th><th>归属</th><th>收支</th><th>条目</th><th class="num">金额</th><th>币种</th></tr>
@@ -480,7 +480,7 @@
         <table>
           <tr><td>受影响起点年</td><td class="num mono">2001</td></tr>
           <tr><td>受影响账户</td><td class="num">Frederik(荷兰) / Henri 等</td></tr>
-          <tr><td>重算范围</td><td class="num">2001 → 2025</td></tr>
+          <tr><td>重算范围</td><td class="num">2001 → 2026</td></tr>
           <tr><td>派生数据</td><td class="num">wealth + snapshot（含 2002 关池后）</td></tr>
         </table>
       </div>
@@ -556,8 +556,8 @@
   const pad = n => String(n).padStart(2,'0');
   function daysIn(y,m){ return new Date(y, m, 0).getDate(); } // m 为 1-12
 
-  // 填充年份 1973–2025
-  for(let y=2025; y>=1973; y--){
+  // 填充年份（全程：最早 1947 最晚 2026）
+  for(let y=2026; y>=1947; y--){
     const o=document.createElement('option'); o.value=y; o.textContent=y+' 年'; calY.appendChild(o);
   }
   // 填充月份
