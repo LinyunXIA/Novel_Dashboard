@@ -164,19 +164,22 @@
     <button class="tab" data-t="import">导入状态</button>
   </div>
 
-  <!-- 全局日历游标（E）：全 App 生效 -->
+  <!-- 全局日历游标（E）：全 App 生效 · 可精确到年-月-日；源数据缺粒度按规则补全 -->
   <div class="panel" style="margin:16px 0 18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div style="flex:1;min-width:280px">
-      <div class="label">全局日历游标 · 截至日期节点（全 App 生效）</div>
-      <div style="display:flex;align-items:center;gap:14px">
-        <span class="mono" style="font-size:24px;font-weight:650">2001-12-30</span>
-        <input type="range" min="1973" max="2025" value="2001" style="flex:1" />
-        <span class="mono" style="color:var(--muted)">2025-12-30</span>
+    <div style="flex:1;min-width:300px">
+      <div class="label">全局日历游标 · 截至日期节点（全 App 生效 · 日历年，无财年）</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <select id="calYear" style="padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink);font-size:13px"></select>
+        <select id="calMonth" style="padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink);font-size:13px"></select>
+        <select id="calDay" style="padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink);font-size:13px"></select>
+        <span class="mono" style="font-size:24px;font-weight:650" id="calDisplay">2001-12-30</span>
       </div>
-      <div style="font-size:11px;color:var(--muted)">拖动后：所有 人物/公司/财务/曲线/投资 屏统一显示「截至该日」状态</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px" id="calHint">
+        源数据仅给「2001 年」→ 按默认规则补全为 <b>2001-12-30</b>。任意 人物/公司/财务/曲线/投资 屏统一显示「截至该日」状态。
+      </div>
     </div>
     <div style="font-size:11px;color:var(--muted);max-width:300px">
-      币种生命周期：<b>BEF/LUF/NLG 于 2002-01-01 关池转 EUR</b>（只读历史可回溯）。日期默认规则：仅年份→12-30。
+      币种生命周期：<b>BEF/LUF/NLG 于 2002-01-01 关池转 EUR</b>（只读历史可回溯）。日期规则：仅年份→12-30（年初→01-01）；年+月→该月底（月初→1日）；上/中/下旬→1/11/21。
     </div>
   </div>
 
@@ -543,6 +546,53 @@
   function applyTheme(mode){ root.setAttribute('data-theme', mode); bt.textContent = mode === 'dark' ? '亮色' : '暗色'; }
   bt.addEventListener('click', () => applyTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
   applyTheme('light');
+
+  // ===== 全局日历（可精确到年-月-日；源数据缺粒度按 §6.2 默认规则补全）=====
+  const calY = document.getElementById('calYear'),
+        calM = document.getElementById('calMonth'),
+        calD = document.getElementById('calDay'),
+        calShow = document.getElementById('calDisplay'),
+        calHint = document.getElementById('calHint');
+  const pad = n => String(n).padStart(2,'0');
+  function daysIn(y,m){ return new Date(y, m, 0).getDate(); } // m 为 1-12
+
+  // 填充年份 1973–2025
+  for(let y=2025; y>=1973; y--){
+    const o=document.createElement('option'); o.value=y; o.textContent=y+' 年'; calY.appendChild(o);
+  }
+  // 填充月份
+  for(let m=1; m<=12; m++){
+    const o=document.createElement('option'); o.value=m; o.textContent=m+' 月'; calM.appendChild(o);
+  }
+  calY.value=2001; calM.value=12;
+
+  // 依据选择的年+月，重新填充「日」下拉【特征：只有 源数据 可能缺具体日】
+  function fillDays(){
+    const y=+calY.value, m=+calM.value, dm=daysIn(y,m);
+    const curSel=+calD.value;
+    calD.innerHTML='';
+    for(let d=1; d<=dm; d++){
+      const o=document.createElement('option'); o.value=d; o.textContent=d+' 日';
+      calD.appendChild(o);
+    }
+    // 默认落到规则补全的日（源只给年月→该月月底；给年份→当年 12-30 由 calHint 说明）
+    calD.value=Math.min(curSel||dm, dm);
+  }
+  function renderCal(){
+    const y=+calY.value, m=+calM.value, d=+calD.value;
+    calShow.textContent = `${y}-${pad(m)}-${pad(d)}`;
+    // 源数据缺粒度的规则补全说明（演示：仅年份→12-30；年+月→月底；含月初/旬标注）
+    let note;
+    const last=daysIn(y,m);
+    if(d===last && d!==30) note=`源数据可能仅给「${y} 年 ${m} 月」→ 按默认规则补全为该月月底 <b>${y}-${pad(m)}-${pad(d)}</b>。`;
+    else if(d===30) note=`源数据可能仅给「${y} 年」→ 按默认规则补全为 <b>${y}-12-30</b>（年末结算日）。`;
+    else if(d===1) note=`源数据标注「${y} 年 ${m} 月初」→ 按规则取该月 <b>${y}-${pad(m)}-01</b>。`;
+    else note=`当前为精确日期 <b>${y}-${pad(m)}-${pad(d)}</b>（源数据已给到这一日）。`;
+    calHint.innerHTML='源数据缺粒度→按默认规则补全：'+note+'（全 App 屏统一按此 as-of 日显示）。';
+  }
+  [calY,calM].forEach(s=>s.addEventListener('change',()=>{fillDays(); renderCal();}));
+  calD.addEventListener('change', renderCal);
+  fillDays(); renderCal();
 </script>
 </body>
 </html>
