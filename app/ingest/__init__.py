@@ -1,0 +1,1 @@
+"""recette 包：文件→类别→解析→归一化（DESIGN §6）。CLI: python -m app.ingest.main。"""

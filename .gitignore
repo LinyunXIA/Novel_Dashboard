@@ -4,6 +4,16 @@ Design_Folder/
 # Python 虚拟环境（空，无依赖）
 .venv/
 
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 数据输入/覆盖层目录（仅保留目录占位 .gitkeep）
+data/
+!data/
+!data/*/
+!data/**/.gitkeep
+
 # macOS
 .DS_Store
 
