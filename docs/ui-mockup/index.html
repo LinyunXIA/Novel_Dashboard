@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>网文创作数据 Dashboard — UI Mockup</title>
+<style>
+  /* ===== dataviz 设计系统变量（light / dark 两套） ===== */
+  :root { color-scheme: light; }
+  .viz {
+    --surface-1: #fcfcfb;      /* 图表面 */
+    --page: #f9f9f7;           /* 页面底 */
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+    --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --ok-text:#006300;
+    --card:hsl(0 0% 100% / .65);
+    --border:rgba(11,11,11,.10);
+    --shadow:0 1px 2px rgba(11,11,11,.05), 0 4px 14px rgba(11,11,11,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz {
+      color-scheme: dark; --surface-1:#1a1a19; --page:#0d0d0d; --ink:#fff;
+      --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+      --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+      --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+      --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b; --ok-text:#0ca30c;
+      --card:hsl(0 0% 9% / .6); --border:rgba(255,255,255,.10);
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] .viz {
+    color-scheme: dark; --surface-1:#1a1a19; --page:#0d0d0d; --ink:#fff;
+    --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b; --ok-text:#0ca30c;
+    --card:hsl(0 0% 9% / .6); --border:rgba(255,255,255,.10);
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--page); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .viz { min-height:100vh; padding:20px clamp(12px,3vw,40px) 60px; }
+
+  /* ===== 顶栏 ===== */
+  .topbar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:6px 2px 14px; }
+  .brand { display:flex; align-items:baseline; gap:10px; }
+  .brand h1 { font-size:17px; font-weight:650; }
+  .brand .env { font-size:12px; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+  .nav { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .tab { border:1px solid var(--border); background:var(--card); color:var(--ink-2);
+         padding:7px 12px; border-radius:999px; font-size:13px; cursor:pointer; }
+  .tab:hover { color:var(--ink); }
+  .tab[aria-selected="true"] { background:var(--ink); color:var(--page); border-color:var(--ink); }
+  .spacer { flex:1; }
+  .toggle { font-size:12px; color:var(--ink-2); }
+  .toggle button { background:none; border:1px solid var(--border); color:var(--ink-2);
+        border-radius:8px; padding:5px 10px; font-size:12px; cursor:pointer; }
+
+  /* ===== 提示横幅（第 7 项需求：全局重算提示） ===== */
+  .banner { display:flex; gap:10px; align-items:flex-start; border-radius:12px; padding:10px 14px; margin:0 0 16px;
+            border:1px solid var(--border); background:var(--surface-1); box-shadow:var(--shadow); }
+  .banner .dot { width:9px; height:9px; border-radius:50%; margin-top:6px; background:var(--warn); flex:none; }
+  .banner b { font-size:13px; }
+  .banner p { color:var(--ink-2); font-size:12px; margin-top:2px; }
+  .banner .acts { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .btn { border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--ink);
+         padding:5px 12px; font-size:12px; cursor:pointer; }
+  .btn.primary { background:var(--ink); color:var(--page); border-color:var(--ink); }
+  .btn.ghost { background:none; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; }
+  .pill.ok { background:color-mix(in srgb, var(--good) 15%, transparent); color:var(--ok-text); }
+  .pill.warn{ background:color-mix(in srgb, var(--warn) 18%, transparent); color:var(--ink); }
+  .pill.crit{ background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+
+  /* ===== 高度指标 / 面板 ===== */
+  .hero { background:var(--surface-1); border:1px solid var(--border); border-radius:16px;
+          padding:18px 20px; box-shadow:var(--shadow); }
+  .hero .label { font-size:12px; color:var(--ink-2); }
+  .hero .fig { font-size:34px; font-weight:650; margin-top:2px; }
+  .hero .fig .unit { font-size:14px; color:var(--ink-2); font-weight:500; }
+  .hero .sub { font-size:12px; color:var(--muted); margin-top:4px; font-variant-numeric:tabular-nums; }
+
+  .grid { display:grid; gap:14px; }
+  .stats { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+  .cols2 { grid-template-columns: repeat(auto-fit,minmax(340px,1fr)); }
+
+  .panel { background:var(--surface-1); border:1px solid var(--border); border-radius:14px;
+           padding:16px 18px; box-shadow:var(--shadow); }
+  .panel h3 { font-size:14px; font-weight:650; margin-bottom:2px; }
+  .panel .hint { font-size:11px; color:var(--muted); margin-bottom:12px; }
+
+  /* 图表占位 */
+  .plot { border:1px dashed var(--axis); border-radius:10px; height:200px; position:relative;
+          display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px;
+          background:repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 28px); }
+  .plot svg { position:absolute; inset:0; width:100%; height:100%; }
+  .plot .ph { position:relative; z-index:2; padding:4px 10px; border-radius:6px; background:var(--page); border:1px solid var(--border); }
+
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:550; padding:6px 8px; border-bottom:1px solid var(--axis); }
+  td { padding:6px 8px; border-bottom:1px solid var(--grid); font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:none; }
+  .num { text-align:right; }
+  .mono { font-variant-numeric:tabular-nums; }
+
+  .cal { font-variant-numeric:tabular-nums; }
+  input[type=range]{ width:100%; accent-color:var(--s1); }
+  .mesh { display:flex; gap:14px; align-items:center; }
+  .mesh span { font-size:12px; color:var(--ink-2); }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--ink-2); margin-top:10px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+
+  .screen { display:none; }
+  .screen.active { display:block; animation:fade .18s ease; }
+  @keyframes fade { from{opacity:0; transform:translateY(3px);} to{opacity:1; transform:none;} }
+
+  .diff { font-size:12px; font-family:ui-monospace,Menlo,Consolas,monospace; border-radius:10px;
+          background:var(--page); border:1px solid var(--border); padding:10px 12px; white-space:pre; overflow-x:auto; line-height:1.7; }
+  .diff .add { color:var(--good); } .diff .del { color:var(--crit); text-decoration:line-through; }
+  .diff .ctx { color:var(--muted); }
+  .badges { display:flex; gap:6px; flex-wrap:wrap; }
+
+  .gtitle { font-size:12px; color:var(--ink-2); margin:0 0 8px; }
+  .tag { font-size:11px; padding:3px 9px; border-radius:7px; color:var(--ink-2); border:1px solid var(--border); display:inline-block; }
+</style>
+</head>
+<body>
+<div class="viz" data-theme-slot>
+  <div class="topbar">
+    <div class="brand">
+      <h1>网文创作数据 Dashboard</h1>
+      <span class="env">env: <b>prod</b> · 数据源：Design_Folder（只读）</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="toggle">主题 <button id="themeBtn">暗色</button></div>
+  </div>
+
+  <div class="nav" id="nav" role="tablist">
+    <button class="tab" data-t="dashboard" aria-selected="true">Dashboard</button>
+    <button class="tab" data-t="search">搜索</button>
+    <button class="tab" data-t="persons">人物图谱</button>
+    <button class="tab" data-t="companies">公司图谱</button>
+    <button class="tab" data-t="returns">收益曲线</button>
+    <button class="tab" data-t="finance">财务收支</button>
+    <button class="tab" data-t="timeline">编年史</button>
+    <button class="tab" data-t="diff">文件 diff 决策</button>
+    <button class="tab" data-t="health">健康校验</button>
+    <button class="tab" data-t="import">导入状态</button>
+  </div>
+
+  <!-- 全局日历游标（E）：全 App 生效 -->
+  <div class="panel" style="margin:16px 0 18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div style="flex:1;min-width:280px">
+      <div class="label">全局日历游标 · 截至日期节点（全 App 生效）</div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <span class="cal" style="font-size:24px;font-weight:650">1995-12-30</span>
+        <input type="range" min="1973" max="2025" value="1995" style="flex:1" />
+        <span class="cal" style="color:var(--muted)">2025-12-30</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">拖动后：所有 人物/公司/财务/曲线 屏统一显示「截至该日」状态</div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);max-width:300px">
+      日期默认规则：仅年份→12-30（年初→01-01）；年月→月底（月初→1日）；上/中/下旬→1/11/21。源数据超出规则→提醒并补齐规则。
+    </div>
+  </div>
+
+  <!-- ═══════════ ① Dashboard ═══════════ -->
+  <section class="screen active" id="screen-dashboard">
+    <!-- 全局重算提示（非阻断横幅） -->
+    <div class="banner">
+      <span class="dot"></span>
+      <div>
+        <b>数据已更新 · 已在全局重算财富与派生数据（自 1995 年 起）</b>
+        <p>数据调整员导入了《泰坦尼克号.md》→ 首笔影响 1995 年支出 · 范围：Family Asset / 家族合计等 6 项已更新</p>
+      </div>
+      <div class="acts"><button class="btn ghost">查看影响</button><button class="btn">知道了</button></div>
+    </div>
+
+    <div class="hint" style="margin:-4px 0 14px">日历游标已移至顶部【全局栏】，全 App 生效。以下各屏数值均为「截至全局所选日期」。</div>
+
+    <div class="grid stats">
+      <div class="hero"><div class="label">家族总资产（1995 · 折 USD）</div><div class="fig">117.8<span class="unit"> 亿</span></div><div class="sub">Peeters Luxembourg 等合并 ▲ 12.4%（同比）</div></div>
+      <div class="hero"><div class="label">活跃账户 / 币种</div><div class="fig">14<span class="unit"> 个 / 6</span></div><div class="sub">BEF · LUF · NLG · DKK · SEK · USD</div></div>
+      <div class="hero"><div class="label">风险仓位 R5（2×杠杆）</div><div class="fig">62.8<span class="unit"> %</span></div><div class="sub">1989–1995 累计杠杆生效</div></div>
+      <div class="hero"><div class="label">健康校验</div><div class="fig" style="font-size:26px">2<span class="unit"> 项待处理</span></div><div class="sub"><span class="pill warn">1 断链</span> <span class="pill warn">1 余额不连续</span></div></div>
+    </div>
+
+    <div class="grid cols2" style="margin-top:14px">
+      <div class="panel">
+        <h3>家族财富随时间</h3><div class="hint">按账户 × 币种 · 自动汇率归并到 USD · ECharts 占位</div>
+        <div class="plot">
+          <svg viewBox="0 0 600 200" preserveAspectRatio="none">
+            <polyline points="30,175 120,168 210,150 300,150 390,120 480,104 570,78" fill="none" stroke="var(--s1)" stroke-width="2.5"/>
+            <polyline points="30,181 120,177 210,166 300,168 390,150 480,144 570,128" fill="none" stroke="var(--s2)" stroke-width="2" stroke-dasharray="4 4"/>
+          </svg>
+          <span class="ph">财富曲线占位（ECharts）</span>
+        </div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Family 合并</span><span><i style="background:var(--s2)"></i>个人账户</span></div>
+      </div>
+      <div class="panel">
+        <h3>2025 年末资产构成（按币种）</h3><div class="hint">USD / EUR / HKD 等 · 环形占位</div>
+        <div class="plot"><svg viewBox="0 0 600 200" preserveAspectRatio="none">
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s1)" stroke-width="30" stroke-dasharray="140 300" transform="rotate(-90 300 100)"/>
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s2)" stroke-width="30" stroke-dasharray="95 300" transform="rotate(36 300 100)"/>
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s3)" stroke-width="30" stroke-dasharray="48 300" transform="rotate(165 300 100)"/>
+        </svg><span class="ph">构成环形占位</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ② 搜索 ═══════════ -->
+  <section class="screen" id="screen-search">
+    <div class="panel">
+      <h3>统一搜索 <span class="pill warn">功能占位 · 待 LLM + RAG</span></h3><div class="hint">本轮不实现后端逻辑；后续与 LLM + embedding 结合。以下为示意。</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px">
+        <input placeholder="输入关键词，如「1990s」「皮克斯」「迪士尼」" style="flex:1;min-width:220px;padding:9px 12px;border-radius:9px;border:1px solid var(--axis);background:var(--page);color:var(--ink)" />
+        <select class="btn"><option>全部类型</option><option>时间线</option><option>台账</option><option>收益</option><option>人物</option></select>
+        <button class="btn primary">搜索</button>
+      </div>
+      <div class="gtitle">结果 · 示例（“皮克斯”）</div>
+      <table>
+        <tr><th>类型</th><th>命中</th><th>时间</th><th>来源</th><th class="num">相关金额</th></tr>
+        <tr><td><span class="tag">事件·股票</span></td><td>皮克斯首期投资</td><td>1991-12-31</td><td>股票/PIXR.md</td><td class="num">1,000 万USD</td></tr>
+        <tr><td><span class="tag">时间线</span></td><td>Pixar 首期投资</td><td>1992</td><td>时间线.md</td><td class="num">—</td></tr>
+        <tr><td><span class="tag">图谱</span></td><td>皮克斯 → 迪士尼（换股 1:2.3）</td><td>2006</td><td>关系图谱</td><td class="num">377,400 万USD</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════ ③ 人物图谱 ═══════════ -->
+  <section class="screen" id="screen-persons">
+    <div class="panel">
+      <h3>人物图谱</h3><div class="hint">人—人 · 人—公司/资产 · 可拖拽缩放（ECharts graph 占位）</div>
+      <div class="plot" style="height:440px">
+        <svg viewBox="0 0 700 440" preserveAspectRatio="xMidYMid meet">
+          <line x1="350" y1="220" x2="150" y2="90" stroke="var(--axis)"/><line x1="350" y1="220" x2="190" y2="360" stroke="var(--axis)"/>
+          <line x1="350" y1="220" x2="540" y2="120" stroke="var(--axis)"/><line x1="150" y1="90" x2="540" y2="120" stroke="var(--axis)"/>
+          <circle cx="350" cy="220" r="34" fill="var(--s1)"/><text x="350" y="225" text-anchor="middle" fill="#fff" font-size="12">Stijn</text>
+          <circle cx="150" cy="90" r="26" fill="var(--s3)"/><text x="150" y="95" text-anchor="middle" fill="#fff" font-size="11">祖父</text>
+          <circle cx="190" cy="360" r="26" fill="var(--s7)"/><text x="190" y="365" text-anchor="middle" fill="#fff" font-size="11">Maaike</text>
+          <circle cx="540" cy="120" r="26" fill="var(--s2)"/><text x="540" y="125" text-anchor="middle" fill="#fff" font-size="11">养父</text>
+        </svg>
+        <span class="ph">人物图谱占位（ECharts graph）</span>
+      </div>
+      <div class="legend"><span><i style="background:var(--s1)"></i>主角</span><span><i style="background:var(--s3)"></i>长辈</span><span><i style="background:var(--s2)"></i>养父母</span><span><i style="background:var(--s7)"></i>同代</span></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ④ 公司图谱 + 外部导入 ═══════════ -->
+  <section class="screen" id="screen-companies">
+    <div class="grid cols2">
+      <div class="panel">
+        <h3>公司图谱</h3><div class="hint">公司—公司 · 并购 / 换股 / 分拆链 · 公司只增不减、带 status</div>
+        <div class="plot" style="height:360px">
+          <svg viewBox="0 0 600 360" preserveAspectRatio="xMidYMid meet">
+            <line x1="130" y1="180" x2="320" y2="90" stroke="var(--axis)"/><line x1="130" y1="180" x2="320" y2="270" stroke="var(--axis)"/>
+            <line x1="320" y1="90" x2="490" y2="180" stroke="var(--s8)" stroke-width="2"/>
+            <rect x="60" y="150" width="140" height="60" rx="10" fill="var(--s3)"/><text x="130" y="180" text-anchor="middle" fill="#fff" font-size="11">皮克斯</text>
+            <rect x="250" y="60" width="140" height="60" rx="10" fill="var(--s1)"/><text x="320" y="90" text-anchor="middle" fill="#fff" font-size="11">迪士尼</text>
+            <rect x="250" y="240" width="140" height="60" rx="10" fill="var(--s7)"/><text x="320" y="270" text-anchor="middle" fill="#fff" font-size="11">福克斯</text>
+            <text x="407" y="180" font-size="10" fill="var(--ink-2)">1:2.3 换股</text>
+          </svg>
+          <span class="ph">公司图谱占位</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>公司与用工成本外部系统</h3><div class="hint">外部系统 · 2 个独立 API（细节开发时定）</div>
+
+        <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:650">API① 公司基础信息</div>
+          <div style="font-size:11px;color:var(--ink-2);margin:2px 0 8px">拉取权威公司信息 → 图谱 · 只增不减 · 带 status</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input placeholder="ticker：AAPL,DIS,GE" style="flex:1;min-width:150px;padding:7px 10px;border-radius:8px;border:1px solid var(--axis);background:var(--page);color:var(--ink)" />
+            <button class="btn primary">获取 / 导入（UI 用户可点）</button>
+          </div>
+        </div>
+
+        <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+          <div style="font-size:12px;font-weight:650">API② 用工成本计算</div>
+          <div style="font-size:11px;color:var(--ink-2);margin:2px 0 8px">提交本地逐年「用工成本+税率」→ 外部返回当年各公司用工成本支出 → 计入各公司支出</div>
+          <button class="btn">提交并拉取各公司用工成本支出</button>
+        </div>
+
+        <table>
+          <tr><th>公司</th><th>status</th><th class="num">用工成本支出(当年)</th><th>导入</th></tr>
+          <tr><td>苹果 AAPL</td><td><span class="pill ok">active</span></td><td class="num">—</td><td><span class="pill ok">已入库</span></td></tr>
+          <tr><td>迪士尼 DIS</td><td><span class="pill ok">active</span></td><td class="num">—</td><td><span class="pill ok">已入库</span></td></tr>
+          <tr><td>皮克斯 PIXR</td><td><span class="pill warn">已退市</span></td><td class="num">—</td><td><span class="pill crit">失败 · 需人工</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑤ 收益曲线 ═══════════ -->
+  <section class="screen" id="screen-returns">
+    <div class="panel">
+      <h3>各国收益曲线（R1–R5）</h3><div class="hint">国家 × 风险级 × 年份 · 同比曲线 · ECharts 占位</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select class="btn"><option>比利时</option><option>美国</option><option>英国</option><option>香港</option><option>中国</option></select>
+        <span class="legend" style="margin:0"><span><i style="background:var(--s1)"></i>R1</span><span><i style="background:var(--s3)"></i>R3</span><span><i style="background:var(--s8)"></i>R5</span></span>
+      </div>
+      <div class="plot" style="height:300px">
+        <svg viewBox="0 0 700 300" preserveAspectRatio="none">
+          <polyline points="20,250 80,240 140,255 200,150 260,90 320,120 380,60 440,95 500,70 560,85 620,45 680,58" fill="none" stroke="var(--s1)" stroke-width="2.5"/>
+          <polyline points="20,200 80,160 140,210 200,120 260,95 320,150 380,70 440,130 500,88 560,140 620,55 680,110" fill="none" stroke="var(--s3)" stroke-width="2" stroke-dasharray="4 4"/>
+          <polyline points="20,120 80,180 140,60 200,140 260,200 320,40 380,160 440,90 500,170 560,30 620,150 680,70" fill="none" stroke="var(--s8)" stroke-width="2"/>
+        </svg>
+        <span class="ph">各国收益曲线占位</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑥ 财务收支 ═══════════ -->
+  <section class="screen" id="screen-finance">
+    <div class="panel">
+      <h3>财务收支</h3><div class="hint">以实体为中心 · 始终归属于某个人或某家公司</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select class="btn"><option>实体：皮克斯（公司）</option><option>实体：泰坦尼克（公司）</option><option>实体：Henri（人物）</option></select>
+        <select class="btn"><option>全部</option><option>收入</option><option>支出</option></select>
+        <input type="range" min="1973" max="2025" value="2001" style="flex:1;max-width:280px" /><span class="mono" style="font-size:12px;color:var(--muted)">2001</span>
+      </div>
+      <table>
+        <tr><th>年份</th><th>归属</th><th>收支</th><th>条目</th><th class="num">金额</th><th>币种</th></tr>
+        <tr><td class="mono">2001</td><td>皮克斯（公司）</td><td><span class="pill ok">收入</span></td><td>回购员工股权-3%</td><td class="num">6,600</td><td>万USD</td></tr>
+        <tr><td class="mono">1995</td><td>泰坦尼克（公司）</td><td><span class="pill warn">支出</span></td><td>北美观池首期注资</td><td class="num">3,000</td><td>万美元</td></tr>
+        <tr><td class="mono">2001</td><td>Henri（人物）</td><td><span class="pill ok">收入</span></td><td>祖产债券股息</td><td class="num">3.08</td><td>万BEF</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑦ 编年史（UI 可编辑） ═══════════ -->
+  <section class="screen" id="screen-timeline">
+    <div class="banner" style="border-color:var(--s3)">
+      <span class="dot" style="background:var(--good)"></span>
+      <div><b>编年史编辑：仅此屏可写用户数据 md 覆盖层</b><p>其余数据由数据调整员通过文件导入维护 · 本屏写 <span class="mono">data/overlay/编年史.md</span>，不改源</p></div>
+    </div>
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">编年史 / 时间线</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn">＋ 新增条款</button>
+          <button class="btn">看差异（覆盖层 vs 源）</button>
+          <button class="btn">重置回源</button>
+          <button class="btn primary">以源为最新</button>
+        </div>
+      </div>
+      <table>
+        <tr><th>年份</th><th>事件</th><th>备注</th><th>来源</th></tr>
+        <tr><td class="mono">1988-08-10</td><td>Stijn 步入 Spa 祖宅，正式加入大家庭</td><td>—</td><td><span class="tag">源</span></td></tr>
+        <tr style="background:color-mix(in srgb, var(--s3) 8%, transparent)"><td class="mono">1995</td><td>泰坦尼克 首笔注资（外部事件补充）</td><td>UI 覆盖层新增</td><td><span class="tag" style="color:var(--s3);border-color:var(--s3)">覆盖层</span></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑧ 文件 diff 决策 ═══════════ -->
+  <section class="screen" id="screen-diff">
+    <div class="banner">
+      <span class="dot"></span>
+      <div><b>数据调整员更新了已存在文件：基准/事件/电影/泰坦尼克.md</b>
+        <p>请选择处理方式——「更新数据源」将采纳新版本并重算；「返回上个版本」将 DB 与磁盘文件一同复原。</p></div>
+      <div class="acts"><button class="btn primary">更新数据源</button><button class="btn" style="border-color:var(--crit);color:var(--crit)">返回上个版本</button></div>
+    </div>
+    <div class="grid cols2">
+      <div class="panel">
+        <h3>版本 diff · 旧 vs 新</h3><div class="hint">+ 新增 · − 删除 · 灰=上下文</div>
+        <div class="diff">- 二、逐年现金流表
+- | 年份 | 当年分红 |
+- | 1995 | 0 |
++ 二、逐年现金流表
++ | 年份 | 当年分红 |
++ | 1995 | 3,000 |   <span class="add">← 首笔支出 1995 起算</span>
+  <span class="ctx">（后续至 2025 行不变…）</span></div>
+      </div>
+      <div class="panel">
+        <h3>影响预览</h3><div class="hint">采纳后将触发增量重算（自 1995 年起）</div>
+        <table>
+          <tr><td>受影响起点年</td><td class="num mono">1995</td></tr>
+          <tr><td>受影响账户</td><td class="num">Family Asset / 皮克斯</td></tr>
+          <tr><td>重算范围</td><td class="num">1995 → 2025</td></tr>
+          <tr><td>派生数据</td><td class="num">财富曲线 + 逐年快照</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑨ 健康校验 ═══════════ -->
+  <section class="screen" id="screen-health">
+    <div class="grid cols2">
+      <div class="panel">
+        <h3>健康校验汇总</h3><div class="hint">时间线对齐 · 金额一致 · 汇率链 · 复利/杠杆 · 断链</div>
+        <table>
+          <tr><th>规则</th><th class="num">状态</th></tr>
+          <tr><td>H1 时间线对齐</td><td class="num"><span class="pill ok">通过</span></td></tr>
+          <tr><td>H2 金额一致</td><td class="num"><span class="pill warn">1 偏差</span></td></tr>
+          <tr><td>H3 汇率链自洽</td><td class="num"><span class="pill ok">通过</span></td></tr>
+          <tr><td>H4 余额连续</td><td class="num"><span class="pill warn">1 断点</span></td></tr>
+          <tr><td>H5 断链</td><td class="num"><span class="pill warn">1 孤儿引用</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>问题清单</h3><div class="hint"></div>
+        <table>
+          <tr><th>位置</th><th>问题</th></tr>
+          <tr><td class="mono">银行/模版.md L120</td><td>余额不连续：源 0.00 ≠ 重算 4,047.30</td></tr>
+          <tr><td class="mono">关系图谱</td><td>惠普→CSC 引用指向不存在实体</td></tr>
+          <tr><td class="mono">收益表/英国</td><td>2022 R2 与时间线 2022 事件相差 0.3%</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ⑩ 导入状态 ═══════════ -->
+  <section class="screen" id="screen-import">
+    <div class="panel">
+      <h3>数据导入状态</h3><div class="hint">数据调整员 · 代码级解析识别 → 导入 DB → 前端核对</div>
+      <table>
+        <tr><th>文件</th><th>类别</th><th class="num">行/条</th><th>识别</th><th>导入</th></tr>
+        <tr><td class="mono">泰坦尼克.md</td><td>事件·电影</td><td class="num">11</td><td><span class="pill ok">成功</span></td><td><span class="pill ok">已入库</span></td></tr>
+        <tr><td class="mono">阿凡达.md</td><td>事件·电影</td><td class="num">9</td><td><span class="pill ok">成功</span></td><td><span class="pill ok">已入库</span></td></tr>
+        <tr><td class="mono">股票模版.md</td><td>股票</td><td class="num">0</td><td><span class="pill crit">未识别</span></td><td><span class="pill crit">需人工</span></td></tr>
+      </table>
+      <div style="margin-top:12px"><button class="btn">重新解析（运行 ETL）</button></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // Tab 切换
+  const nav = document.getElementById('nav');
+  nav.addEventListener('click', e => {
+    const t = e.target.closest('.tab'); if (!t) return;
+    document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+    document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === 'screen-' + t.dataset.t));
+  });
+
+  // 主题切换（dark/light 选用）
+  const root = document.documentElement, bt = document.getElementById('themeBtn');
+  function applyTheme(mode){ root.setAttribute('data-theme', mode); bt.textContent = mode === 'dark' ? '亮色' : '暗色'; }
+  bt.addEventListener('click', () => applyTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
+  applyTheme('light');
+</script>
+</body>
+</html>

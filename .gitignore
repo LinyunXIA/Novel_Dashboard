@@ -1,0 +1,19 @@
+# 小说创作数据源（不对外；含未发布设定）
+Design_Folder/
+
+# Python 虚拟环境（空，无依赖）
+.venv/
+
+# macOS
+.DS_Store
+
+# IDE / 本地配置
+.idea/
+.vscode/
+
+# Claude Code 本地配置（含本地路径，不提交）
+.claude/
+
+# 凭证 / 密钥
+secrets.local.yaml
+secrets*.yaml
