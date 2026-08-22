@@ -70,7 +70,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Dash价值前已锁定的核心约束（详见 DESIGN，此处仅指针）**：
 - 源 md（`Design_Folder/`）只读、绝不回写；数据更新走文件导入 + 少量 UI 派生。
 - 账务本金记账、展示层才折算 USD；BEF/LUF/NLG 2002 关池转 EUR；收益文件模块化挂账。
-- 开发进度以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单（状态图例 ⬜/🟨/✅）为准，完成一项勾一项。
+- 开发进度以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单（编号 `F-P0-xx`/`F-P1-xx`/`F-P2-xx`，状态图例 ⬜/🟨/✅）为准，完成一项勾一项，在需求/任务/commit 中以此编号引用。
 
 **仓库与 git**：
 - `Design_Folder/`（创作素材）已被 `.gitignore` 排除，**不入 git、不提交**；仅 `docs/` + `CLAUDE.md` + `.gitignore` 入版本库。

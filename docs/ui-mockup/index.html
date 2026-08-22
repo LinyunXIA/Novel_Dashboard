@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>网文创作数据 Dashboard — UI Mockup</title>
+<title>网文创作数据 Dashboard — UI Mockup（v2 · 全阶段）</title>
 <style>
   /* ===== dataviz 设计系统变量（light / dark 两套） ===== */
   :root { color-scheme: light; }
@@ -63,7 +63,7 @@
   .toggle button { background:none; border:1px solid var(--border); color:var(--ink-2);
         border-radius:8px; padding:5px 10px; font-size:12px; cursor:pointer; }
 
-  /* ===== 提示横幅（第 7 项需求：全局重算提示） ===== */
+  /* ===== 提示横幅 ===== */
   .banner { display:flex; gap:10px; align-items:flex-start; border-radius:12px; padding:10px 14px; margin:0 0 16px;
             border:1px solid var(--border); background:var(--surface-1); box-shadow:var(--shadow); }
   .banner .dot { width:9px; height:9px; border-radius:50%; margin-top:6px; background:var(--warn); flex:none; }
@@ -78,6 +78,7 @@
   .pill.ok { background:color-mix(in srgb, var(--good) 15%, transparent); color:var(--ok-text); }
   .pill.warn{ background:color-mix(in srgb, var(--warn) 18%, transparent); color:var(--ink); }
   .pill.crit{ background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+  .pill.dim { background:color-mix(in srgb, var(--muted) 18%, transparent); color:var(--muted); }
 
   /* ===== 高度指标 / 面板 ===== */
   .hero { background:var(--surface-1); border:1px solid var(--border); border-radius:16px;
@@ -110,10 +111,7 @@
   .num { text-align:right; }
   .mono { font-variant-numeric:tabular-nums; }
 
-  .cal { font-variant-numeric:tabular-nums; }
   input[type=range]{ width:100%; accent-color:var(--s1); }
-  .mesh { display:flex; gap:14px; align-items:center; }
-  .mesh span { font-size:12px; color:var(--ink-2); }
   .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--ink-2); margin-top:10px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
 
@@ -125,10 +123,19 @@
           background:var(--page); border:1px solid var(--border); padding:10px 12px; white-space:pre; overflow-x:auto; line-height:1.7; }
   .diff .add { color:var(--good); } .diff .del { color:var(--crit); text-decoration:line-through; }
   .diff .ctx { color:var(--muted); }
-  .badges { display:flex; gap:6px; flex-wrap:wrap; }
 
   .gtitle { font-size:12px; color:var(--ink-2); margin:0 0 8px; }
   .tag { font-size:11px; padding:3px 9px; border-radius:7px; color:var(--ink-2); border:1px solid var(--border); display:inline-block; }
+
+  /* ===== 表单（投资 / 划拨用）===== */
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:11px; color:var(--muted); }
+  .field input, .field select { padding:7px 10px; border-radius:8px; border:1px solid var(--axis);
+        background:var(--page); color:var(--ink); font-size:12.5px; }
+  .formgrid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+  .legend-on { color:var(--s1); font-weight:600; }
+  .disabled-row { opacity:.55; }
+  .note { font-size:11px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -136,7 +143,7 @@
   <div class="topbar">
     <div class="brand">
       <h1>网文创作数据 Dashboard</h1>
-      <span class="env">env: <b>prod</b> · 数据源：Design_Folder（只读）</span>
+      <span class="env">env: <b>prod</b> · 数据源：Design_Folder（只读） · 阶段：Phase 1（P0+P1）+ Phase 2 规划</span>
     </div>
     <div class="spacer"></div>
     <div class="toggle">主题 <button id="themeBtn">暗色</button></div>
@@ -145,6 +152,8 @@
   <div class="nav" id="nav" role="tablist">
     <button class="tab" data-t="dashboard" aria-selected="true">Dashboard</button>
     <button class="tab" data-t="search">搜索</button>
+    <button class="tab" data-t="invest">投资</button>
+    <button class="tab" data-t="transfer">划拨/换汇</button>
     <button class="tab" data-t="persons">人物图谱</button>
     <button class="tab" data-t="companies">公司图谱</button>
     <button class="tab" data-t="returns">收益曲线</button>
@@ -160,25 +169,24 @@
     <div style="flex:1;min-width:280px">
       <div class="label">全局日历游标 · 截至日期节点（全 App 生效）</div>
       <div style="display:flex;align-items:center;gap:14px">
-        <span class="cal" style="font-size:24px;font-weight:650">1995-12-30</span>
-        <input type="range" min="1973" max="2025" value="1995" style="flex:1" />
-        <span class="cal" style="color:var(--muted)">2025-12-30</span>
+        <span class="mono" style="font-size:24px;font-weight:650">2001-12-30</span>
+        <input type="range" min="1973" max="2025" value="2001" style="flex:1" />
+        <span class="mono" style="color:var(--muted)">2025-12-30</span>
       </div>
-      <div style="font-size:11px;color:var(--muted)">拖动后：所有 人物/公司/财务/曲线 屏统一显示「截至该日」状态</div>
+      <div style="font-size:11px;color:var(--muted)">拖动后：所有 人物/公司/财务/曲线/投资 屏统一显示「截至该日」状态</div>
     </div>
     <div style="font-size:11px;color:var(--muted);max-width:300px">
-      日期默认规则：仅年份→12-30（年初→01-01）；年月→月底（月初→1日）；上/中/下旬→1/11/21。源数据超出规则→提醒并补齐规则。
+      币种生命周期：<b>BEF/LUF/NLG 于 2002-01-01 关池转 EUR</b>（只读历史可回溯）。日期默认规则：仅年份→12-30。
     </div>
   </div>
 
   <!-- ═══════════ ① Dashboard ═══════════ -->
   <section class="screen active" id="screen-dashboard">
-    <!-- 全局重算提示（非阻断横幅） -->
     <div class="banner">
       <span class="dot"></span>
       <div>
-        <b>数据已更新 · 已在全局重算财富与派生数据（自 1995 年 起）</b>
-        <p>数据调整员导入了《泰坦尼克号.md》→ 首笔影响 1995 年支出 · 范围：Family Asset / 家族合计等 6 项已更新</p>
+        <b>数据已更新 · 已在全局重算财富与派生数据（自 2001 年 起）</b>
+        <p>数据调整员导入了《经营性房产收益.md》→ 首笔影响 2001 年支出 · 范围：Family Asset / 家族合计等 8 项已更新</p>
       </div>
       <div class="acts"><button class="btn ghost">查看影响</button><button class="btn">知道了</button></div>
     </div>
@@ -186,31 +194,36 @@
     <div class="hint" style="margin:-4px 0 14px">日历游标已移至顶部【全局栏】，全 App 生效。以下各屏数值均为「截至全局所选日期」。</div>
 
     <div class="grid stats">
-      <div class="hero"><div class="label">家族总资产（1995 · 折 USD）</div><div class="fig">117.8<span class="unit"> 亿</span></div><div class="sub">Peeters Luxembourg 等合并 ▲ 12.4%（同比）</div></div>
-      <div class="hero"><div class="label">活跃账户 / 币种</div><div class="fig">14<span class="unit"> 个 / 6</span></div><div class="sub">BEF · LUF · NLG · DKK · SEK · USD</div></div>
-      <div class="hero"><div class="label">风险仓位 R5（2×杠杆）</div><div class="fig">62.8<span class="unit"> %</span></div><div class="sub">1989–1995 累计杠杆生效</div></div>
-      <div class="hero"><div class="label">健康校验</div><div class="fig" style="font-size:26px">2<span class="unit"> 项待处理</span></div><div class="sub"><span class="pill warn">1 断链</span> <span class="pill warn">1 余额不连续</span></div></div>
+      <div class="hero"><div class="label">家族总资产（2001 · 展示折 USD）</div><div class="fig">161.4<span class="unit"> 亿</span></div>
+        <div class="sub">现金 + 投资池 + 持仓市值合并 · 账务本币、展示层才折 USD</div></div>
+      <div class="hero"><div class="label">总资产构成</div><div class="fig" style="font-size:22px">现金 <span style="color:var(--muted)">/</span> 池 <span style="color:var(--muted)">/</span> 市值</div>
+        <div class="sub">60.1 / 42.7 / 58.6 亿USD</div></div>
+      <div class="hero"><div class="label">下次 Scissors 提示：</div><div class="fig" style="font-size:26px">2002</div>
+        <div class="sub">BEF/LUF/NLG 关池转 EUR（事件年触发提示）</div></div>
+      <div class="hero"><div class="label">健康校验</div><div class="fig" style="font-size:26px">3<span class="unit"> 项待处理</span></div>
+        <div class="sub"><span class="pill warn">1 断链</span> <span class="pill warn">1 金额偏差</span> <span class="pill warn">1 余额不连续</span></div></div>
     </div>
 
     <div class="grid cols2" style="margin-top:14px">
       <div class="panel">
-        <h3>家族财富随时间</h3><div class="hint">按账户 × 币种 · 自动汇率归并到 USD · ECharts 占位</div>
+        <h3>家族财富随时间</h3><div class="hint">现金 × 币种 · 汇入投资池 · 持仓市值 · 账务本币 / 展示 USD · ECharts 占位</div>
         <div class="plot">
           <svg viewBox="0 0 600 200" preserveAspectRatio="none">
-            <polyline points="30,175 120,168 210,150 300,150 390,120 480,104 570,78" fill="none" stroke="var(--s1)" stroke-width="2.5"/>
-            <polyline points="30,181 120,177 210,166 300,168 390,150 480,144 570,128" fill="none" stroke="var(--s2)" stroke-width="2" stroke-dasharray="4 4"/>
+            <polyline points="30,175 120,168 210,150 300,150 390,150 480,140 570,110" fill="none" stroke="var(--s1)" stroke-width="2.5"/>
+            <polyline points="30,180 120,172 210,162 300,160 390,132 480,104 570,64" fill="none" stroke="var(--s3)" stroke-width="2" stroke-dasharray="4 4"/>
           </svg>
           <span class="ph">财富曲线占位（ECharts）</span>
         </div>
-        <div class="legend"><span><i style="background:var(--s1)"></i>Family 合并</span><span><i style="background:var(--s2)"></i>个人账户</span></div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>现金账户</span><span><i style="background:var(--s3)"></i>含持仓市值</span></div>
       </div>
       <div class="panel">
-        <h3>2025 年末资产构成（按币种）</h3><div class="hint">USD / EUR / HKD 等 · 环形占位</div>
+        <h3>2001 总资产构成（三段：现金 / 投资池 / 持仓市值）</h3><div class="hint">现金+池=账务本币；市值仅展示层并计 · 环形占位</div>
         <div class="plot"><svg viewBox="0 0 600 200" preserveAspectRatio="none">
-          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s1)" stroke-width="30" stroke-dasharray="140 300" transform="rotate(-90 300 100)"/>
-          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s2)" stroke-width="30" stroke-dasharray="95 300" transform="rotate(36 300 100)"/>
-          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s3)" stroke-width="30" stroke-dasharray="48 300" transform="rotate(165 300 100)"/>
-        </svg><span class="ph">构成环形占位</span></div>
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s1)" stroke-width="30" stroke-dasharray="150 300" transform="rotate(-90 300 100)"/>
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s3)" stroke-width="30" stroke-dasharray="100 300" transform="rotate(40 300 100)"/>
+          <circle cx="300" cy="100" r="62" fill="none" stroke="var(--s5)" stroke-width="30" stroke-dasharray="46 300" transform="rotate(180 300 100)"/>
+        </svg><span class="ph">现金/池/市值 环形占位</span></div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>现金</span><span><i style="background:var(--s3)"></i>投资池</span><span><i style="background:var(--s5)"></i>持仓市值</span></div>
       </div>
     </div>
   </section>
@@ -218,23 +231,105 @@
   <!-- ═══════════ ② 搜索 ═══════════ -->
   <section class="screen" id="screen-search">
     <div class="panel">
-      <h3>统一搜索 <span class="pill warn">功能占位 · 待 LLM + RAG</span></h3><div class="hint">本轮不实现后端逻辑；后续与 LLM + embedding 结合。以下为示意。</div>
+      <h3>统一搜索 <span class="pill ok">Phase 1 · 本地 LLM + embedding（RAG）</span></h3>
+      <div class="hint">问答式 · 结果由命中条目装配 · 无"文件"概念 · <b>不展示推理过程</b> · LLM 不参与数值计算（走确定性 SQL/快照）。来源标注仅用于内部审计。</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px">
-        <input placeholder="输入关键词，如「1990s」「皮克斯」「迪士尼」" style="flex:1;min-width:220px;padding:9px 12px;border-radius:9px;border:1px solid var(--axis);background:var(--page);color:var(--ink)" />
-        <select class="btn"><option>全部类型</option><option>时间线</option><option>台账</option><option>收益</option><option>人物</option></select>
+        <input placeholder="输入问题，如「1995 年家族总资产里，祖产债券+开店收益共多少」「BEF 什么时候关池」" style="flex:1;min-width:240px;padding:9px 12px;border-radius:9px;border:1px solid var(--axis);background:var(--page);color:var(--ink)" />
         <button class="btn primary">搜索</button>
       </div>
-      <div class="gtitle">结果 · 示例（“皮克斯”）</div>
+      <div class="gtitle">示例回答（"1995年祖产债券+开店收益共多少"）</div>
+      <div class="panel" style="box-shadow:none;margin-bottom:10px">
+        <div style="font-size:13px">截至 <b>1995-12-30</b>：祖父账户活期中，祖产债券票息收益约 <b>3.08 万 BEF</b>，开店税后落袋约 <b>14.2 万 BEF</b>，合计约 <b>17.3 万 BEF</b>（账务本币，未折算 USD）。</div>
+        <div class="note" style="margin-top:6px">数值由确定性快照读取并回填，来源条目：internal（不上 UI）。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ③ 投资 ═══════════ -->
+  <section class="screen" id="screen-invest">
+    <div class="banner" style="border-color:var(--s3)">
+      <span class="dot" style="background:var(--good)"></span>
+      <div><b>投资 = UI 第三类改数据操作</b><p>派生数据 · 每年年末 12-30 赎回回银行账户 · 次年需手动重投（非自动） · 已投年份置灰可解锁重输 · 服务层校验（金额≤as-of / R起始年下限 / 年度幂等）</p></div>
+    </div>
+    <div class="panel">
+      <h3>发起投资</h3><div class="hint">年份 → 地区（欧洲1947/英1983/美1989/港1999/中2002）→ 多选人物/公司 → 各币种金额或「全部」→ R1–R5</div>
+      <div class="formgrid">
+        <div class="field"><label>投资年份</label><select><option>2001</option><option>2000</option><option>1999</option></select></div>
+        <div class="field"><label>地区（对应5份测算表之一）</label><select><option>欧洲</option><option>英国</option><option>美国</option><option>香港</option><option>中国</option></select></div>
+        <div class="field"><label>风险等级</label><select><option>R3</option><option>R1</option><option>R2</option><option>R4</option><option>R5</option></select></div>
+        <div class="field"><label>投资对象（多选）</label><select multiple style="height:64px">
+          <option selected>Henri Peeters（人物）</option>
+          <option>Frederik van Oranje（人物）</option>
+          <option>Peeters Luxembourg（公司）</option>
+        </select></div>
+      </div>
+      <div style="margin:14px 0 6px" class="gtitle">各对象 · 各币种投入额（≤ as-of 余额；可「全部」= 该主体所有币种一次全投）</div>
       <table>
-        <tr><th>类型</th><th>命中</th><th>时间</th><th>来源</th><th class="num">相关金额</th></tr>
-        <tr><td><span class="tag">事件·股票</span></td><td>皮克斯首期投资</td><td>1991-12-31</td><td>股票/PIXR.md</td><td class="num">1,000 万USD</td></tr>
-        <tr><td><span class="tag">时间线</span></td><td>Pixar 首期投资</td><td>1992</td><td>时间线.md</td><td class="num">—</td></tr>
-        <tr><td><span class="tag">图谱</span></td><td>皮克斯 → 迪士尼（换股 1:2.3）</td><td>2006</td><td>关系图谱</td><td class="num">377,400 万USD</td></tr>
+        <tr><th>主体</th><th>币种池</th><th>as-of 余额</th><th>投入金额</th><th>「全部」</th></tr>
+        <tr><td>Henri Peeters</td><td>BEF</td><td class="num">1,240.5</td><td><input value="800" style="width:90px;padding:4px 6px;border-radius:6px;border:1px solid var(--axis);background:var(--page);color:var(--ink)" /></td><td><input type="checkbox" /></td></tr>
+        <tr><td>Henri Peeters</td><td>LUF</td><td class="num">420.0</td><td><input value="全部" disabled style="width:90px;padding:4px 6px;border-radius:6px;border:1px solid var(--grid);background:var(--page);color:var(--muted)" /></td><td><input type="checkbox" checked disabled /></td></tr>
+        <tr class="disabled-row"><td>Frederik van Oranje</td><td>NLG<span class="pill warn" style="margin-left:6px">2002 即将关池</span></td><td class="num">2,011.9</td><td colspan="2"><span class="note">待 2002 关池转 EUR 后可再操作</span></td></tr>
+      </table>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:14px">
+        <button class="btn primary">提交投资</button>
+        <span class="note">一年「年份+地区」一次；已投年份会置灰，需「解锁重输」整笔覆盖</span>
+      </div>
+    </div>
+
+        <div class="grid cols2" style="margin-top:14px">
+      <div class="panel">
+        <h3>投资池（年度投资资金 · 分币种）</h3><div class="hint">本金从银行池划入（银行−）· 年末连收益划回（银行+）· 池本身不直接记支出，仅在途</div>
+        <table>
+          <tr><th>币种池</th><th>当年投入</th><th>年化(R)</th><th class="num">年末结算</th></tr>
+          <tr><td>BEF</td><td class="num">800</td><td class="legend-on">R3 · 12.4%</td><td class="num">899.2</td></tr>
+          <tr><td>LUF</td><td class="num">全部(420)</td><td class="legend-on">R3 · 12.4%</td><td class="num">472.1</td></tr>
+        </table>
+        <div class="note" style="margin-top:6px">年化率与币种无关：无论 BEF/LUF…，同一地区同一 R 级用同一年化率。</div>
+      </div>
+      <div class="panel">
+        <h3>已投年份 / 解锁重输</h3><div class="hint">每年「年份+地区」一笔；已投置灰，可解锁整笔重输并后传重算</div>
+        <table>
+          <tr><th>年份</th><th>地区·R</th><th class="num">投入</th><th>状态</th></tr>
+          <tr class="disabled-row"><td class="mono">2000</td><td>欧洲 R3</td><td class="num">500</td><td><button class="btn">解锁重输</button></td></tr>
+          <tr><td class="mono">2001</td><td>欧洲 R3（本次）</td><td class="num">—</td><td><span class="pill ok">新</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ④ 划拨 / 换汇 ═══════════ -->
+  <section class="screen" id="screen-transfer">
+    <div class="panel">
+      <h3>划拨 / 换汇（UI 第四类改数据操作 · 同步编年史）</h3>
+      <div class="hint">输入年份 → 选账户 → 源币种池 → 目标币种。同币种=划拨（净额0）；跨币种=换汇，需<b>输入年份有汇率</b>，缺则拦 + 数据调整员按需导入。转出年起向后全链 as-of 不得为负，拐负则整体拒绝。</div>
+      <div class="formgrid">
+        <div class="field"><label>操作年份</label><select><option>2001</option><option>2000</option></select></div>
+        <div class="field"><label>源账户（人物/公司）</label><select><option>Henri Peeters</option><option>Frederik van Oranje</option></select></div>
+        <div class="field"><label>源币种池</label><select><option>BEF</option><option>LUF</option><option>NLG</option></select></div>
+        <div class="field"><label>目标账户</label><select><option>Peeters Luxembourg（公司）</option><option>Henri Peeters</option></select></div>
+        <div class="field"><label>目标币种池</label><select><option>USD</option><option>EUR</option></select></div>
+        <div class="field"><label>金额</label><input value="300" style="width:100%" /></div>
+      </div>
+      <div class="note" style="margin:10px 0">汇率（该年）：1 EUR = 40.3399 BEF（已锁定） → 300 BEF ≈ 7.44 EUR。<span class="pill warn">换汇需目标年汇率存在，缺则不能换</span></div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn primary">提交</button>
+        <span class="note">示例换汇路径：Henri(BEF) → Peeters Luxembourg(EUR)</span>
+      </div>
+    </div>
+      <div class="panel" style="margin-top:14px">
+      <h3>币种生命周期</h3>
+      <table>
+        <tr><th>币种</th><th>状态</th><th class="num">关池日</th><th>承接</th></tr>
+        <tr><td>BEF</td><td><span class="pill warn">将关闭</span></td><td class="num mono">2002-01-01</td><td>EUR</td></tr>
+        <tr><td>LUF</td><td><span class="pill warn">将关闭</span></td><td class="num mono">2002-01-01</td><td>EUR</td></tr>
+        <tr><td>NLG</td><td><span class="pill warn">将关闭</span></td><td class="num mono">2002-01-01</td><td>EUR</td></tr>
+        <tr><td>EUR</td><td><span class="pill ok">active</span></td><td class="num mono">—</td><td>—</td></tr>
+        <tr><td>DKK / SEK</td><td><span class="pill ok">active</span></td><td class="num mono">—</td><td>—</td></tr>
       </table>
     </div>
   </section>
 
-  <!-- ═══════════ ③ 人物图谱 ═══════════ -->
+  <!-- ═══════════ ⑤ 人物图谱 ═══════════ -->
   <section class="screen" id="screen-persons">
     <div class="panel">
       <h3>人物图谱</h3><div class="hint">人—人 · 人—公司/资产 · 可拖拽缩放（ECharts graph 占位）</div>
@@ -243,7 +338,7 @@
           <line x1="350" y1="220" x2="150" y2="90" stroke="var(--axis)"/><line x1="350" y1="220" x2="190" y2="360" stroke="var(--axis)"/>
           <line x1="350" y1="220" x2="540" y2="120" stroke="var(--axis)"/><line x1="150" y1="90" x2="540" y2="120" stroke="var(--axis)"/>
           <circle cx="350" cy="220" r="34" fill="var(--s1)"/><text x="350" y="225" text-anchor="middle" fill="#fff" font-size="12">Stijn</text>
-          <circle cx="150" cy="90" r="26" fill="var(--s3)"/><text x="150" y="95" text-anchor="middle" fill="#fff" font-size="11">祖父</text>
+          <circle cx="150" cy="90" r="26" fill="var(--s3)"/><text x="150" y="95" text-anchor="middle" fill="#fff" font-size="11">Henri</text>
           <circle cx="190" cy="360" r="26" fill="var(--s7)"/><text x="190" y="365" text-anchor="middle" fill="#fff" font-size="11">Maaike</text>
           <circle cx="540" cy="120" r="26" fill="var(--s2)"/><text x="540" y="125" text-anchor="middle" fill="#fff" font-size="11">养父</text>
         </svg>
@@ -253,11 +348,11 @@
     </div>
   </section>
 
-  <!-- ═══════════ ④ 公司图谱 + 外部导入 ═══════════ -->
+  <!-- ═══════════ ⑥ 公司图谱 ═══════════ -->
   <section class="screen" id="screen-companies">
     <div class="grid cols2">
       <div class="panel">
-        <h3>公司图谱</h3><div class="hint">公司—公司 · 并购 / 换股 / 分拆链 · 公司只增不减、带 status</div>
+        <h3>公司图谱</h3><div class="hint">公司—公司 · 并购 / 换股 / 分拆链（Phase 2 事件）· 只增不减、带 status</div>
         <div class="plot" style="height:360px">
           <svg viewBox="0 0 600 360" preserveAspectRatio="xMidYMid meet">
             <line x1="130" y1="180" x2="320" y2="90" stroke="var(--axis)"/><line x1="130" y1="180" x2="320" y2="270" stroke="var(--axis)"/>
@@ -272,7 +367,6 @@
       </div>
       <div class="panel">
         <h3>公司与用工成本外部系统</h3><div class="hint">外部系统 · 2 个独立 API（细节开发时定）</div>
-
         <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">
           <div style="font-size:12px;font-weight:650">API① 公司基础信息</div>
           <div style="font-size:11px;color:var(--ink-2);margin:2px 0 8px">拉取权威公司信息 → 图谱 · 只增不减 · 带 status</div>
@@ -281,15 +375,13 @@
             <button class="btn primary">获取 / 导入（UI 用户可点）</button>
           </div>
         </div>
-
         <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px">
           <div style="font-size:12px;font-weight:650">API② 用工成本计算</div>
           <div style="font-size:11px;color:var(--ink-2);margin:2px 0 8px">提交本地逐年「用工成本+税率」→ 外部返回当年各公司用工成本支出 → 计入各公司支出</div>
           <button class="btn">提交并拉取各公司用工成本支出</button>
         </div>
-
         <table>
-          <tr><th>公司</th><th>status</th><th class="num">用工成本支出(当年)</th><th>导入</th></tr>
+          <tr><th>公司</th><th>status</th><th class="num">用工成本(当年)</th><th>导入</th></tr>
           <tr><td>苹果 AAPL</td><td><span class="pill ok">active</span></td><td class="num">—</td><td><span class="pill ok">已入库</span></td></tr>
           <tr><td>迪士尼 DIS</td><td><span class="pill ok">active</span></td><td class="num">—</td><td><span class="pill ok">已入库</span></td></tr>
           <tr><td>皮克斯 PIXR</td><td><span class="pill warn">已退市</span></td><td class="num">—</td><td><span class="pill crit">失败 · 需人工</span></td></tr>
@@ -298,12 +390,12 @@
     </div>
   </section>
 
-  <!-- ═══════════ ⑤ 收益曲线 ═══════════ -->
+  <!-- ═══════════ ⑦ 收益曲线 ═══════════ -->
   <section class="screen" id="screen-returns">
     <div class="panel">
-      <h3>各国收益曲线（R1–R5）</h3><div class="hint">国家 × 风险级 × 年份 · 同比曲线 · ECharts 占位</div>
+      <h3>投资地区收益曲线（R1–R5）</h3><div class="hint">5 份测算表 = 5 个地区 · 起始年下限：欧洲1947/英1983/美1989/港1999/中2002 · ECharts 占位</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        <select class="btn"><option>比利时</option><option>美国</option><option>英国</option><option>香港</option><option>中国</option></select>
+        <select class="btn"><option>欧洲</option><option>英国</option><option>美国</option><option>香港</option><option>中国</option></select>
         <span class="legend" style="margin:0"><span><i style="background:var(--s1)"></i>R1</span><span><i style="background:var(--s3)"></i>R3</span><span><i style="background:var(--s8)"></i>R5</span></span>
       </div>
       <div class="plot" style="height:300px">
@@ -312,34 +404,37 @@
           <polyline points="20,200 80,160 140,210 200,120 260,95 320,150 380,70 440,130 500,88 560,140 620,55 680,110" fill="none" stroke="var(--s3)" stroke-width="2" stroke-dasharray="4 4"/>
           <polyline points="20,120 80,180 140,60 200,140 260,200 320,40 380,160 440,90 500,170 560,30 620,150 680,70" fill="none" stroke="var(--s8)" stroke-width="2"/>
         </svg>
-        <span class="ph">各国收益曲线占位</span>
+        <span class="ph">各地区 R1–R5 曲线占位</span>
       </div>
+      <div class="note" style="margin-top:8px">R 级年化与收益表（R1–R5）仅供投资功能；收益流（租房/开店/祖产债券/经营性房产）不走此曲线（直接进账户活期）。</div>
     </div>
   </section>
 
-  <!-- ═══════════ ⑥ 财务收支 ═══════════ -->
+  <!-- ═══════════ ⑧ 财务收支 ═══════════ -->
   <section class="screen" id="screen-finance">
     <div class="panel">
-      <h3>财务收支</h3><div class="hint">以实体为中心 · 始终归属于某个人或某家公司</div>
+      <h3>财务收支</h3><div class="hint">以实体为中心 · 收益各挂各主体账户 · 家庭支出记 Henri · 账务本币</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        <select class="btn"><option>实体：皮克斯（公司）</option><option>实体：泰坦尼克（公司）</option><option>实体：Henri（人物）</option></select>
+        <select class="btn"><option>实体：Henri（人物）</option><option>实体：Peeters Luxembourg（公司）</option><option>实体：Frederik（人物）</option></select>
         <select class="btn"><option>全部</option><option>收入</option><option>支出</option></select>
         <input type="range" min="1973" max="2025" value="2001" style="flex:1;max-width:280px" /><span class="mono" style="font-size:12px;color:var(--muted)">2001</span>
       </div>
       <table>
         <tr><th>年份</th><th>归属</th><th>收支</th><th>条目</th><th class="num">金额</th><th>币种</th></tr>
-        <tr><td class="mono">2001</td><td>皮克斯（公司）</td><td><span class="pill ok">收入</span></td><td>回购员工股权-3%</td><td class="num">6,600</td><td>万USD</td></tr>
-        <tr><td class="mono">1995</td><td>泰坦尼克（公司）</td><td><span class="pill warn">支出</span></td><td>北美观池首期注资</td><td class="num">3,000</td><td>万美元</td></tr>
-        <tr><td class="mono">2001</td><td>Henri（人物）</td><td><span class="pill ok">收入</span></td><td>祖产债券股息</td><td class="num">3.08</td><td>万BEF</td></tr>
+        <tr><td class="mono">2001</td><td>Henri（人物）</td><td><span class="pill ok">收入</span></td><td>开店税后落袋</td><td class="num">14.2</td><td>万BEF</td></tr>
+        <tr><td class="mono">2001</td><td>Henri（人物）</td><td><span class="pill ok">收入</span></td><td>祖产债券票息</td><td class="num">3.08</td><td>万BEF</td></tr>
+        <tr><td class="mono">2001</td><td>Henri（人物）</td><td><span class="pill warn">支出</span></td><td>家庭支出（全部家计）</td><td class="num">—</td><td>BEF</td></tr>
+        <tr><td class="mono">2001</td><td>养父（人物）</td><td><span class="pill ok">收入</span></td><td>IBM 薪资税后</td><td class="num">221.3</td><td>万BEF</td></tr>
+        <tr><td class="mono">2001</td><td>养母（人物）</td><td><span class="pill ok">收入</span></td><td>IBM 薪资（销售提成）</td><td class="num">—</td><td>USD</td></tr>
       </table>
     </div>
   </section>
 
-  <!-- ═══════════ ⑦ 编年史（UI 可编辑） ═══════════ -->
+  <!-- ═══════════ ⑨ 编年史 ═══════════ -->
   <section class="screen" id="screen-timeline">
     <div class="banner" style="border-color:var(--s3)">
       <span class="dot" style="background:var(--good)"></span>
-      <div><b>编年史编辑：仅此屏可写用户数据 md 覆盖层</b><p>其余数据由数据调整员通过文件导入维护 · 本屏写 <span class="mono">data/overlay/编年史.md</span>，不改源</p></div>
+      <div><b>编年史编辑：仅此屏可写用户数据 md 覆盖层（UI 第一类操作）</b><p>其余数据由数据调整员通过文件导入维护 · 本屏写 <span class="mono">data/overlay/编年史.md</span>，不改源。银行账户资金变化进入 ledger 承载；人工添加为事件/大纲条目，不动资产。</p></div>
     </div>
     <div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -355,48 +450,48 @@
         <tr><th>年份</th><th>事件</th><th>备注</th><th>来源</th></tr>
         <tr><td class="mono">1988-08-10</td><td>Stijn 步入 Spa 祖宅，正式加入大家庭</td><td>—</td><td><span class="tag">源</span></td></tr>
         <tr style="background:color-mix(in srgb, var(--s3) 8%, transparent)"><td class="mono">1995</td><td>泰坦尼克 首笔注资（外部事件补充）</td><td>UI 覆盖层新增</td><td><span class="tag" style="color:var(--s3);border-color:var(--s3)">覆盖层</span></td></tr>
+        <tr style="background:color-mix(in srgb, var(--warn) 8%, transparent)"><td class="mono">2002-01-01</td><td>BEF/LUF/NLG 关池转 EUR</td><td>系统事件</td><td><span class="tag" style="color:var(--warn);border-color:var(--warn)">系统</span></td></tr>
       </table>
     </div>
   </section>
 
-  <!-- ═══════════ ⑧ 文件 diff 决策 ═══════════ -->
+  <!-- ═══════════ ⑩ 文件 diff 决策 ═══════════ -->
   <section class="screen" id="screen-diff">
     <div class="banner">
       <span class="dot"></span>
-      <div><b>数据调整员更新了已存在文件：基准/事件/电影/泰坦尼克.md</b>
+      <div><b>数据调整员更新了已存在文件：基准/收益表/经营性房产收益.md</b>
         <p>请选择处理方式——「更新数据源」将采纳新版本并重算；「返回上个版本」将 DB 与磁盘文件一同复原。</p></div>
       <div class="acts"><button class="btn primary">更新数据源</button><button class="btn" style="border-color:var(--crit);color:var(--crit)">返回上个版本</button></div>
     </div>
     <div class="grid cols2">
       <div class="panel">
         <h3>版本 diff · 旧 vs 新</h3><div class="hint">+ 新增 · − 删除 · 灰=上下文</div>
-        <div class="diff">- 二、逐年现金流表
-- | 年份 | 当年分红 |
-- | 1995 | 0 |
-+ 二、逐年现金流表
-+ | 年份 | 当年分红 |
-+ | 1995 | 3,000 |   <span class="add">← 首笔支出 1995 起算</span>
-  <span class="ctx">（后续至 2025 行不变…）</span></div>
+        <div class="diff">- | 荷兰 | 郁金香庄园 | 86,400 NLG |
+- | 丹麦 | 畜牧草场 | 79,200 DKK |
++ | 荷兰 | 郁金香庄园 | 94,000 NLG |
++ | 丹麦 | 畜牧草场 | 79,200 DKK |
+  <span class="ctx">（其余属地行不变…）</span></div>
       </div>
       <div class="panel">
-        <h3>影响预览</h3><div class="hint">采纳后将触发增量重算（自 1995 年起）</div>
+        <h3>影响预览</h3><div class="hint">采纳后将触发增量重算（自 2001 年起）</div>
         <table>
-          <tr><td>受影响起点年</td><td class="num mono">1995</td></tr>
-          <tr><td>受影响账户</td><td class="num">Family Asset / 皮克斯</td></tr>
-          <tr><td>重算范围</td><td class="num">1995 → 2025</td></tr>
-          <tr><td>派生数据</td><td class="num">财富曲线 + 逐年快照</td></tr>
+          <tr><td>受影响起点年</td><td class="num mono">2001</td></tr>
+          <tr><td>受影响账户</td><td class="num">Frederik(荷兰) / Henri 等</td></tr>
+          <tr><td>重算范围</td><td class="num">2001 → 2025</td></tr>
+          <tr><td>派生数据</td><td class="num">wealth + snapshot（含 2002 关池后）</td></tr>
         </table>
       </div>
     </div>
   </section>
 
-  <!-- ═══════════ ⑨ 健康校验 ═══════════ -->
+  <!-- ═══════════ ⑪ 健康校验 ═══════════ -->
   <section class="screen" id="screen-health">
     <div class="grid cols2">
       <div class="panel">
-        <h3>健康校验汇总</h3><div class="hint">时间线对齐 · 金额一致 · 汇率链 · 复利/杠杆 · 断链</div>
+        <h3>健康校验汇总</h3><div class="hint">导入前冲突检测(hard-block) + 导入后全量 H1–H5</div>
         <table>
           <tr><th>规则</th><th class="num">状态</th></tr>
+          <tr><td>导入前冲突检测（§11.4）</td><td class="num"><span class="pill ok">拦截2笔</span></td></tr>
           <tr><td>H1 时间线对齐</td><td class="num"><span class="pill ok">通过</span></td></tr>
           <tr><td>H2 金额一致</td><td class="num"><span class="pill warn">1 偏差</span></td></tr>
           <tr><td>H3 汇率链自洽</td><td class="num"><span class="pill ok">通过</span></td></tr>
@@ -408,23 +503,25 @@
         <h3>问题清单</h3><div class="hint"></div>
         <table>
           <tr><th>位置</th><th>问题</th></tr>
+          <tr><td class="mono">经营性房产收益.md L30</td><td>导入前冲突：荷兰郁金香 94,000 ≠ 既有 86,400（被拦，未入库）</td></tr>
           <tr><td class="mono">银行/模版.md L120</td><td>余额不连续：源 0.00 ≠ 重算 4,047.30</td></tr>
-          <tr><td class="mono">关系图谱</td><td>惠普→CSC 引用指向不存在实体</td></tr>
           <tr><td class="mono">收益表/英国</td><td>2022 R2 与时间线 2022 事件相差 0.3%</td></tr>
         </table>
       </div>
     </div>
   </section>
 
-  <!-- ═══════════ ⑩ 导入状态 ═══════════ -->
+  <!-- ═══════════ ⑫ 导入状态 ═══════════ -->
   <section class="screen" id="screen-import">
     <div class="panel">
-      <h3>数据导入状态</h3><div class="hint">数据调整员 · 代码级解析识别 → 导入 DB → 前端核对</div>
+      <h3>数据导入状态</h3><div class="hint">数据调整员 · 基础数据(Phase1) + 事件(Phase2) · 先代码级识别 → 冲突检测 → 导入 → UI 核对</div>
       <table>
-        <tr><th>文件</th><th>类别</th><th class="num">行/条</th><th>识别</th><th>导入</th></tr>
-        <tr><td class="mono">泰坦尼克.md</td><td>事件·电影</td><td class="num">11</td><td><span class="pill ok">成功</span></td><td><span class="pill ok">已入库</span></td></tr>
-        <tr><td class="mono">阿凡达.md</td><td>事件·电影</td><td class="num">9</td><td><span class="pill ok">成功</span></td><td><span class="pill ok">已入库</span></td></tr>
-        <tr><td class="mono">股票模版.md</td><td>股票</td><td class="num">0</td><td><span class="pill crit">未识别</span></td><td><span class="pill crit">需人工</span></td></tr>
+        <tr><th>文件</th><th>类别</th><th class="num">行/条</th><th class="num">已关联账户</th><th>识别/导入</th></tr>
+        <tr><td class="mono">初始资产/Henri Peeters.md</td><td>初始资产</td><td class="num">—</td><td class="num">—</td><td><span class="pill ok">已建档</span></td></tr>
+        <tr><td class="mono">经营性房产收益.md</td><td>收益流·经营性房</td><td class="num">7 属地</td><td class="num">6 已关联</td><td><span class="pill warn">1 属地待关联</span></td></tr>
+        <tr><td class="mono">养父的薪资.md</td><td>薪资</td><td class="num">44</td><td class="num">1</td><td><span class="pill ok">已入库</span></td></tr>
+        <tr><td class="mono">1974-2001家庭支出.md</td><td>支出</td><td class="num">28</td><td class="num">Henri</td><td><span class="pill ok">已入库</span></td></tr>
+        <tr class="disabled-row"><td class="mono">泰坦尼克.md</td><td>事件·电影（Phase 2）</td><td class="num">11</td><td class="num">待UI关联</td><td><span class="pill warn">Phase 2</span></td></tr>
       </table>
       <div style="margin-top:12px"><button class="btn">重新解析（运行 ETL）</button></div>
     </div>
@@ -433,7 +530,7 @@
 </div>
 
 <script>
-  // Tab 切换
+  // Tab 切换（通用：#screen- + data-t）
   const nav = document.getElementById('nav');
   nav.addEventListener('click', e => {
     const t = e.target.closest('.tab'); if (!t) return;
