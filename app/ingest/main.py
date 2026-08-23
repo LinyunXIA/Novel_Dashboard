@@ -111,6 +111,16 @@ def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Op
         typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起）")
 
 
+@app.command()
+def snapshot(env: str = typer.Option("dev", "--env")):
+    """重建逐年 as-of 快照（F-P0-08）。"""
+    from app.core.snapshot import rebuild_snapshots
+    with SessionLocal() as s:
+        r = rebuild_snapshots(s, range(1947, 2026))
+        s.commit()
+        typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户")
+
+
 def _conflict_gate(s, r) -> dict:
     """对收益类文件做导入前冲突检测：H2 金额 / H5 引用。命中冲突 → 该文件不入库。"""
     from sqlalchemy import select as _sel
