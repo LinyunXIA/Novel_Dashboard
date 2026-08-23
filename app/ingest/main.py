@@ -102,6 +102,12 @@ def import_all(session, source_dir, log=None) -> dict:
         key=lambda r: (_ORDER.index(r.category) if r.category in _ORDER else 99, r.file),
     )
     for r in ordered:
+        if r.category == "stock_tx" and r.records:
+            # issue #70：股票台账解析成功但持仓/事件落库属 Phase 2（DESIGN §19.6），显式说明而非静默
+            log(f"   ⏭ {r.file}: 股票台账解析成功（{len(r.records)} 组基本信息/"
+                f"{sum(len(x.get('events') or []) for x in r.records)} 条明细），"
+                f"持仓/事件落库属 Phase 2（§19.6），本次跳过")
+            continue
         if r.category == "character" and r.records:
             ck += writer.import_characters(session, r.records, r.file)["imported"]
         if r.category == "return_table" and r.records:

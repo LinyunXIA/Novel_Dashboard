@@ -1,7 +1,7 @@
 """Unit tests for app/ingest/detect + parse_one SKIP 类别（issue #26 回归）。
 
 覆盖：
-- detect 显式映射 CPI工资.md → cpi_wage（不再落 unknown）
+- detect 显式映射 CPI工资.md → SKIP_PARAM（issue #70：无消费方的基准参数，显式跳过不报错）
 - detect 显式映射基准/公司/用工成本/ → SKIP_P1
 - detect 显式映射设计文件/ → SKIP_DOC
 - 顺序：更长前缀优先（CPI 工资.md 单独一个，不被 SKIP_P1 之类误吞）
@@ -21,7 +21,7 @@ class TestDetectExplicitMappings:
     def test_cpi_wage_mapped(self):
         """issue #26 核心修复：CPI工资.md 不再落 unknown。"""
         d = detect("基准/CPI工资.md")
-        assert d.category == "cpi_wage", f"应映射为 cpi_wage，实际 {d.category}"
+        assert d.category == "SKIP_PARAM", f"应映射为 SKIP_PARAM，实际 {d.category}"
         assert not d.phase2
 
     def test_company_labor_cost_skipped(self):
@@ -47,17 +47,17 @@ class TestIsSkipCategory:
         assert is_skip_category("SKIP_DOC") is True
 
     def test_non_skip_false(self):
-        assert is_skip_category("cpi_wage") is False
         assert is_skip_category("PHASE2_EVENT") is False
         assert is_skip_category("unknown") is False
 
 
 class TestPrefixOrdering:
     def test_cpi_specific_before_company_prefix(self):
-        """CPI 工资.md 是精确文件名前缀，应在「基准/」前匹配；这里只需验证 cpi_wage 命中。"""
+        """CPI 工资.md 是精确文件名前缀，应在「基准/」前匹配；验证 SKIP_PARAM 命中。"""
         # 即便添加了 SKIP_P1 = "基准/公司/用工成本/" 前缀，CPI 文件路径不冲突
         d = detect("基准/CPI工资.md")
-        assert d.category == "cpi_wage"
+        assert d.category == "SKIP_PARAM"
+        assert is_skip_category("SKIP_PARAM")
 
     def test_phase2_event_still_skipped(self):
         """回归：原有的 PHASE2_EVENT 映射不被破坏。"""
@@ -94,12 +94,12 @@ class TestIngestReportSkippedGroup:
         report.results.append(ParseResult(file="设计文件/学习.md",
                                            category="SKIP_DOC", ok=True))
         report.results.append(ParseResult(file="基准/CPI工资.md",
-                                           category="cpi_wage", ok=True))
+                                           category="SKIP_PARAM", ok=True))
         report.results.append(ParseResult(file="未识别.md",
                                            category="unknown", ok=False,
                                            error="解析器未实现（unknown）"))
         skipped = report.skipped
-        assert len(skipped) == 2
+        assert len(skipped) == 3
         assert all(r.category.startswith("SKIP_") for r in skipped)
         assert len(report.failed) == 1
         assert report.failed[0].category == "unknown"
