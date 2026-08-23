@@ -11,6 +11,7 @@ from datetime import date, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.ingest.normalize import resolve_date
 from app.model import Account, Entity, ExchangeRate, IncomeStream, InitialAsset, LedgerEntry
 
 
@@ -67,7 +68,7 @@ def import_initial_assets(session: Session, records: list[dict], cash_year: int 
             cur = rec["currency"]
             acc = get_or_create_account(session, ent.id, cur)
             amort = rec["face_value"]
-            session.add(LedgerEntry(account_id=acc.id, date=date(cash_year, 12, 30),
+            session.add(LedgerEntry(account_id=acc.id, date=resolve_date(cash_year),
                                     reason="初始现金", inflow=amort, balance=amort,
                                     kind="income", source_file=rec.get("source_file")))
             stats["cash"] += 1
@@ -267,7 +268,7 @@ def import_household_expense(session: Session, records: list[dict]) -> dict:
         cur = rec.get("currency") or "BEF"
         acc = get_or_create_account(session, ent.id, cur)
         session.add(LedgerEntry(
-            account_id=acc.id, date=date(rec["year"], 12, 30), reason="家庭支出",
+            account_id=acc.id, date=resolve_date(rec["year"]), reason="家庭支出",
             outflow=rec["amount"], balance=None, kind="expense",
             source_file=rec.get("source_file"),
         ))
@@ -331,10 +332,13 @@ def import_bank(session: Session, segments: list[dict], source_file: str | None 
             if inflow is None and outflow is None:
                 continue
             dt = row.get("date")
-            try:
-                d = datetime.fromisoformat((dt or "").replace("/", "-").replace("－", "-"))
-            except (TypeError, ValueError):
-                continue
+            if isinstance(dt, date):
+                d = dt  # parse_bank 已用 parse_date_cell 归一为 date（issue #19）
+            else:
+                try:
+                    d = datetime.fromisoformat((dt or "").replace("/", "-").replace("－", "-")).date()
+                except (TypeError, ValueError):
+                    continue
             kind = _ledger_kind_from_reason(row.get("reason", ""),
                                             is_inflow=(inflow or 0) > 0)
             session.add(LedgerEntry(

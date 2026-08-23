@@ -67,7 +67,7 @@ class TestParseBankHolderResolution:
             "|------|------|------|------|------|------|\n"
             "| 1982-01-01 | 祖父现金投资划拨 | 348.03 | | 348.03 | |\n"
         ))
-        segs = parse_bank(p)
+        segs, _w = parse_bank(p)
         assert len(segs) == 1
         # 祖父 → 规范名 Henri Peeters
         assert segs[0]["holder"] == "Henri Peeters"
@@ -82,7 +82,7 @@ class TestParseBankHolderResolution:
             "|------|------|------|------|------|------|\n"
             "| 1980-01-01 | 投资划拨 | 100 | | | |\n"
         ))
-        segs = parse_bank(p)
+        segs, _w = parse_bank(p)
         assert segs[0]["holder"] == "Frederik van Oranje"
         assert segs[0]["currency"] == "NLG"
 
@@ -98,7 +98,7 @@ class TestParseBankHolderResolution:
             "|------|------|------|------|------|------|\n"
             "| 1982-01-01 | 划拨 | 50 | | 50 | |\n"
         ))
-        segs = parse_bank(p)
+        segs, _w = parse_bank(p)
         assert len(segs) == 2
         assert segs[0]["currency"] == "BEF"
         assert segs[1]["currency"] == "LUF"
@@ -113,7 +113,7 @@ class TestParseBankHolderResolution:
             "|------|------|------|------|------|------|\n"
             "| 1982-01-01 | 划拨 | 100 | | 100 | |\n"
         ))
-        segs = parse_bank(p)
+        segs, _w = parse_bank(p)
         assert segs[0]["bank"] == "德意志银行"
 
     def test_no_holder_no_currency_segment_kept_but_holder_none(self, tmp_path):
@@ -123,7 +123,7 @@ class TestParseBankHolderResolution:
             "|------|------|------|------|------|------|\n"
             "| 1982-01-01 | 划拨 | 100 | | 100 | |\n"
         ))
-        segs = parse_bank(p)
+        segs, _w = parse_bank(p)
         # holder 解析失败 + 无兜底 → None（writer 会跳）
         assert segs[0]["holder"] is None
 
@@ -155,3 +155,29 @@ class TestLedgerKindFromReason:
 
     def test_property_income(self):
         assert _ledger_kind_from_reason("温泉庄园净值×12月", is_inflow=True) == "investment_income"
+
+class TestParseBankDateRule:
+    """issue #19：银行流水日期统一走 resolve_date 规则；超规则该行跳过 + warning。"""
+
+    def test_hinted_date_resolves(self, tmp_path):
+        p = _write(tmp_path, "祖父.md", (
+            "## 一、BEF（祖父）\n\n"
+            "| 日期 | 理由 | 收入 | 支出 | 余额 | 备注 |\n"
+            "|------|------|------|------|------|------|\n"
+            "| 1982年初 | 现金划拨 | 100 | | 100 | |\n"
+        ))
+        segs, _w = parse_bank(p)
+        # 年初 → 1982-01-01（resolve_date 规则 F），不再被整行丢弃
+        from datetime import date as _d
+        assert segs[0]["rows"][0]["date"] == _d(1982, 1, 1)
+
+    def test_out_of_spec_skipped_warns(self, tmp_path):
+        p = _write(tmp_path, "祖父.md", (
+            "## 一、BEF（祖父）\n\n"
+            "| 日期 | 理由 | 收入 | 支出 | 余额 | 备注 |\n"
+            "|------|------|------|------|------|------|\n"
+            "| 1982-13-01 | 非法月 | 100 | | 100 | |\n"
+        ))
+        segs, warnings = parse_bank(p)
+        assert segs[0]["rows"] == []
+        assert warnings and "date_rule" in warnings[0]

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from app.ingest.normalize import parse_number, resolve_date, currency_from
+from app.ingest.normalize import parse_number, resolve_date, currency_from, parse_date_cell
 
 
 class ParseError(Exception):
@@ -260,16 +260,20 @@ def parse_character(path: Path) -> list[dict]:
 
 
 # ---------------- timeline（时间线） ----------------
-def parse_timeline(path: Path) -> list[dict]:
+def parse_timeline(path: Path) -> tuple[list[dict], list[str]]:
     """decade 表 `年份|事件|备注`。
 
-    返回：每条事件记录（含 event_year / event_date / title / note / decade / source_file）。
+    返回：(记录, warnings)。每条事件含 event_year / event_date / title / note /
+    decade / source_file。
 
-    issue #8：parse_timeline 解析后无 writer 落库；这里额外解析 ISO 日期作为 event_date
+    issue #8：parse_timeline 解析后无 writer 落库；这里额外解析日期作 event_date
     （用于 H1 时间线对齐与日历游标快照）。
+    issue #19：日期统一走 normalize.parse_date_cell（内部 resolve_date 默认规则 F）；
+    超规则日期 → 回退当年默认 + warnings 提示补 date_rule。
     """
     lines = _lines(path)
     recs: list[dict] = []
+    warnings: list[str] = []
     decade = None
     for line in lines:
         dm = re.match(r"^#+\s*(19\d0|20\d0)s\s*$", line.strip())
@@ -277,29 +281,25 @@ def parse_timeline(path: Path) -> list[dict]:
             decade = dm.group(1) + "s"
         cells = _split_table_row(line)
         if len(cells) >= 2:
-            y = re.match(r"(\d{4})", cells[0])
+            # 首个表格格任一位置含年份即视为事件行（允许「约1992年」等日期格）
+            y = re.search(r"(?:19|20)\d{2}", cells[0])
             if y and cells[1] and "年份" not in cells[0]:
                 ds = cells[0].strip()
-                # 解析 date_str：优先 YYYY-MM-DD，其次 YYYY-MM，最后 YYYY（→ 12-30）
-                from app.ingest.normalize import resolve_date
-                fm = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", ds)
-                fm_m = re.fullmatch(r"(\d{4})-(\d{2})", ds)
-                if fm:
-                    event_date = resolve_date(int(fm.group(1)), int(fm.group(2)), int(fm.group(3)))
-                elif fm_m:
-                    event_date = resolve_date(int(fm_m.group(1)), int(fm_m.group(2)))
-                else:
-                    event_date = resolve_date(int(y.group(1)))
+                d, _rule = parse_date_cell(ds)
+                if d is None:
+                    d = resolve_date(int(y.group(0)))  # 超规则 → 当年默认(12-30)
+                    warnings.append(
+                        f"时间线日期无法按 §6.2 解析「{ds}」，回退 {d.isoformat()}；建议补 date_rule")
                 recs.append({
-                    "event_year": int(y.group(1)),
-                    "event_date": event_date,
+                    "event_year": d.year,
+                    "event_date": d,
                     "date_str": ds,
                     "title": cells[1].strip(),
                     "note": cells[2].strip() if len(cells) > 2 else None,
                     "decade": decade,
                     "source_file": path.name,
                 })
-    return recs
+    return recs, warnings
 
 
 # ---------------- stock_tx（股票台账） ----------------
@@ -597,18 +597,23 @@ def _extract_bank_name_from_header(lines: list[str]) -> str | None:
     return None
 
 
-def parse_bank(path: Path) -> list[dict]:
+def parse_bank(path: Path) -> tuple[list[dict], list[str]]:
     """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。
 
-    返回：每节 dict（含 seg_title / currency / holder / bank / rows）；rows 中每条流水含
-    date / reason / inflow / outflow / balance / note。
+    返回：(segments, warnings)。每节 dict（含 seg_title / currency / holder / bank /
+    rows）；rows 中每条流水含 date(date 对象) / date_raw / reason / inflow / outflow /
+    balance / note。
 
     issue #9：补持有人解析（节标题「BEF（祖父Henri Peeters注入）」→ 祖父；文件 stem
     `祖父.md` → 祖父；最终回退 holder_entity_name）；补开户行从头部注释抽取。
+    issue #19：日期统一走 normalize.parse_date_cell（resolve_date 默认规则 F），非完整
+    年月日（YYYY / YYYY-MM / 月初 / 年初 / 上中下旬）不再被整行丢弃；超规则 → 该行跳过
+    + warnings 提示补 date_rule。
     """
     from app.ingest.holders import holder_entity_name
     lines = _lines(path)
     out: list[dict] = []
+    warnings: list[str] = []
     cur_seg: dict | None = None
     file_holder = holder_entity_name(path.stem)        # 文件名兜底
     bank_name = _extract_bank_name_from_header(lines)
@@ -626,9 +631,17 @@ def parse_bank(path: Path) -> list[dict]:
             out.append(cur_seg)
         else:
             cells = _split_table_row(line)
-            if cur_seg and cells and re.match(r"\d{4}[-/－]", cells[0]):
+            if cur_seg and cells and re.match(r"\d{4}(?:[-/－]|年|$)", cells[0]):
+                d, rule = parse_date_cell(cells[0])
+                if d is None:
+                    warnings.append(
+                        f"银行流水日期无法按 §6.2 解析「{cells[0].strip()}」，该行跳过；建议补 date_rule")
+                    i += 1
+                    continue
                 cur_seg["rows"].append({
-                    "date": cells[0].strip(),
+                    "date": d,
+                    "date_raw": cells[0].strip(),
+                    "date_rule": rule,
                     "reason": cells[1].strip() if len(cells) > 1 else "",
                     "inflow": parse_number(cells[2]) if len(cells) > 2 else None,
                     "outflow": parse_number(cells[3]) if len(cells) > 3 else None,
@@ -636,4 +649,4 @@ def parse_bank(path: Path) -> list[dict]:
                     "note": cells[5].strip() if len(cells) > 5 else None,
                 })
         i += 1
-    return out
+    return out, warnings
