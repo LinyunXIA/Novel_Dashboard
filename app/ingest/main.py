@@ -126,9 +126,17 @@ def ingest(
                 continue
             fx_total += writer.import_fx(s, r.records)["n"]
         closed = writer.close_2002_currency(s)["closed"]
+        # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）——
+        if not blocked_files:
+            from app.core.recompute import recompute_all, record_recompute_done
+            from app.core.snapshot import rebuild_snapshots as _rebuild
+            recompute_all(s, 1947)
+            _rebuild(s, range(1947, 2026), from_year=1947)
+            job = record_recompute_done(s, 1947, reason="ingest")
         s.flush()
         s.commit()
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}（seg 跳过 {bank_seg_skip}）、2002关池 {closed}、冲突拦截 {blocked_files}")
+        notif_part = f"；recompute job#{job['job_id']} 通知#{job['notification_id']}" if not blocked_files else ""
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}（seg 跳过 {bank_seg_skip}）、2002关池 {closed}、冲突拦截 {blocked_files}{notif_part}")
 
 
 @app.command()
@@ -148,13 +156,22 @@ def health(env: str = typer.Option("dev", "--env")):
 
 @app.command()
 def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Option(1947, "--from")):
-    """全库增量重算：从受影响起点年向后滚动账户余额（F-P0-12）。"""
-    from app.core.recompute import recompute_all
+    """全库增量重算：从受影响起点年向后滚动账户余额（F-P0-12）。
+
+    完成后写 recompute_job + recompute-done 通知（DESIGN §9.2 步骤3-4；issue #13）。
+    """
+    from app.core.recompute import recompute_all, record_recompute_done
+    from app.core.snapshot import rebuild_snapshots
     with _session_for(env) as s:
         res = recompute_all(s, from_year)
+        # §9.2c 重算后重建受影响起点起的快照（account/entity/family 三层，增量）
+        rebuild_snapshots(s, range(from_year, 2026), from_year=from_year)
+        # §9.2 步骤3-4：写 job + 通知
+        job = record_recompute_done(s, from_year, reason="recompute")
         s.commit()
         total_updated = sum(r["updated"] for r in res)
-        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起）")
+        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起）"
+                   f"；job#{job['job_id']} 通知#{job['notification_id']}")
 
 
 @app.command()
