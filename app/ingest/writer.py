@@ -203,6 +203,45 @@ def import_return_curves(session: Session, records: list[dict]) -> dict:
     return stats
 
 
+def import_timeline(session: Session, records: list[dict]) -> dict:
+    """时间线事件 → timeline_event。
+
+    幂等键：同 (event_year, title, source_file) 已存在 → 跳过；否则插入。
+    用于 H1 时间线对齐 / H1 时间线校验 / 日历游标。
+    """
+    from app.model import TimelineEvent
+    stats = {"n": 0, "skipped": 0}
+    if not records:
+        return stats
+    for rec in records:
+        title = (rec.get("title") or "").strip()
+        if not title:
+            continue
+        year = rec.get("event_year")
+        if year is None:
+            continue
+        exists = session.execute(
+            select(TimelineEvent.id).where(
+                TimelineEvent.event_year == year,
+                TimelineEvent.title == title,
+                TimelineEvent.source_file == rec.get("source_file"),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if exists is not None:
+            stats["skipped"] += 1
+            continue
+        session.add(TimelineEvent(
+            event_year=year,
+            event_date=rec.get("event_date"),
+            title=title,
+            note=rec.get("note"),
+            decade=rec.get("decade"),
+            source_file=rec.get("source_file"),
+        ))
+        stats["n"] += 1
+    return stats
+
+
 def import_salary(session: Session, records: list[dict]) -> dict:
     """薪资 → 逐年 income_stream(salary)，各归各（养父/养母），取文件税后值。"""
     from app.model.types import StreamType
