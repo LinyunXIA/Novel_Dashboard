@@ -143,7 +143,10 @@ def calendar(env: str = typer.Option("dev", "--env"), as_of: str = typer.Option(
 
 @app.command()
 def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(2001, "--year")):
-    """财富曲线视图：某年家族合计(USD) + 各币种分项。"""
+    """财富曲线视图：某年家族合计(USD) + 各币种分项。
+
+    汇率缺失币种不计入合计，并在底部显式告警（issue #2 修复：杜绝 1.0 静默 fallback）。
+    """
     from app.core.wealth import wealth_series
     with SessionLocal() as s:
         w = wealth_series(s, year, year)
@@ -151,6 +154,12 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
         typer.echo(f"[{env}] {year} 家族合计(展示USD) = {d.get('family_total_usd', 0):,.0f}")
         for cur, val in d.get("currencies", {}).items():
             typer.echo(f"   {cur}: {val:,.0f}")
+        missing = d.get("missing_rates", [])
+        if missing:
+            typer.secho(
+                f"   ⚠ 缺汇率未折算币种: {', '.join(missing)}（合计不含此部分）",
+                fg=typer.colors.YELLOW,
+            )
 
 
 @app.command()
