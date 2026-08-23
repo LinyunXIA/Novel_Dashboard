@@ -100,6 +100,17 @@ def health(env: str = typer.Option("dev", "--env")):
             typer.echo(f"  [{f['rule']}/{f['level']}] {f['location']}: {f['detail']}")
 
 
+@app.command()
+def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Option(1947, "--from")):
+    """全库增量重算：从受影响起点年向后滚动账户余额（F-P0-12）。"""
+    from app.core.recompute import recompute_all
+    with SessionLocal() as s:
+        res = recompute_all(s, from_year)
+        s.commit()
+        total_updated = sum(r["updated"] for r in res)
+        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起）")
+
+
 def _conflict_gate(s, r) -> dict:
     """对收益类文件做导入前冲突检测：H2 金额 / H5 引用。命中冲突 → 该文件不入库。"""
     from sqlalchemy import select as _sel
