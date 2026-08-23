@@ -17,6 +17,7 @@ class ParseResult:
     file: str
     category: str
     records: list = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     ok: bool = True
     error: str | None = None
 
@@ -36,6 +37,24 @@ class IngestReport:
     @property
     def skipped(self) -> list[ParseResult]:
         return [r for r in self.results if r.category == "PHASE2_EVENT"]
+
+    @property
+    def warnings(self) -> list[tuple[str, str]]:
+        """收集 (file, warning) 对，供上层展示。"""
+        out: list[tuple[str, str]] = []
+        for r in self.results:
+            for w in r.warnings:
+                out.append((r.file, w))
+        return out
+
+
+# 解析器签名有两种：(path) -> list 或 (path) -> (list, warnings)。
+# 下面通过 _call 统一处理。
+def _call(fn, path: Path) -> tuple[list, list[str]]:
+    out = fn(path)
+    if isinstance(out, tuple) and len(out) == 2:
+        return out[0], list(out[1] or [])
+    return out, []
 
 
 _PARSERS = {
@@ -68,7 +87,7 @@ def parse_one(rel: str, path: Path) -> ParseResult:
         pr.error = f"解析器未实现（{det.category}）"
         return pr
     try:
-        pr.records = fn(path)
+        pr.records, pr.warnings = _call(fn, path)
     except Exception as e:  # noqa: BLE001
         pr.ok = False
         pr.error = f"{type(e).__name__}: {e}"

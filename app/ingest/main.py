@@ -50,6 +50,12 @@ def run(
         typer.echo(f"  ✅ {r.category:12s} {r.file} ({len(r.records)} 条)")
     for r in report.failed:
         typer.echo(f"  ❌ {r.category:12s} {r.file} — {r.error}")
+    # issue #11：parser 警告（如 country 已设但未产出记录）
+    warns = report.warnings
+    if warns:
+        typer.echo(f"⚠ 解析告警 {len(warns)} 条：")
+        for f, w in warns:
+            typer.echo(f"   ⚠ {f}: {w}")
 
 
 @app.command()
