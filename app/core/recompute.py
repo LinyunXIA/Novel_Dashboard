@@ -3,10 +3,14 @@
 recompute_account(session, account_id, from_year)：
 - 重算该账户 from_year 起的余额链（ledger 逐行：后 = 前 + 入 − 出，按日期排序）
 - 写回 ledger.balance；之后可供快照/曲线读取。
+
+issue #28 修复：内部计算全程 Decimal（避免 float 二进制误差累积进账本）。
+SQLAlchemy Numeric 列读出来本就是 Decimal，原代码用 float() 转换丢精度。
 """
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import select
@@ -23,7 +27,9 @@ def recompute_account(session: Session, account_id: int, from_year: int) -> dict
     1. 基线只取 from_year 前最后一条分录的余额作为起算余额；from_year 起的所有行
        一律滚动重算（同年内不再「沿用已存在 balance 跳过」）。
     2. 不再有死代码覆盖：base 永远等于上一行的累计余额（首行则为 from_year 前最后
-       一行的 balance，未取到则为 0）。
+       一行的 balance，未取到则 0）。
+    3. issue #28：内部计算全程 Decimal；e.balance / e.inflow / e.outflow 读出来已
+       是 Decimal（SQLAlchemy Numeric 列），直接相加不再转 float。
     """
     entries = session.execute(
         select(LedgerEntry).where(LedgerEntry.account_id == account_id)
@@ -31,22 +37,22 @@ def recompute_account(session: Session, account_id: int, from_year: int) -> dict
     ).scalars().all()
 
     # 基线：from_year 前最后一条分录的余额；取不到则 0
-    baseline = 0.0
+    baseline: Decimal = Decimal(0)
     for e in entries:
         if e.date.year < from_year and e.balance is not None:
-            baseline = e.balance
+            baseline = Decimal(e.balance)
         elif e.date.year >= from_year:
             break
 
-    balance = float(baseline)
+    balance: Decimal = baseline
     years_updated = 0
     for e in entries:
         if e.date.year < from_year:
             continue                              # 锁定基线之前的行
-        inflow = float(e.inflow or 0.0)
-        outflow = float(e.outflow or 0.0)
+        inflow = Decimal(e.inflow) if e.inflow is not None else Decimal(0)
+        outflow = Decimal(e.outflow) if e.outflow is not None else Decimal(0)
         balance = balance + inflow - outflow
-        if e.balance is None or float(e.balance) != balance:
+        if e.balance is None or Decimal(e.balance) != balance:
             e.balance = balance
             years_updated += 1
     return {"account_id": account_id, "from_year": from_year,
