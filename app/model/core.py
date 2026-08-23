@@ -8,10 +8,15 @@ from sqlalchemy import (
     JSON, BigInteger, Boolean, CheckConstraint, Date, ForeignKey, Index,
     Integer, Numeric, String, Text, UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 from app.model.types import AccountStatus, EntityType, LedgerKind, SourceKind, StreamType
+
+# issue #21：测试在 SQLite 上跑（无 JSONB），生产 Postgres 才用 JSONB。with_variant 是
+# SQLAlchemy 标准 fallback 模式——同一 Python 类型在两个 dialect 都可读写。
+JSONBCompat = JSONB().with_variant(JSON(), "sqlite")
 
 
 class Entity(Base):
@@ -26,7 +31,7 @@ class Entity(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String)
     status: Mapped[Optional[str]] = mapped_column(String, comment="公司状态（仅 company；只增不减）")
-    fields: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False, server_default="{}")
+    fields: Mapped[dict] = mapped_column(JSONBCompat, default=dict, nullable=False, server_default="{}")
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     source: Mapped[Optional[str]] = mapped_column(String, default=SourceKind.FILE.value)

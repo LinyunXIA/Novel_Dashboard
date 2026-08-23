@@ -1,16 +1,51 @@
 """Derived / reference tables (DESIGN §5.2): return_curve, fx, snapshot, timeline, jobs..."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
-    Integer, JSON, Numeric, String, Text, UniqueConstraint,
+    Integer, JSON, Numeric, String, Text, UniqueConstraint, func,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.db import Base
+
+
+# issue #21：测试在 SQLite 上跑（无 JSONB / ARRAY），生产 Postgres 才用原生类型。
+# JSONB → JSON：with_variant 标准模式（JSON 文本透明序列化）。
+JSONBCompat = JSONB().with_variant(JSON(), "sqlite")
+
+
+class ArrayTextCompat(TypeDecorator):
+    """ARRAY(Text) 的 SQLite fallback：测试用 JSON 存 list[str]。
+
+    Postgres 直通 ARRAY(Text)；SQLite 用 JSON 存 list 字符串，读回 list。
+    """
+    impl = ARRAY(Text)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "sqlite":
+            return dialect.type_descriptor(JSON())
+        return dialect.type_descriptor(ARRAY(Text))
+
+    def process_bind_param(self, value, dialect):
+        if dialect.name == "sqlite" and value is not None and not isinstance(value, (str, bytes)):
+            return list(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if dialect.name == "sqlite" and isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+        return value
 
 
 class ReturnCurve(Base):
@@ -89,8 +124,10 @@ class UserDataOverlay(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     section: Mapped[str] = mapped_column(String, nullable=False, comment="'timeline' 等")
     key: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONBCompat, nullable=False)
+    # issue #21：原实现无 server_default 也无 Python default，INSERT 必炸 NOT NULL
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Snapshot(Base):
@@ -117,7 +154,9 @@ class SourceFileVersion(Base):
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # issue #21：补 server_default，否则 raw SQL/COPY 插入遇 NOT NULL 失败
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
     is_current: Mapped[Optional[bool]] = mapped_column(Boolean)
 
 
@@ -128,9 +167,12 @@ class RecomputeJob(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     start_year: Mapped[Optional[int]] = mapped_column(Integer)
     reason: Mapped[Optional[str]] = mapped_column(Text)
-    files: Mapped[Optional[list]] = mapped_column(JSON)
+    # issue #21：DESIGN §5.2 DDL 为 TEXT[]，实现误用 JSON；改回 ARRAY(Text) 恢复数组语义
+    files: Mapped[Optional[list[str]]] = mapped_column(ArrayTextCompat())
     status: Mapped[Optional[str]] = mapped_column(String, default="pending")
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # issue #21：补 server_default
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
@@ -142,9 +184,11 @@ class Notification(Base):
     kind: Mapped[Optional[str]] = mapped_column(String)
     title: Mapped[Optional[str]] = mapped_column(String)
     message: Mapped[Optional[str]] = mapped_column(Text)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON)
+    payload: Mapped[Optional[dict]] = mapped_column(JSONBCompat)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # issue #21：补 server_default
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
 
 
 class Investment(Base):
