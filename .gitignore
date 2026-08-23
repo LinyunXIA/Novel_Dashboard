@@ -8,6 +8,10 @@ Design_Folder/
 __pycache__/
 *.py[cod]
 
+# 前端依赖与构建产物
+frontend/node_modules/
+frontend/dist/
+
 # 数据输入/覆盖层目录（仅保留目录占位 .gitkeep）
 data/
 !data/
