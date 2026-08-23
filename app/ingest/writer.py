@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -272,6 +272,78 @@ def import_household_expense(session: Session, records: list[dict]) -> dict:
             source_file=rec.get("source_file"),
         ))
         stats["n"] += 1
+    return stats
+
+
+def _ledger_kind_from_reason(reason: str, *, is_inflow: bool) -> str:
+    """从「理由」文本推断 ledger kind（DESIGN §5.2 ledger_entry.kind）。"""
+    r = (reason or "").strip()
+    if not r:
+        return "income" if is_inflow else "expense"
+    # 投资类收益 → investment_income
+    if any(k in r for k in ("证券收入", "票息", "分红", "杠杆投资", "净值", "投资收入")):
+        return "investment_income"
+    # 划拨/注资/转入 → 仍是 income
+    if any(k in r for k in ("划拨", "注资", "转入", "转入", "增资")):
+        return "income"
+    # 支出/费用 → expense
+    if any(k in r for k in ("支出", "费用", "成本", "用工", "外包")):
+        return "expense"
+    return "income" if is_inflow else "expense"
+
+
+def import_bank(session: Session, segments: list[dict], source_file: str | None = None) -> dict:
+    """银行台账：每个 segment 一个 account(entity,currency,bank)，逐行写 ledger_entry。
+
+    - 缺 entity 归属（holder=None）→ 该 segment 跳过并计入 skipped；不静默丢
+    - 缺 currency → 该 segment 跳过
+    - 同行 inflow/outflow 都为 None → 跳过该行
+    - 余额缺失 → 存 None（重算时按 inflow-outflow 推进）
+
+    返回 {ledger: 行数, account: 账户数, skipped: 跳过 segment 数}
+    """
+    stats: dict[str, int] = {"ledger": 0, "account": 0, "skipped": 0}
+    for seg in segments:
+        holder = seg.get("holder")
+        cur = seg.get("currency")
+        bank = seg.get("bank")
+        rows = seg.get("rows") or []
+        if not holder:
+            stats["skipped"] += 1
+            continue
+        if not cur:
+            stats["skipped"] += 1
+            continue
+        # entity + account（唯一键：entity × currency × bank）
+        ent = upsert_entity(session, "person", holder)
+        acc = session.execute(
+            select(Account).where(
+                Account.entity_id == ent.id, Account.currency == cur, Account.bank == bank)
+        ).scalar_one_or_none()
+        if acc is None:
+            acc = Account(entity_id=ent.id, currency=cur, bank=bank)
+            session.add(acc)
+            session.flush()
+            stats["account"] += 1
+        for row in rows:
+            inflow = row.get("inflow")
+            outflow = row.get("outflow")
+            if inflow is None and outflow is None:
+                continue
+            dt = row.get("date")
+            try:
+                d = datetime.fromisoformat((dt or "").replace("/", "-").replace("－", "-"))
+            except (TypeError, ValueError):
+                continue
+            kind = _ledger_kind_from_reason(row.get("reason", ""),
+                                            is_inflow=(inflow or 0) > 0)
+            session.add(LedgerEntry(
+                account_id=acc.id, date=d, reason=row.get("reason"),
+                inflow=inflow, outflow=outflow, balance=row.get("balance"),
+                kind=kind, note=row.get("note"),
+                source_file=source_file,
+            ))
+            stats["ledger"] += 1
     return stats
 
 
