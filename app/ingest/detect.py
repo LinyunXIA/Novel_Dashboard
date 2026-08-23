@@ -1,6 +1,12 @@
 """文件→类别识别（DESIGN §6.1）。
 
 按 `input_dir 下的相对路径` 匹配；`基准/事件/` 为 Phase1 阶段项（跳过，Phase2 启用）。
+
+issue #26 修复：
+- `基准/CPI工资.md` 显式映射为 `cpi_wage`（DESIGN §6.1 类别表；之前落 unknown 报噪音）
+- `基准/公司/用工成本/` P1 范围 → `SKIP_P1`（DESIGN §13；Phase 1 不实现，跳过不报错）
+- `设计文件/` 创作约束笔记 → `SKIP_DOC`（不入库）
+SKIP_* 类别在 parse_one 显式跳过，不计入 unknown 报错。
 """
 from __future__ import annotations
 
@@ -10,6 +16,9 @@ from pathlib import Path
 # (前缀, 类别) —— 顺序敏感：更长/更精确前缀在前
 _PREFIX_RULES: list[tuple[str, str]] = [
     ("基准/事件/", "PHASE2_EVENT"),          # Phase1 跳过
+    ("基准/CPI工资.md", "cpi_wage"),          # issue #26：CPI 与工资增幅基准
+    ("基准/公司/用工成本/", "SKIP_P1"),        # issue #26：P1 §13 范围，Phase1 跳过
+    ("设计文件/", "SKIP_DOC"),                # issue #26：创作约束笔记，不入库
     ("经济/银行/", "bank"),
     ("经济/股票/", "stock_tx"),
     ("基准/收益表/惠民租房.md", "income_rent"),
@@ -25,6 +34,11 @@ _PREFIX_RULES: list[tuple[str, str]] = [
     ("人物/", "character"),
     ("时间线.md", "timeline"),
 ]
+
+
+def is_skip_category(category: str) -> bool:
+    """issue #26：SKIP_* 类别在 parse_one 显式跳过；供调用方判定。"""
+    return category.startswith("SKIP_")
 
 
 @dataclass(frozen=True)
