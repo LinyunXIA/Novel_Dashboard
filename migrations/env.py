@@ -8,8 +8,8 @@ from alembic import context
 from app.config import get_config
 from app.db import Base
 
-# ORM 模型在此导入以注册到 metadata（后续 F-P0-07 填充各表；现为空）。
-# from app.model import *  # noqa
+# ORM 模型导入以注册到 metadata（all 表由此注册，供 autogenerate 检测）。
+from app import model as app_model  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

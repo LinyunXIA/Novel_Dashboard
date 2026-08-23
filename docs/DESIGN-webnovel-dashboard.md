@@ -810,7 +810,7 @@ class Importer(Protocol):
 | F-P0-04 | **Phase1 摄入** | 初始资产建档(initial_asset) + 现金进余额 | §6.5 | ⬜ |
 | F-P0-05 | **Phase1 摄入** | 收益文件(租/经营性房/祖产债券/开店/薪资)模块化挂账(income_stream) | §6.5/§6.3 | ⬜ |
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR | §6.5/§6.6 | ⬜ |
-| F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ⬜ |
+| F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
 | F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py） | §8 | ⬜ |
 | F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD） | §7/§8 | ⬜ |
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动 | §8 | ⬜ |
