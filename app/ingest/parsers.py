@@ -311,6 +311,56 @@ def parse_initial_asset(path: Path) -> list[dict]:
     return recs
 
 
+# ---------------- income_security（祖产债券收益流） ----------------
+_BUND_HOLDER = {"荷兰": "养外祖父", "丹麦": "养外祖母", "瑞典": "养祖母", "比利时": "养祖父", "卢森堡": "养祖父"}
+
+
+def _bund_holder(country: str) -> str:
+    return _BUND_HOLDER.get(country, country)
+
+
+def _next_line_rate(lines: list[str], idx: int) -> float | None:
+    for k in range(idx + 1, min(idx + 4, len(lines))):
+        m = re.search(r"票面?\s*固定\s*([\d.]+)\s*%", lines[k])
+        if m:
+            return parse_number(m.group(1))
+    return None
+
+
+def parse_income_security(path: Path) -> list[dict]:
+    """祖产股票债券：国家 × 每券 {面值, 固定票息%。币种}。
+
+    产出"每券"记录；归属 entity + 币种由持有国 → 铁律映射（F-P0-05）。
+    逐年票息 = 面值 × 票息（固定费率，全周期不变；由 writer 生成 income_stream）。
+    """
+    from app.ingest.holders import holder_currencies
+    lines = _lines(path)
+    recs: list[dict] = []
+    country = None
+    for idx, line in enumerate(lines):
+        cm = re.match(r"^##\s*(荷兰|丹麦|瑞典|比利时|卢森堡)债券", line)
+        if cm:
+            country = cm.group(1)
+            continue
+        # 每券：`### N. 名称（面值 X 币种，固定票息Y%）`
+        m = re.match(r"^###\s+\d+\.\s*(.+?)（面值\s*([\d,]+)\s*([A-Za-z一-鿿]{2,8})", line)
+        if not m or not country:
+            continue
+        cur_code = m.group(3)
+        face_cur = _cur(cur_code) or (holder_currencies(_bund_holder(country))[0] if country else None)
+        # 票息：同行（`票面固定X%` / `固定票息X%`）或下行
+        rate = None
+        rm = re.search(r"(?:票面?\s*固定\s*票息|票面?\s*固定|固定\s*票息)\s*([\d.]+)\s*%", line)
+        if rm:
+            rate = parse_number(rm.group(1))
+        else:
+            rate = _next_line_rate(lines, idx)
+        recs.append({"country": country, "name": m.group(1).strip(),
+                     "face_value": parse_number(m.group(2)), "currency": face_cur,
+                     "rate_pct": rate, "holder": _bund_holder(country)})
+    return recs
+
+
 # ---------------- bank（银行台账） ----------------
 def parse_bank(path: Path) -> list[dict]:
     """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。"""

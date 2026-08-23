@@ -53,20 +53,21 @@ def ingest(
     从 Design_Folder（source_dir）读取基础数据；commit 前整批事务，失败回滚。
     """
     cfg = get_config(env)
-    from sqlalchemy import func
     with SessionLocal() as s:
-        # character
         rep = run_ingest(cfg.source_dir)
-        ck = 0; ia = {"asset": 0, "cash": 0}
+        ck = 0; ia = {"asset": 0, "cash": 0}; sec = {"stream": 0}
         for r in rep.ok:
             if r.category == "character" and r.records:
                 ck += writer.import_characters(s, r.records, r.file)["imported"]
             if r.category == "initial_asset" and r.records:
                 st = writer.import_initial_assets(s, r.records)
                 ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
+            if r.category == "income_security" and r.records:
+                st = writer.import_income_security(s, r.records)
+                sec["stream"] += st["stream"]
         s.flush()
         s.commit()
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔")
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔、祖产债券逐年票息 {sec['stream']} 行")
 
 
 if __name__ == "__main__":

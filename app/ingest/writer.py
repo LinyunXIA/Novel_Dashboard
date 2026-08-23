@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.model import Account, Entity, InitialAsset, LedgerEntry
+from app.model import Account, Entity, IncomeStream, InitialAsset, LedgerEntry
 
 
 def upsert_entity(session: Session, entity_type: str, name: str,
@@ -79,4 +79,32 @@ def import_initial_assets(session: Session, records: list[dict], cash_year: int 
                 pct=rec.get("pct"), source_file=rec.get("source_file"),
             ))
             stats["asset"] += 1
+    return stats
+
+
+def import_income_security(session: Session, records: list[dict],
+                           years: tuple[int, int] = (1947, 2025), label_prefix: str = "祖产债券票息") -> dict:
+    """祖产债券每券 → 逐年 income_stream（面值 × 票息率）。
+
+    归属 entity = holder；币种按券；逐年票息金额=面值×rate。
+    返回 {stream: 生成行}。
+    """
+    stats = {"stream": 0}
+    for rec in records:
+        holder = rec.get("holder")
+        if not holder:
+            continue
+        ent = upsert_entity(session, "person", holder)
+        rate = rec.get("rate_pct") or 0.0
+        amount = (rec.get("face_value") or 0.0) * rate / 100.0
+        if not amount:
+            continue
+        for y in range(years[0], years[1] + 1):
+            session.add(IncomeStream(
+                entity_id=ent.id, stream_type="security", group_key="祖产债券",
+                currency=rec.get("currency"), year=y, amount=amount,
+                label=f"{label_prefix} · {rec.get('name','')[:20]}",
+                source_file=rec.get("source_file"),
+            ))
+            stats["stream"] += 1
     return stats

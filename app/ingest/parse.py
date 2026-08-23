@@ -46,10 +46,10 @@ _PARSERS = {
     "character": parsers.parse_character,
     "timeline": parsers.parse_timeline,
     "initial_asset": parsers.parse_initial_asset,
-    # F-P0-05/06 实现：income_rent/property/security/shop, salary, household_expense
+    "income_security": parsers.parse_income_security,
+    # F-P0-05 其余 / F-P0-06：income_rent/property/shop, salary, household_expense
     "income_rent": None,
     "income_property": None,
-    "income_security": None,
     "income_shop": None,
     "salary": None,
     "household_expense": None,
