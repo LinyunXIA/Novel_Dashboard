@@ -29,20 +29,26 @@ def upgrade() -> None:
     op.execute("ALTER TABLE user_data_overlay ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
     op.execute("ALTER TABLE notification ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
 
-    # ---- JSON → TEXT[] ----
-    # 现状 files 是 JSON 列，存量数据可能是：
-    # - NULL
-    # - JSON 数组（jsonb_typeof = 'array'）→ ARRAY(SELECT jsonb_array_elements_text(...))
-    # - JSON 标量/对象（理论上不应出现）→ 包成单元素数组，保守不丢数据
+    # ---- JSON → TEXT[]（两步：Postgres ALTER COLUMN TYPE USING 表达式不允许子查询）----
+    # Postgres USING 子句只能用本行其他列的表达式，不允许 SELECT 子查询。
+    # 改两步：①ADD COLUMN files_arr TEXT[]；②UPDATE ... ARRAY(jsonb_array_elements_text)；
+    # ③DROP COLUMN files；④RENAME files_arr → files。
+    op.execute("ALTER TABLE recompute_job ADD COLUMN files_arr TEXT[]")
+    # 数组型：jsonb_array_elements_text 展开
     op.execute("""
-        ALTER TABLE recompute_job ALTER COLUMN files TYPE TEXT[]
-        USING CASE
-            WHEN files IS NULL THEN NULL
-            WHEN jsonb_typeof(files::jsonb) = 'array'
-                THEN ARRAY(SELECT jsonb_array_elements_text(files::jsonb))
-            ELSE ARRAY[files::text]
-        END
+        UPDATE recompute_job SET files_arr = ARRAY(
+            SELECT jsonb_array_elements_text(files::jsonb)
+        )
+        WHERE files IS NOT NULL AND jsonb_typeof(files::jsonb) = 'array'
     """)
+    # 标量/对象型：理论上不应出现，保守包成单元素数组不丢数据
+    op.execute("""
+        UPDATE recompute_job SET files_arr = ARRAY[files::text]
+        WHERE files IS NOT NULL
+          AND jsonb_typeof(files::jsonb) IS DISTINCT FROM 'array'
+    """)
+    op.execute("ALTER TABLE recompute_job DROP COLUMN files")
+    op.execute("ALTER TABLE recompute_job RENAME COLUMN files_arr TO files")
 
     # ---- 时间戳列 server_default ----
     # user_data_overlay.updated_at 必须显式设置（NOT NULL 无 default → INSERT 炸）
@@ -59,14 +65,15 @@ def downgrade() -> None:
     op.execute("ALTER TABLE source_file_version ALTER COLUMN captured_at DROP DEFAULT")
     op.execute("ALTER TABLE user_data_overlay ALTER COLUMN updated_at DROP DEFAULT")
 
-    # ---- TEXT[] → JSON ----
+    # ---- TEXT[] → JSON（同样两步：USING 不能子查询；先用 to_jsonb 把数组 JSON 化）----
+    # ARRAY['a','b'] → jsonb 数组 '[a,b]'，再 DROP+RENAME
+    op.execute("ALTER TABLE recompute_job ADD COLUMN files_json JSON")
     op.execute("""
-        ALTER TABLE recompute_job ALTER COLUMN files TYPE JSON
-        USING CASE
-            WHEN files IS NULL THEN NULL
-            ELSE to_jsonb(files)::text::json
-        END
+        UPDATE recompute_job SET files_json = to_jsonb(files)::jsonb
+        WHERE files IS NOT NULL
     """)
+    op.execute("ALTER TABLE recompute_job DROP COLUMN files")
+    op.execute("ALTER TABLE recompute_job RENAME COLUMN files_json TO files")
 
     # ---- JSONB → JSON ----
     op.execute("ALTER TABLE notification ALTER COLUMN payload TYPE JSON USING payload::jsonb")
