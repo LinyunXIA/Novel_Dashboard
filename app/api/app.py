@@ -1,7 +1,14 @@
 """FastAPI 应用（F-P0-13）：基础只读路由 + 观测端 `/api/v1/` 前缀。
 
-DESIGN §14：实体/账户/流水/快照/财富/收益/汇率；集合支持 as_of/分页。
+DESIGN §14：实体/账户/流水/快照/财富/收益/汇率/时间线；集合支持 as_of/分页。
 本里程碑实现只读核心（写端点后续 P1 受限通道补）。
+
+issue #23 修复：
+- 抽 _paginated 公共分页；page>=1 校验，page_size 1..200
+- /health 返回 summarize 结果（真 H1-H5）；liveness 另走 /ping
+- 补 GET /accounts/{id} 详情
+- 补 GET /timeline-events(+/id) 只读列表（编年史屏数据来源）
+- snapshots 修 as_of 与 year 互斥语义
 """
 from __future__ import annotations
 
@@ -17,31 +24,47 @@ from app.core.calendar import snapshot_as_of
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
 from app.model import (Account, Entity, ExchangeRate, IncomeStream, LedgerEntry,
-                       Notification, ReturnCurve, Snapshot)
+                       Notification, ReturnCurve, Snapshot, TimelineEvent)
 
 app = FastAPI(title="Novel Dashboard API", version="0.1")
 
 API_PREFIX = "/api/v1"
 
 
-@app.get(API_PREFIX + "/health", include_in_schema=False)
+# ---------------- Liveness（与健康汇总分离；issue #23） ----------------
+@app.get(API_PREFIX + "/ping", include_in_schema=True)
 def _ping():
+    """纯 liveness 探针：不连 DB、不查健康，给 k8s/容器探活用。"""
     return {"status": "ok"}
+
+
+@app.get(API_PREFIX + "/health")
+def health(db: Session = Depends(get_db)):
+    """真 H1-H5 汇总（issue #23：原 /health 是冒牌 ping；现换为健康摘要）。
+
+    返回 run_report 的完整问题清单 + 每规则计数。
+    """
+    return {"summary": summarize(db), "findings": run_report(db)}
 
 
 # ---------------- 实体 ----------------
 @app.get(API_PREFIX + "/entities")
 def list_entities(
     type: Optional[str] = Query(None, description="person|company|asset|family"),
-    page: int = 1, page_size: int = Query(50, le=200),
+    page: int = Query(1, ge=1, description="页码，从 1 起"),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     q = select(Entity)
     if type:
         q = q.where(Entity.entity_type == type)
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
     rows = db.execute(q.order_by(Entity.id).offset((page - 1) * page_size).limit(page_size)).scalars().all()
-    return [{"id": e.id, "type": e.entity_type, "name": e.name, "status": e.status,
-             "display_name": e.display_name, "fields": e.fields} for e in rows]
+    return {
+        "items": [{"id": e.id, "type": e.entity_type, "name": e.name, "status": e.status,
+                   "display_name": e.display_name, "fields": e.fields} for e in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
 
 
 @app.get(API_PREFIX + "/entities/{entity_id}")
@@ -55,47 +78,91 @@ def get_entity(entity_id: int, db: Session = Depends(get_db)):
 
 # ---------------- 账户 ----------------
 @app.get(API_PREFIX + "/accounts")
-def list_accounts(entity_id: Optional[int] = None, currency: Optional[str] = None,
-                  db: Session = Depends(get_db)):
+def list_accounts(
+    entity_id: Optional[int] = None,
+    currency: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """issue #23：补分页（与 entities 对齐）。"""
     q = select(Account)
     if entity_id:
         q = q.where(Account.entity_id == entity_id)
     if currency:
         q = q.where(Account.currency == currency)
-    rows = db.execute(q).scalars().all()
-    return [{"id": a.id, "entity_id": a.entity_id, "currency": a.currency,
-             "status": a.status, "closed_on": a.closed_on, "migrate_to": a.migrate_to_currency} for a in rows]
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(Account.id).offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"id": a.id, "entity_id": a.entity_id, "currency": a.currency,
+                   "status": a.status, "closed_on": a.closed_on,
+                   "migrate_to": a.migrate_to_currency} for a in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+@app.get(API_PREFIX + "/accounts/{account_id}")
+def get_account(account_id: int, db: Session = Depends(get_db)):
+    """issue #23：补账户详情（含开户行/状态/关池日）。"""
+    a = db.get(Account, account_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="account not found")
+    return {
+        "id": a.id, "entity_id": a.entity_id, "currency": a.currency,
+        "status": a.status, "closed_on": a.closed_on,
+        "migrate_to": a.migrate_to_currency, "bank": a.bank,
+    }
 
 
 @app.get(API_PREFIX + "/accounts/{account_id}/ledger-entries")
-def account_ledger(account_id: int, year: Optional[int] = None, db: Session = Depends(get_db)):
+def account_ledger(
+    account_id: int,
+    year: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """issue #23：补分页。"""
     q = select(LedgerEntry).where(LedgerEntry.account_id == account_id)
     if year:
         q = q.where(func.extract("year", LedgerEntry.date) == year)
-    rows = db.execute(q.order_by(LedgerEntry.date)).scalars().all()
-    return [{"id": e.id, "date": e.date.isoformat(), "reason": e.reason,
-             "inflow": float(e.inflow) if e.inflow is not None else None,
-             "outflow": float(e.outflow) if e.outflow is not None else None,
-             "balance": float(e.balance) if e.balance is not None else None,
-             "kind": e.kind} for e in rows]
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(LedgerEntry.date, LedgerEntry.id)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"id": e.id, "date": e.date.isoformat(), "reason": e.reason,
+                   "inflow": float(e.inflow) if e.inflow is not None else None,
+                   "outflow": float(e.outflow) if e.outflow is not None else None,
+                   "balance": float(e.balance) if e.balance is not None else None,
+                   "kind": e.kind} for e in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
 
 
 # ---------------- 快照 / 日历游标 ----------------
 @app.get(API_PREFIX + "/snapshots")
-def snapshots(as_of: Optional[date] = None, year: Optional[int] = None,
-              scope: Optional[str] = None, db: Session = Depends(get_db)):
-    q = select(Snapshot)
+def snapshots(
+    as_of: Optional[date] = None,
+    year: Optional[int] = None,
+    scope: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """issue #23：as_of 与 year 互斥（同时给 → 422），避免语义混叠静默忽略。"""
+    if as_of and year:
+        raise HTTPException(status_code=422, detail="as_of 与 year 不能同时指定")
     if as_of:
         snaps = snapshot_as_of(db, as_of)
         if scope:
             snaps = [s for s in snaps if s["scope"] == scope]
         return snaps
+    q = select(Snapshot)
     if year:
         q = q.where(Snapshot.as_of_year == year)
     if scope:
         q = q.where(Snapshot.scope == scope)
     rows = db.execute(q).scalars().all()
-    return [{"year": s.as_of_year, "scope": s.scope, "value": float(s.value) if s.value is not None else 0.0,
+    return [{"year": s.as_of_year, "scope": s.scope,
+             "value": float(s.value) if s.value is not None else 0.0,
              "currency": s.currency} for s in rows]
 
 
@@ -107,8 +174,15 @@ def wealth(year_from: int = 1947, year_to: int = 2025, db: Session = Depends(get
 
 # ---------------- 收益曲线 ----------------
 @app.get(API_PREFIX + "/returns")
-def returns(country: Optional[str] = None, risk_lvl: Optional[str] = None, year: Optional[int] = None,
-            db: Session = Depends(get_db)):
+def returns(
+    country: Optional[str] = None,
+    risk_lvl: Optional[str] = None,
+    year: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """issue #23：补分页。"""
     q = select(ReturnCurve)
     if country:
         q = q.where(ReturnCurve.country == country)
@@ -116,21 +190,77 @@ def returns(country: Optional[str] = None, risk_lvl: Optional[str] = None, year:
         q = q.where(ReturnCurve.risk_lvl == risk_lvl)
     if year:
         q = q.where(ReturnCurve.year == year)
-    rows = db.execute(q.order_by(ReturnCurve.country, ReturnCurve.year)).scalars().all()
-    return [{"country": r.country, "risk_lvl": r.risk_lvl, "year": r.year,
-             "rate": float(r.rate) if r.rate is not None else None} for r in rows]
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(ReturnCurve.country, ReturnCurve.year)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"country": r.country, "risk_lvl": r.risk_lvl, "year": r.year,
+                   "rate": float(r.rate) if r.rate is not None else None} for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
 
 
 # ---------------- 汇率 ----------------
 @app.get(API_PREFIX + "/exchange-rates")
-def fx(fx_from: Optional[str] = None, fx_to: Optional[str] = None, db: Session = Depends(get_db)):
+def fx(
+    fx_from: Optional[str] = None,
+    fx_to: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """issue #23：补分页。"""
     q = select(ExchangeRate)
     if fx_from:
         q = q.where(ExchangeRate.fx_from == fx_from)
     if fx_to:
         q = q.where(ExchangeRate.fx_to == fx_to)
-    rows = db.execute(q).scalars().all()
-    return [{"from": r.fx_from, "to": r.fx_to, "year": r.year, "rate": float(r.rate) if r.rate else None} for r in rows]
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(ExchangeRate.fx_from, ExchangeRate.fx_to, ExchangeRate.year)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"from": r.fx_from, "to": r.fx_to, "year": r.year,
+                   "rate": float(r.rate) if r.rate else None} for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+# ---------------- 时间线（issue #23：编年史屏数据来源） ----------------
+@app.get(API_PREFIX + "/timeline-events")
+def list_timeline_events(
+    year: Optional[int] = None,
+    decade: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    q = select(TimelineEvent)
+    if year is not None:
+        q = q.where(TimelineEvent.event_year == year)
+    if decade:
+        q = q.where(TimelineEvent.decade == decade)
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(TimelineEvent.event_year, TimelineEvent.id)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"id": t.id, "event_year": t.event_year,
+                   "event_date": t.event_date.isoformat() if t.event_date else None,
+                   "title": t.title, "note": t.note, "decade": t.decade,
+                   "overlay": t.overlay} for t in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+@app.get(API_PREFIX + "/timeline-events/{event_id}")
+def get_timeline_event(event_id: int, db: Session = Depends(get_db)):
+    t = db.get(TimelineEvent, event_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="timeline event not found")
+    return {"id": t.id, "event_year": t.event_year,
+            "event_date": t.event_date.isoformat() if t.event_date else None,
+            "title": t.title, "note": t.note, "decade": t.decade,
+            "overlay": t.overlay,
+            "source_file": t.source_file, "source_line": t.source_line}
 
 
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
@@ -138,14 +268,14 @@ def fx(fx_from: Optional[str] = None, fx_to: Optional[str] = None, db: Session =
 def list_notifications(unread_only: bool = True, limit: int = Query(20, le=200),
                        db: Session = Depends(get_db)):
     """非阻断提示列表（重算完成/文件更新等）；默认仅未读，按创建倒序。"""
-    from datetime import datetime, timedelta
     q = select(Notification)
     if unread_only:
         q = q.where(Notification.read_at.is_(None))
     rows = db.execute(q.order_by(Notification.created_at.desc()).limit(limit)).scalars().all()
     return [{"id": n.id, "job_id": n.job_id, "kind": n.kind, "title": n.title,
              "message": n.message, "payload": n.payload,
-             "read": n.read_at is not None, "created_at": n.created_at.isoformat() if n.created_at else None}
+             "read": n.read_at is not None,
+             "created_at": n.created_at.isoformat() if n.created_at else None}
             for n in rows]
 
 
@@ -164,7 +294,6 @@ def mark_notification_read(notif_id: int, db: Session = Depends(get_db)):
 # ---------------- 总量概览 ----------------
 @app.get(API_PREFIX + "/overview")
 def overview(db: Session = Depends(get_db)):
-    from app.model import IncomeStream, TimelineEvent
     n_ent = db.execute(select(func.count()).select_from(Entity)).scalar()
     n_acc = db.execute(select(func.count()).select_from(Account)).scalar()
     n_snap = db.execute(select(func.count()).select_from(Snapshot)).scalar()

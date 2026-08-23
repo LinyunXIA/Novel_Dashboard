@@ -197,7 +197,9 @@ def run_report(session: Session) -> list[dict]:
 def summarize(session: Session) -> dict:
     """返回每规则计数（供 overview 汇总）。"""
     report = run_report(session)
-    summary: dict[str, dict] = {}
+    # issue #23 / API 健康视图：预填 H1..H5 即使 0 也有键，前端可稳定读 summary['H1']
+    summary: dict[str, dict] = {rule: {"total": 0, "warn": 0, "crit": 0}
+                                for rule in ("H1", "H2", "H3", "H4", "H5")}
     for r in report:
         s = summary.setdefault(r["rule"], {"total": 0, "warn": 0, "crit": 0})
         s["total"] += 1
