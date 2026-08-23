@@ -38,16 +38,42 @@ class ConflictReport:
         self.problems.append({"rule": rule, "line": line, "detail": desc})
 
 
+def _resolve_entity_id(session: Session, name: str | None) -> int | None:
+    """按登记名解析 entity id（issue #68）：
+
+    - 先精确匹配；
+    - 再走 holders.TITLE_ENTITY 别名归一（如「养父」→「Joren Peeters」、
+      「祖父」→「Henri Peeters」），与 writer 侧持有人口径一致。
+    """
+    from app.ingest.holders import holder_entity_name
+    from app.model import Entity
+    if not name:
+        return None
+    hit = session.execute(
+        select(Entity.id).where(Entity.name == name)
+    ).scalar_one_or_none()
+    if hit is not None:
+        return int(hit)
+    canon = holder_entity_name(name)
+    if canon and canon != name:
+        hit = session.execute(
+            select(Entity.id).where(Entity.name == canon)
+        ).scalar_one_or_none()
+        if hit is not None:
+            return int(hit)
+    return None
+
+
 def check_income_stream_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
     """income_stream 金额冲突（H2）：同 (entity, stream_type, currency, year) 已存在且金额不同 → 拦。"""
     rep = ConflictReport(file)
     from app.model import Entity
     for rec in records:
-        ent = session.execute(
-            select(Entity.id).where(Entity.name == rec.get("entity_name", rec.get("holder", "")))
-        ).scalar_one_or_none()
+        # issue #68：键存在值为 None 时 .get 的 default 不生效 → 显式 or 回退
+        ent_name = rec.get("entity_name") or rec.get("holder")
+        ent = _resolve_entity_id(session, ent_name)
         if ent is None:
-            rep.add("H5-引用", rec, f"entity 不存在: {rec.get('entity_name', rec.get('holder'))}")
+            rep.add("H5-引用", rec, f"entity 不存在: {ent_name}")
             continue
         st = rec.get("stream_type")
         cur = rec.get("currency")
@@ -100,9 +126,7 @@ def check_bank_import_conflict(session: Session, file: str, segments: list[dict]
         rows = seg.get("rows") or []
         if not holder or not rows:
             continue                                  # 缺持有人/无流水的 segment 归 writer 跳过，非阻断
-        ent = session.execute(
-            select(Entity.id).where(Entity.name == holder)
-        ).scalar_one_or_none()
+        ent = _resolve_entity_id(session, holder)
         if ent is None:
             rep.add("H5-引用", seg.get("seg_title") or holder, f"entity 不存在: {holder}")
             continue

@@ -61,10 +61,15 @@ def upsert_relationship(session: Session, from_entity_id: int, to_entity_id: int
     return rel
 
 
-def get_or_create_account(session: Session, entity_id: int, currency: str, bank: str | None = None) -> Account:
+def get_or_create_account(session: Session, entity_id: int, currency: str,
+                          bank: str | None = None) -> Account:
+    """按唯一键 (entity, currency, bank) 取/建账户（issue #68：bank 参与匹配，
+    避免同主体同币种多开户行时 scalar_one_or_none 命中多行）。"""
     acc = session.execute(
-        select(Account).where(Account.entity_id == entity_id, Account.currency == currency)
-    ).scalar_one_or_none()
+        select(Account).where(Account.entity_id == entity_id,
+                              Account.currency == currency,
+                              Account.bank == bank)
+    ).scalars().first()
     if acc is None:
         acc = Account(entity_id=entity_id, currency=currency, bank=bank)
         session.add(acc)
@@ -106,9 +111,13 @@ def import_characters(session: Session, records: list[dict], source_file: str | 
 def import_initial_assets(session: Session, records: list[dict], cash_year: int = 1947) -> dict:
     """初始资产 → entity/inital_asset/account；现金进余额(ledger 首笔)。
 
+    issue #68：自然键去重兜底——现金按 (account, reason='初始现金', inflow)、
+    存量按 (entity, asset_type, name, group_key) 已存在则跳过；
+    兼容早于 source_file_version 机制导入的存量库重复 ingest 场景。
+
     返回统计。
     """
-    stats = {"asset": 0, "cash": 0}
+    stats = {"asset": 0, "cash": 0, "cash_skipped": 0, "asset_skipped": 0}
     for rec in records:
         ent = upsert_entity(session, "person", rec["entity_name"])
         if rec["asset_type"] == "cash":
@@ -116,11 +125,32 @@ def import_initial_assets(session: Session, records: list[dict], cash_year: int 
             cur = rec["currency"]
             acc = get_or_create_account(session, ent.id, cur)
             amort = rec["face_value"]
+            dup = session.execute(
+                select(LedgerEntry.id).where(
+                    LedgerEntry.account_id == acc.id,
+                    LedgerEntry.reason == "初始现金",
+                    LedgerEntry.inflow == amort,
+                ).limit(1)
+            ).scalar_one_or_none()
+            if dup is not None:
+                stats["cash_skipped"] += 1
+                continue
             session.add(LedgerEntry(account_id=acc.id, date=resolve_date(cash_year),
                                     reason="初始现金", inflow=amort, balance=amort,
                                     kind="income", source_file=rec.get("source_file")))
             stats["cash"] += 1
         else:
+            dup = session.execute(
+                select(InitialAsset.id).where(
+                    InitialAsset.entity_id == ent.id,
+                    InitialAsset.asset_type == rec["asset_type"],
+                    InitialAsset.name == rec.get("name"),
+                    InitialAsset.group_key == rec.get("group_key"),
+                ).limit(1)
+            ).scalar_one_or_none()
+            if dup is not None:
+                stats["asset_skipped"] += 1
+                continue
             session.add(InitialAsset(
                 entity_id=ent.id, asset_type=rec["asset_type"],
                 group_key=rec.get("group_key"), currency=rec.get("currency"),
@@ -309,14 +339,30 @@ def import_salary(session: Session, records: list[dict]) -> dict:
 
 
 def import_household_expense(session: Session, records: list[dict]) -> dict:
-    """家庭支出 → 逐年 ledger 支出（挂 Henri Peeters 账户，多年一致 BEF）。"""
+    """家庭支出 → 逐年 ledger 支出（挂 Henri Peeters 账户，多年一致 BEF）。
+
+    issue #68：自然键去重兜底——(account, date, reason='家庭支出', outflow) 已存在
+    则跳过；兼容早于 source_file_version 机制导入的存量库重复 ingest 场景。
+    """
     stats = {"n": 0, "skipped": 0}
     for rec in records:
         ent = upsert_entity(session, "person", rec["holder"])
         cur = rec.get("currency") or "BEF"
         acc = get_or_create_account(session, ent.id, cur)
+        d = resolve_date(rec["year"])
+        dup = session.execute(
+            select(LedgerEntry.id).where(
+                LedgerEntry.account_id == acc.id,
+                LedgerEntry.date == d,
+                LedgerEntry.reason == "家庭支出",
+                LedgerEntry.outflow == rec["amount"],
+            ).limit(1)
+        ).scalar_one_or_none()
+        if dup is not None:
+            stats["skipped"] += 1
+            continue
         session.add(LedgerEntry(
-            account_id=acc.id, date=resolve_date(rec["year"]), reason="家庭支出",
+            account_id=acc.id, date=d, reason="家庭支出",
             outflow=rec["amount"], balance=None, kind="expense",
             source_file=rec.get("source_file"),
         ))

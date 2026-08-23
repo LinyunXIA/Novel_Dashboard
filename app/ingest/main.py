@@ -5,10 +5,14 @@
     python -m app.ingest.main --env prod --full    # 全量重建
     python -m app.ingest.main ping                 # DB 连通自检
 
-F-P0-01：骨架（config/db/CLI）已就绪；detect/parsers/normalize/conflict 后续里程碑填充。
+F-P0-01：骨架（config/db/CLI）；F-P0-02..06 落库链路。
 
-设计要点（issue #3）：每个子命令的 session 由 \`--env\` 显式构造（make_sessionmaker），
+设计要点（issue #3）：每个子命令的 session 由 `--env` 显式构造（make_sessionmaker），
 不再走导入期绑定的模块 SessionLocal，杜绝「打印 prod 实际写入 dev」的脱节。
+
+issue #68：幂等统一为 source_file_version(is_current) 内容哈希判定；
+initial_asset / household_expense 分支接入守卫；_record_current_version 版本递增；
+核心落库循环抽为 import_all()（可测试）。
 """
 from __future__ import annotations
 
@@ -23,13 +27,13 @@ app = typer.Typer(help="Novel Dashboard ingest")
 
 
 def _session_for(env: str):
-    """按 \`--env\` 构造 sessionmaker（with-block 兼容 SessionLocal 接口）。"""
+    """按 `--env` 构造 sessionmaker（with-block 兼容 SessionLocal 接口）。"""
     return make_sessionmaker(env)()
 
 
 @app.command()
 def ping(env: str = typer.Option("dev", "--env")):
-    """数据库连通自检（按 \`--env\` 真正打到对应 DSN）。"""
+    """数据库连通自检（按 `--env` 真正打到对应 DSN）。"""
     cfg = get_config(env)
     ok = check_connection_for(env)
     typer.echo(f"[{cfg.env}] dsn={cfg.dsn}")
@@ -41,7 +45,7 @@ def run(
     env: str = typer.Option("dev", "--env"),
     full: bool = typer.Option(False, "--full", help="全量重建"),
 ):
-    """扫描输入目录 → detect → parse → 输出报告（F-P0-02；落库在后续里程碑）。"""
+    """扫描输入目录 → detect → parse → 输出报告（F-P0-02；不落库）。"""
     cfg = get_config(env)
     typer.echo(f"[{cfg.env}] 输入目录={cfg.input_dir}")
     report = run_ingest(cfg.input_dir)
@@ -50,7 +54,6 @@ def run(
         typer.echo(f"  ✅ {r.category:12s} {r.file} ({len(r.records)} 条)")
     for r in report.failed:
         typer.echo(f"  ❌ {r.category:12s} {r.file} — {r.error}")
-    # issue #11：parser 警告（如 country 已设但未产出记录）
     warns = report.warnings
     if warns:
         typer.echo(f"⚠ 解析告警 {len(warns)} 条：")
@@ -62,98 +65,238 @@ def run(
 def ingest(
     env: str = typer.Option("dev", "--env"),
 ):
-    """F-P0-04 落库：character→entity；initial_asset→entity/account/initial_asset/现金余额。
+    """F-P0-04..06 落库：从 Design_Folder（source_dir）读取基础数据并入库。
 
-    从 Design_Folder（source_dir）读取基础数据；commit 前整批事务，失败回滚。
-    Session 严格按 \`--env\` 构造（issue #3）。
+    Session 严格按 `--env` 构造（issue #3）；核心循环见 import_all。
     """
     cfg = get_config(env)
     with _session_for(env) as s:
-        rep = run_ingest(cfg.source_dir)
-        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; bank_n = 0; bank_seg_skip = 0; blocked_files = 0
-        fx_files = []
-        for r in rep.ok:
-            if r.category == "character" and r.records:
-                ck += writer.import_characters(s, r.records, r.file)["imported"]
-            if r.category == "return_table" and r.records:
-                rcur += writer.import_return_curves(s, r.records)["n"]
-            if r.category == "fx" and r.records:
-                fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
-            if r.category == "timeline" and r.records:
-                tl_n += writer.import_timeline(s, r.records)["n"]
-            if r.category == "bank" and r.records:
-                # issue #9/#14/#15：幂等 + 内容变更提示 + H4/H5 冲突检测
-                src = r.file
-                st_ = _file_import_state(s, r, cfg.source_dir)
-                if st_["status"] == "changed":
-                    typer.secho(f"   ⚠ {src}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过",
-                                fg=typer.colors.YELLOW)
-                    continue
-                if st_["status"] == "unchanged":
-                    continue                        # 幂等：内容一致才静默跳过
-                crep = conflict.check_bank_import_conflict(s, src, r.records)
-                if crep.blocked:
-                    blocked_files += 1
-                    for p in crep.problems:
-                        typer.echo(f"   ❌ {src}: [{p['rule']}] {p['line']}: {p['detail']}")
-                    continue
-                st = writer.import_bank(s, r.records, source_file=src)
-                bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
-                _record_current_version(s, r, cfg.source_dir)
-            if r.category == "initial_asset" and r.records:
-                st = writer.import_initial_assets(s, r.records)
-                ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
-            if r.category in ("income_security","income_rent","income_property","income_shop","salary") and r.records:
-                # issue #14/#15：幂等（内容一致跳过）+ 内容变更提示 + 冲突明细（调 conflict.py 而非复制版）
-                st_ = _file_import_state(s, r, cfg.source_dir)
-                if st_["status"] == "changed":
-                    typer.secho(f"   ⚠ {r.file}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过",
-                                fg=typer.colors.YELLOW)
-                    continue
-                if st_["status"] == "unchanged":
-                    continue                        # 幂等：内容一致才静默跳过
-                crep = conflict.check_income_stream_conflict(
-                    s, r.file, _normalize_conflict_recs(r.category, r.records))
-                if crep.blocked:
-                    blocked_files += 1
-                    for p in crep.problems:
-                        typer.echo(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
-                    continue
-                for rec in r.records:
-                    rec.setdefault("source_file", r.file)
-                if r.category == "income_security": sec += writer.import_income_security(s, r.records)["stream"]
-                if r.category == "income_rent": rent += writer.import_income_rent(s, r.records)["stream"]
-                if r.category == "income_property": prop += writer.import_income_property(s, r.records)["stream"]
-                if r.category == "income_shop": shop += writer.import_income_shop(s, r.records)["stream"]
-                if r.category == "salary": sal += writer.import_salary(s, r.records)["stream"]
-                _record_current_version(s, r, cfg.source_dir)
-            if r.category == "household_expense" and r.records:
-                he += writer.import_household_expense(s, r.records)["n"]
-        # —— 汇率两轮：权威文件(W全量)先入库为基准；其它 fx 文件检测与权威冲突，冲突则拦 ——
-        authority = [r for r in fx_files if conflict.is_authority_fx(r.file)]
-        others = [r for r in fx_files if not conflict.is_authority_fx(r.file)]
-        for r in authority:
-            fx_total += writer.import_fx(s, r.records)["n"]
-        for r in others:
-            crep = conflict.check_fx_authority_conflict(s, r.file, r.records)
-            if crep.blocked:
-                typer.echo(f"   ⚠ fx冲突拦截 {r.file}: {len(crep.problems)} 处（以权威表为准）")
-                blocked_files += 1
+        stats = import_all(s, cfg.source_dir, log=typer.echo)
+    typer.echo(f"[{cfg.env}] {stats['summary']}")
+
+
+def import_all(session, source_dir, log=None) -> dict:
+    """扫描 source_dir → 解析 → 冲突检测 → 落库 → 重算快照（F-P0-02..06 主链路）。
+
+    issue #68 抽取自原 ingest 命令体以便测试；幂等语义：
+    - 所有文件类目经 _file_import_state 判定 new/unchanged/changed，
+      unchanged 静默跳过、changed 提示待 P2 版本决策并跳过；
+    - writer 层另有自然键去重兜底（初始现金 / 家庭支出），兼容无版本记录的存量库。
+    commit 前整批事务，失败回滚（由调用方管理 session/commit）。
+    """
+    log = log or (lambda msg: print(msg))
+    ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0
+    sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; bank_n = 0; bank_seg_skip = 0
+    blocked_files = 0
+    job: dict = {}
+    fx_files = []
+    rep = run_ingest(source_dir)
+    # DESIGN §6.5 摄入顺序锁死：人物(entity) 先入 → 初始资产 → 收益/薪资/支出 → 银行。
+    # 收益挂账依赖 entity_id，不能按文件名字典序处理（issue #68）。
+    _ORDER = ("character", "return_table", "timeline", "initial_asset",
+              "income_security", "income_rent", "income_property",
+              "income_shop", "salary", "household_expense", "bank")
+    ordered = sorted(
+        rep.ok,
+        key=lambda r: (_ORDER.index(r.category) if r.category in _ORDER else 99, r.file),
+    )
+    for r in ordered:
+        if r.category == "character" and r.records:
+            ck += writer.import_characters(session, r.records, r.file)["imported"]
+        if r.category == "return_table" and r.records:
+            rcur += writer.import_return_curves(session, r.records)["n"]
+        if r.category == "fx" and r.records:
+            fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
+        if r.category == "timeline" and r.records:
+            tl_n += writer.import_timeline(session, r.records)["n"]
+        if r.category == "bank" and r.records:
+            src = r.file
+            if _skip_by_state(session, r, source_dir, log):
                 continue
-            fx_total += writer.import_fx(s, r.records)["n"]
-        cc = writer.close_2002_currency(s)
-        closed = cc["closed"]
-        # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）——
-        if not blocked_files:
-            from app.core.recompute import recompute_all, record_recompute_done
-            from app.core.snapshot import rebuild_snapshots as _rebuild
-            recompute_all(s, 1947)
-            _rebuild(s, range(1947, 2026), from_year=1947)
-            job = record_recompute_done(s, 1947, reason="ingest")
-        s.flush()
-        s.commit()
-        notif_part = f"；recompute job#{job['job_id']} 通知#{job['notification_id']}" if not blocked_files else ""
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}（seg 跳过 {bank_seg_skip}）、2002关池 {closed}（EUR承接 {cc['migrated']} / 零结转跳过 {cc['skipped_zero']}）、冲突拦截 {blocked_files}{notif_part}")
+            crep = conflict.check_bank_import_conflict(session, src, r.records)
+            if crep.blocked:
+                blocked_files += 1
+                for p in crep.problems:
+                    log(f"   ❌ {src}: [{p['rule']}] {p['line']}: {p['detail']}")
+                continue
+            st = writer.import_bank(session, r.records, source_file=src)
+            bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
+            _record_current_version(session, r, source_dir)
+        if r.category == "initial_asset" and r.records:
+            if _skip_by_state(session, r, source_dir, log):
+                continue
+            st = writer.import_initial_assets(session, r.records)
+            ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
+            _record_current_version(session, r, source_dir)
+        if r.category in ("income_security", "income_rent", "income_property",
+                          "income_shop", "salary") and r.records:
+            if _skip_by_state(session, r, source_dir, log):
+                continue
+            crep = conflict.check_income_stream_conflict(
+                session, r.file, _normalize_conflict_recs(r.category, r.records))
+            if crep.blocked:
+                blocked_files += 1
+                for p in crep.problems:
+                    log(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
+                continue
+            for rec in r.records:
+                rec.setdefault("source_file", r.file)
+            if r.category == "income_security": sec += writer.import_income_security(session, r.records)["stream"]
+            if r.category == "income_rent": rent += writer.import_income_rent(session, r.records)["stream"]
+            if r.category == "income_property": prop += writer.import_income_property(session, r.records)["stream"]
+            if r.category == "income_shop": shop += writer.import_income_shop(session, r.records)["stream"]
+            if r.category == "salary": sal += writer.import_salary(session, r.records)["stream"]
+            _record_current_version(session, r, source_dir)
+        if r.category == "household_expense" and r.records:
+            if _skip_by_state(session, r, source_dir, log):
+                continue
+            he += writer.import_household_expense(session, r.records)["n"]
+            _record_current_version(session, r, source_dir)
+    # —— 汇率两轮：权威文件(W全量)先入库为基准；其它 fx 文件检测与权威冲突，冲突则拦 ——
+    authority = [r for r in fx_files if conflict.is_authority_fx(r.file)]
+    others = [r for r in fx_files if not conflict.is_authority_fx(r.file)]
+    for r in authority:
+        fx_total += writer.import_fx(session, r.records)["n"]
+    for r in others:
+        crep = conflict.check_fx_authority_conflict(session, r.file, r.records)
+        if crep.blocked:
+            log(f"   ⚠ fx冲突拦截 {r.file}: {len(crep.problems)} 处（以权威表为准）")
+            blocked_files += 1
+            continue
+        fx_total += writer.import_fx(session, r.records)["n"]
+    cc = writer.close_2002_currency(session)
+    closed = cc["closed"]
+    # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）——
+    if not blocked_files:
+        from app.core.recompute import recompute_all, record_recompute_done
+        from app.core.snapshot import rebuild_snapshots as _rebuild
+        recompute_all(session, 1947)
+        _rebuild(session, range(1947, 2026), from_year=1947)
+        job = record_recompute_done(session, 1947, reason="ingest")
+    session.flush()
+    summary = (
+        f"落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、"
+        f"租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、"
+        f"收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}"
+        f"（seg 跳过 {bank_seg_skip}）、2002关池 {closed}"
+        f"（EUR承接 {cc['migrated']} / 零结转跳过 {cc['skipped_zero']}）、冲突拦截 {blocked_files}"
+        + (f"；recompute job#{job['job_id']} 通知#{job['notification_id']}" if job else "")
+    )
+    return {"summary": summary, "blocked": blocked_files,
+            "characters": ck, "initial_assets": ia["asset"], "cash": ia["cash"],
+            "security": sec, "rent": rent, "property": prop, "shop": shop,
+            "salary": sal, "household": he, "return_curves": rcur, "fx": fx_total,
+            "timeline": tl_n, "ledger": bank_n, "job": job}
+
+
+# ---- 收益/银行文件的幂等 + 内容变更提示（issue #14；issue #68 通用化） ----
+
+def _content_fingerprint(content: str) -> str:
+    import hashlib
+    return hashlib.sha1((content or "").encode("utf-8")).hexdigest()
+
+
+def _has_legacy_rows(session, rel_path: str) -> bool:
+    """无版本记录时探测「该文件是否曾以旧机制导入过」（issue #68 兼容存量库）。"""
+    from sqlalchemy import select as _sel
+    from app.model import IncomeStream, InitialAsset, LedgerEntry
+    for model in (IncomeStream, LedgerEntry, InitialAsset):
+        hit = session.execute(
+            _sel(model.id).where(model.source_file == rel_path).limit(1)
+        ).scalar_one_or_none()
+        if hit is not None:
+            return True
+    return False
+
+
+def _file_import_state(session, r, source_dir) -> dict:
+    """文件导入状态（issue #68：通用判定，供所有文件类目复用）。
+
+    以 source_file_version(is_current=True) 的内容哈希为权威基准：
+    - 无当前版本记录：
+        · 若旧表（income_stream/ledger_entry/initial_asset）已有该文件行 →
+          视为「unchanged」（存量库早于版本机制导入过，保守跳过防双计）；
+        · 否则 → new。
+    - 有版本记录：对比当前磁盘内容哈希 → 一致 unchanged / 不一致 changed。
+    返回 {"status": "new"|"unchanged"|"changed"}。
+    """
+    from sqlalchemy import select as _sel
+    from app.model import SourceFileVersion
+    row = session.execute(
+        _sel(SourceFileVersion).where(
+            SourceFileVersion.file_path == r.file,
+            SourceFileVersion.is_current.is_(True))
+        .order_by(SourceFileVersion.version.desc()).limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return {"status": "unchanged" if _has_legacy_rows(session, r.file) else "new"}
+    path = source_dir / r.file
+    try:
+        cur_content = path.read_text(encoding="utf-8") if path.exists() else None
+    except (OSError, UnicodeDecodeError):
+        cur_content = None
+    if cur_content is None:
+        return {"status": "unchanged"}
+    if _content_fingerprint(cur_content) != _content_fingerprint(row.content):
+        return {"status": "changed"}
+    return {"status": "unchanged"}
+
+
+def _skip_by_state(session, r, source_dir, log) -> bool:
+    """按文件状态决定是否跳过导入：changed 提示并跳过、unchanged 静默跳过。"""
+    st = _file_import_state(session, r, source_dir)
+    if st["status"] == "changed":
+        log(f"   ⚠ {r.file}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过")
+        return True
+    if st["status"] == "unchanged":
+        return True
+    return False
+
+
+def _record_current_version(session, r, source_dir):
+    """导入成功后记录当前内容版本（issue #68：递增版本号，旧版失活）。"""
+    from datetime import datetime
+    from sqlalchemy import func as _func, select as _sel
+    from app.model import SourceFileVersion
+    path = source_dir / r.file
+    if not path.exists():
+        return
+    content = path.read_text(encoding="utf-8")
+    prev = session.execute(
+        _sel(SourceFileVersion).where(
+            SourceFileVersion.file_path == r.file,
+            SourceFileVersion.is_current.is_(True))
+        .order_by(SourceFileVersion.version.desc()).limit(1)
+    ).scalar_one_or_none()
+    if prev is not None and _content_fingerprint(prev.content) == _content_fingerprint(content):
+        return                                  # 同内容不重复记版
+    next_v = (session.execute(
+        _sel(_func.max(SourceFileVersion.version))
+        .where(SourceFileVersion.file_path == r.file)
+    ).scalar() or 0) + 1
+    if prev is not None:
+        prev.is_current = False
+    session.add(SourceFileVersion(file_path=r.file, version=next_v, content=content,
+                                  captured_at=datetime.now(), is_current=True))
+
+
+def _normalize_conflict_recs(category: str, records: list[dict]) -> list[dict]:
+    """把各收益类别记录归一成冲突检测所需的 {entity_name, stream_type, currency, year, amount}。"""
+    out = []
+    for rec in records:
+        amt = rec.get("amount") if rec.get("amount") is not None else rec.get("after_tax")
+        ent = rec.get("entity_name") or rec.get("holder")
+        st = rec.get("stream_type") or _CAT_STREAM.get(category)
+        out.append({
+            "entity_name": ent, "stream_type": st,
+            "currency": rec.get("currency"),
+            "year": rec.get("year", rec.get("y0")), "amount": amt,
+        })
+    return out
+
+
+_CAT_STREAM = {"income_security": "security", "income_rent": "rent",
+               "income_property": "property", "income_shop": "shop", "salary": "salary"}
 
 
 @app.command()
@@ -187,7 +330,7 @@ def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Op
         job = record_recompute_done(s, from_year, reason="recompute")
         s.commit()
         total_updated = sum(r["updated"] for r in res)
-        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起）"
+        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起)"
                    f"；job#{job['job_id']} 通知#{job['notification_id']}")
 
 
@@ -235,79 +378,6 @@ def snapshot(env: str = typer.Option("dev", "--env"),
         r = rebuild_snapshots(s, range(from_year, 2026))
         s.commit()
         typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
-
-
-# ---- 收益/银行文件的幂等 + 内容变更提示（issue #14） ----
-_CAT_STREAM = {"income_security": "security", "income_rent": "rent",
-               "income_property": "property", "income_shop": "shop", "salary": "salary"}
-
-
-def _content_fingerprint(content: str) -> str:
-    import hashlib
-    return hashlib.sha1((content or "").encode("utf-8")).hexdigest()
-
-
-def _file_import_state(s, r, source_dir) -> dict:
-    """文件导入状态：已导入(source_file 命中) → unchanged/changed；未导入 → new。
-
-    用 source_file_version 记录首次导入时的内容哈希快照；再次导入对比当前文件内容。
-    判断 content 仅对比首行尾字符与行长，回答"改动了吗"而不写库。
-    返回 {"status": "new"|"unchanged"|"changed"}。
-    """
-    from sqlalchemy import select as _sel
-    from app.model import IncomeStream as _IS
-    already = s.execute(
-        _sel(_IS.id).where(_IS.source_file == r.file).limit(1)
-    ).scalar_one_or_none()
-    if already is None:
-        return {"status": "new"}
-    # 已导入：对比内容哈希快照
-    from app.model import SourceFileVersion
-    row = s.execute(
-        _sel(SourceFileVersion).where(
-            SourceFileVersion.file_path == r.file, SourceFileVersion.is_current.is_(True))
-        .order_by(SourceFileVersion.version.desc()).limit(1)
-    ).scalar_one_or_none()
-    if row is None:
-        return {"status": "unchanged"}            # 首次导入先于版本记录建立（旧库无快照）→ 保守跳过
-    path = source_dir / r.file
-    try:
-        cur_content = path.read_text(encoding="utf-8") if path.exists() else None
-    except (OSError, UnicodeDecodeError):
-        cur_content = None
-    if cur_content is None:
-        return {"status": "unchanged"}
-    prev_hash = _content_fingerprint(row.content)
-    if _content_fingerprint(cur_content) != prev_hash:
-        return {"status": "changed"}
-    return {"status": "unchanged"}
-
-
-def _record_current_version(s, r, source_dir):
-    """导入成功后记录当前内容版本（source_file_version v1，is_current=True）。"""
-    from datetime import datetime
-    from app.model import SourceFileVersion
-    path = source_dir / r.file
-    if not path.exists():
-        return
-    content = path.read_text(encoding="utf-8")
-    s.add(SourceFileVersion(file_path=r.file, version=1, content=content,
-                            captured_at=datetime.now(), is_current=True))
-
-
-def _normalize_conflict_recs(category: str, records: list[dict]) -> list[dict]:
-    """把各收益类别记录归一成冲突检测所需的 {entity_name, stream_type, currency, year, amount}。"""
-    out = []
-    for rec in records:
-        amt = rec.get("amount") if rec.get("amount") is not None else rec.get("after_tax")
-        ent = rec.get("entity_name") or rec.get("holder")
-        st = rec.get("stream_type") or _CAT_STREAM.get(category)
-        out.append({
-            "entity_name": ent, "stream_type": st,
-            "currency": rec.get("currency"),
-            "year": rec.get("year", rec.get("y0")), "amount": amt,
-        })
-    return out
 
 
 if __name__ == "__main__":
