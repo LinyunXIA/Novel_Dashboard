@@ -6,24 +6,32 @@
     python -m app.ingest.main ping                 # DB 连通自检
 
 F-P0-01：骨架（config/db/CLI）已就绪；detect/parsers/normalize/conflict 后续里程碑填充。
+
+设计要点（issue #3）：每个子命令的 session 由 \`--env\` 显式构造（make_sessionmaker），
+不再走导入期绑定的模块 SessionLocal，杜绝「打印 prod 实际写入 dev」的脱节。
 """
 from __future__ import annotations
 
 import typer
 
 from app.config import get_config
-from app.db import SessionLocal, check_connection
+from app.db import check_connection_for, make_sessionmaker
 from app.ingest.parse import run_ingest
 from app.ingest import conflict, writer
 
 app = typer.Typer(help="Novel Dashboard ingest")
 
 
+def _session_for(env: str):
+    """按 \`--env\` 构造 sessionmaker（with-block 兼容 SessionLocal 接口）。"""
+    return make_sessionmaker(env)()
+
+
 @app.command()
 def ping(env: str = typer.Option("dev", "--env")):
-    """数据库连通自检。"""
+    """数据库连通自检（按 \`--env\` 真正打到对应 DSN）。"""
     cfg = get_config(env)
-    ok = check_connection()  # db.py 用模块级 CONFIG；此处按 env 打印，连接仍走默认
+    ok = check_connection_for(env)
     typer.echo(f"[{cfg.env}] dsn={cfg.dsn}")
     typer.secho("连接成功" if ok else "连接失败", fg=typer.colors.GREEN if ok else typer.colors.RED)
 
@@ -51,9 +59,10 @@ def ingest(
     """F-P0-04 落库：character→entity；initial_asset→entity/account/initial_asset/现金余额。
 
     从 Design_Folder（source_dir）读取基础数据；commit 前整批事务，失败回滚。
+    Session 严格按 \`--env\` 构造（issue #3）。
     """
     cfg = get_config(env)
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         rep = run_ingest(cfg.source_dir)
         ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0; rcur = 0; fx_total = 0; blocked_files = 0
         fx_files = []
@@ -106,7 +115,7 @@ def ingest(
 def health(env: str = typer.Option("dev", "--env")):
     """运行全库健康校验（H1-H5）并输出问题清单。"""
     from app.core.health import run_report, summarize
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         summ = summarize(s)
         typer.echo(f"[{env}] 健康校验汇总（H1-H5）：")
         for rule in ("H1", "H2", "H3", "H4", "H5"):
@@ -121,7 +130,7 @@ def health(env: str = typer.Option("dev", "--env")):
 def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Option(1947, "--from")):
     """全库增量重算：从受影响起点年向后滚动账户余额（F-P0-12）。"""
     from app.core.recompute import recompute_all
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         res = recompute_all(s, from_year)
         s.commit()
         total_updated = sum(r["updated"] for r in res)
@@ -134,7 +143,7 @@ def calendar(env: str = typer.Option("dev", "--env"), as_of: str = typer.Option(
     from datetime import date
     from app.core.calendar import snapshot_as_of
     d = date.fromisoformat(as_of)
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         snaps = snapshot_as_of(s, d)
         typer.echo(f"[{env}] 截至 {d} 快照 {len(snaps)} 条：")
         for x in snaps:
@@ -148,7 +157,7 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
     汇率缺失币种不计入合计，并在底部显式告警（issue #2 修复：杜绝 1.0 静默 fallback）。
     """
     from app.core.wealth import wealth_series
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         w = wealth_series(s, year, year)
         d = w.get(year, {})
         typer.echo(f"[{env}] {year} 家族合计(展示USD) = {d.get('family_total_usd', 0):,.0f}")
@@ -166,7 +175,7 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
 def snapshot(env: str = typer.Option("dev", "--env")):
     """重建逐年 as-of 快照（F-P0-08）。"""
     from app.core.snapshot import rebuild_snapshots
-    with SessionLocal() as s:
+    with _session_for(env) as s:
         r = rebuild_snapshots(s, range(1947, 2026))
         s.commit()
         typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户")
