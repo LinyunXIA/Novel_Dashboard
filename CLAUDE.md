@@ -72,6 +72,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 账务本金记账、展示层才折算 USD；BEF/LUF/NLG 2002 关池转 EUR；收益文件模块化挂账。
 - 开发进度以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单（编号 `F-P0-xx`/`F-P1-xx`/`F-P2-xx`，状态图例 ⬜/🟨/✅）为准，完成一项勾一项，在需求/任务/commit 中以此编号引用。
 
+**启动 / 运行 Dashboard（F-P0-01..14，Phase 1 P0 已实现）**：
+
+前置（一次性）：
+1. **Postgres**：本机 `Postgres.app`（PostgreSQL 18），端口 `5432`；需已有三库 `novel_dev` / `novel_test` / `novel_prod`（同名库已建，缺失可用 `createdb` 补）。免密 trust 即可；若设了密码，导出 `export POSTGRES_PASSKEY=...`。
+2. **Python 依赖**：`cd 项目根 && .venv/bin/pip install -r requirements.txt`。
+3. **迁移（三库各建表）**：
+   ```bash
+   APP_ENV=dev  .venv/bin/alembic upgrade head   # test/prod 同理
+   ```
+4. **摄入真实数据（从 Design_Folder）**：
+   ```bash
+   APP_ENV=dev .venv/bin/python -m app.ingest.main ingest
+   APP_ENV=dev .venv/bin/python -m app.ingest.main recompute --from 1947
+   APP_ENV=dev .venv/bin/python -m app.ingest.main snapshot
+   ```
+
+启动服务：
+- **后端 API**（FastAPI，Swagger 在 `/docs`）：
+  ```bash
+  APP_ENV=dev .venv/bin/uvicorn app.api:app --host 127.0.0.1 --port 8001
+  ```
+  > 注：`8000` 常被本地其他程序占用，实测用 `8001` 更稳。
+- **前端**（Vite dev server，代理 `/api` → 后端）：
+  ```bash
+  cd frontend && npm install   # 首次
+  npm run dev                   # 默认 http://localhost:5173
+  ```
+
+其他 CLI（同参数 `--env dev/test/prod`）：
+```bash
+.venv/bin/python -m app.ingest.main health      # H1-H5 健康校验
+.venv/bin/python -m app.ingest.main wealth --year 2001
+.venv/bin/python -m app.ingest.main calendar --as-of 2001-12-30
+```
+三环境均同源代码，仅 `APP_ENV` + 库名(`novel_*`) + 数据目录不同；`Design_Folder` 为只读源。
+
 **仓库与 git**：
 - `Design_Folder/`（创作素材）已被 `.gitignore` 排除，**不入 git、不提交**；仅 `docs/` + `CLAUDE.md` + `.gitignore` 入版本库。
 - 远程：`origin` → github.com/LinyunXIA/Novel_Dashboard（private）。
