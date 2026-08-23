@@ -82,28 +82,43 @@ def ingest(
             if r.category == "timeline" and r.records:
                 tl_n += writer.import_timeline(s, r.records)["n"]
             if r.category == "bank" and r.records:
-                # issue #9：银行台账幂等（同 source_file 已导入 → 跳过）
+                # issue #9/#14/#15：幂等 + 内容变更提示 + H4/H5 冲突检测
                 src = r.file
-                from sqlalchemy import select as _sel_b
-                from app.model import LedgerEntry as _LE
-                already = s.execute(
-                    _sel_b(_LE.id).where(_LE.source_file == src).limit(1)
-                ).scalar_one_or_none()
-                if already is not None:
+                st_ = _file_import_state(s, r, cfg.source_dir)
+                if st_["status"] == "changed":
+                    typer.secho(f"   ⚠ {src}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过",
+                                fg=typer.colors.YELLOW)
+                    continue
+                if st_["status"] == "unchanged":
+                    continue                        # 幂等：内容一致才静默跳过
+                crep = conflict.check_bank_import_conflict(s, src, r.records)
+                if crep.blocked:
+                    blocked_files += 1
+                    for p in crep.problems:
+                        typer.echo(f"   ❌ {src}: [{p['rule']}] {p['line']}: {p['detail']}")
                     continue
                 st = writer.import_bank(s, r.records, source_file=src)
                 bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
+                _record_current_version(s, r, cfg.source_dir)
             if r.category == "initial_asset" and r.records:
                 st = writer.import_initial_assets(s, r.records)
                 ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
             if r.category in ("income_security","income_rent","income_property","income_shop","salary") and r.records:
-                # 导入前冲突检测(H2/H5)：同 key 金额冲突或引用断链 → 整文件不入库
-                gate = _conflict_gate(s, r)
-                if gate["blocked"]:
-                    blocked_files += 1
+                # issue #14/#15：幂等（内容一致跳过）+ 内容变更提示 + 冲突明细（调 conflict.py 而非复制版）
+                st_ = _file_import_state(s, r, cfg.source_dir)
+                if st_["status"] == "changed":
+                    typer.secho(f"   ⚠ {r.file}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过",
+                                fg=typer.colors.YELLOW)
                     continue
-                if gate["exists"]:
-                    continue                       # 幂等：同 source_file 已导入，跳过
+                if st_["status"] == "unchanged":
+                    continue                        # 幂等：内容一致才静默跳过
+                crep = conflict.check_income_stream_conflict(
+                    s, r.file, _normalize_conflict_recs(r.category, r.records))
+                if crep.blocked:
+                    blocked_files += 1
+                    for p in crep.problems:
+                        typer.echo(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
+                    continue
                 for rec in r.records:
                     rec.setdefault("source_file", r.file)
                 if r.category == "income_security": sec += writer.import_income_security(s, r.records)["stream"]
@@ -111,6 +126,7 @@ def ingest(
                 if r.category == "income_property": prop += writer.import_income_property(s, r.records)["stream"]
                 if r.category == "income_shop": shop += writer.import_income_shop(s, r.records)["stream"]
                 if r.category == "salary": sal += writer.import_salary(s, r.records)["stream"]
+                _record_current_version(s, r, cfg.source_dir)
             if r.category == "household_expense" and r.records:
                 he += writer.import_household_expense(s, r.records)["n"]
         # —— 汇率两轮：权威文件(W全量)先入库为基准；其它 fx 文件检测与权威冲突，冲突则拦 ——
@@ -220,49 +236,77 @@ def snapshot(env: str = typer.Option("dev", "--env"),
         typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
 
 
-def _conflict_gate(s, r) -> dict:
-    """对收益类文件做导入前冲突检测：H2 金额 / H5 引用。命中冲突 → 该文件不入库。"""
+# ---- 收益/银行文件的幂等 + 内容变更提示（issue #14） ----
+_CAT_STREAM = {"income_security": "security", "income_rent": "rent",
+               "income_property": "property", "income_shop": "shop", "salary": "salary"}
+
+
+def _content_fingerprint(content: str) -> str:
+    import hashlib
+    return hashlib.sha1((content or "").encode("utf-8")).hexdigest()
+
+
+def _file_import_state(s, r, source_dir) -> dict:
+    """文件导入状态：已导入(source_file 命中) → unchanged/changed；未导入 → new。
+
+    用 source_file_version 记录首次导入时的内容哈希快照；再次导入对比当前文件内容。
+    判断 content 仅对比首行尾字符与行长，回答"改动了吗"而不写库。
+    返回 {"status": "new"|"unchanged"|"changed"}。
+    """
     from sqlalchemy import select as _sel
-    from app.model import Entity, IncomeStream
-    src = r.file
-    # 幂等判重：同 source_file 已导入 → 整文件跳过（金额冲突检测只需跨文件时）
-    from sqlalchemy import exists as _exists
     from app.model import IncomeStream as _IS
     already = s.execute(
-        _sel(_IS.id).where(_IS.source_file == src).limit(1)
+        _sel(_IS.id).where(_IS.source_file == r.file).limit(1)
     ).scalar_one_or_none()
-    blocked = False
-    problems = []
-    exists = False
-    if already is not None:
-        exists = True                          # 该文件已导入（source_file 命中）→ 幂等跳过
-        return {"blocked": False, "exists": True, "problems": []}
-    # H2 金额冲突：与其它来源文件同 (entity, stream_type, currency, year) 金额不一致 → 拦
-    for rec in r.records:
-        ent_name = rec.get("entity_name") or rec.get("holder")
-        st_key = rec.get("stream_type") or {"income_security": "security",
-                                             "income_rent": "rent",
-                                             "income_property": "property",
-                                             "income_shop": "shop",
-                                             "salary": "salary"}.get(r.category)
-        cur = rec.get("currency")
-        year = rec.get("year", rec.get("y0"))
-        amt = rec.get("amount", rec.get("after_tax"))
-        if not (ent_name and st_key and year is not None and amt is not None):
-            continue
-        ent_id = s.execute(_sel(Entity.id).where(Entity.name == ent_name)).scalar_one_or_none()
-        if ent_id is None:
-            problems.append(f"H5-引用 {ent_name} 不存在")
-            continue
-        existing = s.execute(
-            _sel(_IS.amount).where(
-                _IS.entity_id == ent_id, _IS.stream_type == st_key,
-                _IS.currency == cur, _IS.year == year)
-        ).scalar_one_or_none()
-        if existing is not None and existing != amt:
-            blocked = True
-            problems.append(f"H2-金额 {st_key} {cur} {year} 既有{existing}≠新{amt}")
-    return {"blocked": blocked, "exists": exists, "problems": problems}
+    if already is None:
+        return {"status": "new"}
+    # 已导入：对比内容哈希快照
+    from app.model import SourceFileVersion
+    row = s.execute(
+        _sel(SourceFileVersion).where(
+            SourceFileVersion.file_path == r.file, SourceFileVersion.is_current.is_(True))
+        .order_by(SourceFileVersion.version.desc()).limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return {"status": "unchanged"}            # 首次导入先于版本记录建立（旧库无快照）→ 保守跳过
+    path = source_dir / r.file
+    try:
+        cur_content = path.read_text(encoding="utf-8") if path.exists() else None
+    except (OSError, UnicodeDecodeError):
+        cur_content = None
+    if cur_content is None:
+        return {"status": "unchanged"}
+    prev_hash = _content_fingerprint(row.content)
+    if _content_fingerprint(cur_content) != prev_hash:
+        return {"status": "changed"}
+    return {"status": "unchanged"}
+
+
+def _record_current_version(s, r, source_dir):
+    """导入成功后记录当前内容版本（source_file_version v1，is_current=True）。"""
+    from datetime import datetime
+    from app.model import SourceFileVersion
+    path = source_dir / r.file
+    if not path.exists():
+        return
+    content = path.read_text(encoding="utf-8")
+    s.add(SourceFileVersion(file_path=r.file, version=1, content=content,
+                            captured_at=datetime.now(), is_current=True))
+
+
+def _normalize_conflict_recs(category: str, records: list[dict]) -> list[dict]:
+    """把各收益类别记录归一成冲突检测所需的 {entity_name, stream_type, currency, year, amount}。"""
+    out = []
+    for rec in records:
+        amt = rec.get("amount") if rec.get("amount") is not None else rec.get("after_tax")
+        ent = rec.get("entity_name") or rec.get("holder")
+        st = rec.get("stream_type") or _CAT_STREAM.get(category)
+        out.append({
+            "entity_name": ent, "stream_type": st,
+            "currency": rec.get("currency"),
+            "year": rec.get("year", rec.get("y0")), "amount": amt,
+        })
+    return out
 
 
 if __name__ == "__main__":

@@ -84,6 +84,45 @@ def check_account_balance_conflict(session: Session, file: str,
     return rep
 
 
+def check_bank_import_conflict(session: Session, file: str, segments: list[dict]) -> ConflictReport:
+    """银行台账导入前冲突（issue #15）：H5 引用 + H4 余额断链。
+
+    - H5：segment 持有人映射 entity 不存在 → 拦
+    - H4：segment 命中已存在 account 且首笔余额 ≠ 既有末余额 → 拦
+    新建账户（无既有余额）不构成 H4 断链。返回 ConflictReport 供上层原样输出明细。
+    """
+    from app.model import Entity
+    rep = ConflictReport(file)
+    for seg in segments:
+        holder = seg.get("holder")
+        cur = seg.get("currency")
+        bank = seg.get("bank")
+        rows = seg.get("rows") or []
+        if not holder or not rows:
+            continue                                  # 缺持有人/无流水的 segment 归 writer 跳过，非阻断
+        ent = session.execute(
+            select(Entity.id).where(Entity.name == holder)
+        ).scalar_one_or_none()
+        if ent is None:
+            rep.add("H5-引用", seg.get("seg_title") or holder, f"entity 不存在: {holder}")
+            continue
+        if not cur:
+            continue
+        acc = session.execute(
+            select(Account).where(Account.entity_id == ent,
+                                  Account.currency == cur, Account.bank == bank)
+        ).scalar_one_or_none()
+        if acc is None:
+            continue                                  # 新账户 → H4 无从断链
+        new_entries = [{"date": r.get("date"), "balance": r.get("balance")}
+                       for r in rows if r.get("balance") is not None]
+        if not new_entries:
+            continue
+        sub = check_account_balance_conflict(session, file, acc.id, new_entries)
+        rep.problems.extend(sub.problems)
+    return rep
+
+
 # —— 权威汇率文件识别 ——
 AUTHORITY_FX_FILES = ("所有的货币兑换美金.md",)
 
