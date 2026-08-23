@@ -13,6 +13,22 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _env_str(key: str, default: str) -> str:
+    """LLM 配置环境变量覆盖（DESIGN §18.5）；未设时用缺省值。"""
+    return os.environ.get(key, default)
+
+
+def _env_int(key: str, default: int | None) -> int | None:
+    """文本覆盖键解析为 int；非法值静默回退缺省。"""
+    v = os.environ.get(key)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class EnvConfig:
     env: str
@@ -22,10 +38,14 @@ class EnvConfig:
     overlay_dir: Path # 用户数据 md 覆盖层（编年史）
 
     # 本地 LLM（搜索，DESIGN §18.5；三环境共用同一 omlx-server）
-    llm_url: str = "http://127.0.0.1:8000"
-    llm_model: str = "Qwen3.8-27B-MLX-4bit"
-    embed_url: str = "http://127.0.0.1:8000"
-    embed_model: str = "Qwen3-Embedding-8B-4bit-DWQ"
+    # 六项均支持环境变量覆盖（LLM_URL/LLM_MODEL/EMBED_URL/EMBED_MODEL/
+    # LLM_MODEL_CONTEXT/EMBED_DIM），未设用缺省；键名与 §18.5 对齐。
+    llm_url: str = field(default_factory=lambda: _env_str("LLM_URL", "http://127.0.0.1:8000"))
+    llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", "Qwen3.8-27B-MLX-4bit"))
+    embed_url: str = field(default_factory=lambda: _env_str("EMBED_URL", "http://127.0.0.1:8000"))
+    embed_model: str = field(default_factory=lambda: _env_str("EMBED_MODEL", "Qwen3-Embedding-8B-4bit-DWQ"))
+    llm_model_context: int | None = field(default_factory=lambda: _env_int("LLM_MODEL_CONTEXT", None))
+    embed_dim: int | None = field(default_factory=lambda: _env_int("EMBED_DIM", None))
 
 
 def _dsn(db_name: str) -> str:
