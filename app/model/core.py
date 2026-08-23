@@ -118,6 +118,7 @@ class FinanceEntry(Base):
     __tablename__ = "finance_entry"
     __table_args__ = (
         CheckConstraint("kind IN ('income','expense','investment','investment_income','pool')", name="ck_finance_kind"),
+        CheckConstraint("entity_kind IN ('person','company')", name="ck_finance_entity_kind"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
