@@ -151,9 +151,5 @@ def currency_from(seg_title: str) -> str | None:
     return None
 
 
-def parse_relationship(line: str) -> tuple[str, ...] | None:
-    """从人物 `- 关系：xxx` 字段抽 rel_type + target（简化实现，后续扩展）。"""
-    m = re.match(r"^关系[:：]\s*(.+)$", line.strip())
-    if not m:
-        return None
-    return tuple(x.strip() for x in m.group(1).split("、") if x.strip())
+# issue #27：原 parse_relationship 是死代码（无调用方，character 解析走 parse_character
+# 内部 KV 收集）。已删除；如未来需要展开，可从 git history 取回。

@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ingest.normalize import resolve_date
-from app.model import Account, Entity, ExchangeRate, IncomeStream, InitialAsset, LedgerEntry
+from app.model import Account, Entity, ExchangeRate, IncomeStream, InitialAsset, LedgerEntry, Relationship
 
 
 def upsert_entity(session: Session, entity_type: str, name: str,
@@ -34,6 +34,33 @@ def upsert_entity(session: Session, entity_type: str, name: str,
     return ent
 
 
+def upsert_relationship(session: Session, from_entity_id: int, to_entity_id: int,
+                        rel_type: str, source_file: str | None = None) -> Relationship | None:
+    """按 (from, to, rel_type) 幂等 upsert Relationship；同 (from, to, rel_type) 已存在 → 复用。
+
+    issue #27：character 关系字段解析后必须持久化进 relationship 表，P1 人物图谱前置。
+    返回 None 表示 from==to（自环）跳过。
+    """
+    if from_entity_id == to_entity_id:
+        return None
+    exists = session.execute(
+        select(Relationship).where(
+            Relationship.from_entity_id == from_entity_id,
+            Relationship.to_entity_id == to_entity_id,
+            Relationship.rel_type == rel_type,
+        ).limit(1)
+    ).scalar_one_or_none()
+    if exists is not None:
+        return exists
+    rel = Relationship(
+        from_entity_id=from_entity_id, to_entity_id=to_entity_id,
+        rel_type=rel_type, source_file=source_file,
+    )
+    session.add(rel)
+    session.flush()
+    return rel
+
+
 def get_or_create_account(session: Session, entity_id: int, currency: str, bank: str | None = None) -> Account:
     acc = session.execute(
         select(Account).where(Account.entity_id == entity_id, Account.currency == currency)
@@ -46,13 +73,34 @@ def get_or_create_account(session: Session, entity_id: int, currency: str, bank:
 
 
 def import_characters(session: Session, records: list[dict], source_file: str | None = None) -> dict:
-    """character 解析记录 → entity。返回 {导入数}。"""
-    n = 0
+    """character 解析记录 → entity + relationship（按 rels 中 target 名查 entity upsert）。
+
+    issue #27 修复：
+    - relations 形如 [("与主角的关系", "养父"), ("关系", "管家张三"), ...]
+    - target_name 查 entity（按 entity_type='person', name=target_name）；失配 → warnings
+    - 关系 (from, to, rel_type) 幂等 upsert；自环（from==to）跳过
+
+    返回 {"imported": entity 数, "rels": 关系数, "warnings": [target 未找到的列表]}
+    """
+    stats: dict = {"imported": 0, "rels": 0, "warnings": []}
     for rec in records:
-        upsert_entity(session, "person", rec["name"], fields=rec.get("fields"),
-                      source_file=rec.get("source_file") or source_file)
-        n += 1
-    return {"imported": n}
+        ent = upsert_entity(session, "person", rec["name"], fields=rec.get("fields"),
+                            source_file=rec.get("source_file") or source_file)
+        stats["imported"] += 1
+        for rel_key, rel_val in rec.get("relations") or []:
+            target_name = rel_val.split("/")[0].strip() if rel_val else ""
+            if not target_name or target_name == rec["name"]:
+                continue  # 空值或自环
+            to = session.execute(
+                select(Entity).where(Entity.entity_type == "person", Entity.name == target_name)
+            ).scalar_one_or_none()
+            if to is None:
+                stats["warnings"].append(f"{rec['name']} → {target_name}（{rel_key}）目标未注册")
+                continue
+            upsert_relationship(session, ent.id, to.id, rel_key,
+                                source_file=rec.get("source_file") or source_file)
+            stats["rels"] += 1
+    return stats
 
 
 def import_initial_assets(session: Session, records: list[dict], cash_year: int = 1947) -> dict:
