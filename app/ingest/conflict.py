@@ -84,6 +84,38 @@ def check_account_balance_conflict(session: Session, file: str,
     return rep
 
 
+# —— 权威汇率文件识别 ——
+AUTHORITY_FX_FILES = ("所有的货币兑换美金.md",)
+
+
+def is_authority_fx(file: str) -> bool:
+    """判断某文件是否权威全量汇率表（DESIGN：全量文件为权威基准）。"""
+    return any(f in file for f in AUTHORITY_FX_FILES)
+
+
+def check_fx_authority_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
+    """其它汇率文件导入前：同一 (fx_from, fx_to, year) 若权威表已有且值不同 → 冲突(hard-block)。
+
+    权威值 = 权威文件已入库的 exchange_rate；非权威文件记录与之冲突时拦。
+    """
+    from app.model import ExchangeRate
+    rep = ConflictReport(file)
+    if is_authority_fx(file):
+        return rep                                    # 权威文件自身不检（它是基准）
+    for rec in records:
+        f, t, y = rec.get("fx_from"), rec.get("fx_to"), rec.get("year")
+        if not (f and t):
+            continue
+        # 查权威值（source 来自权威文件——这里用 exchange_rate 里已存在的那一行；权威已入库）
+        auth = session.execute(
+            select(ExchangeRate.rate).where(
+                ExchangeRate.fx_from == f, ExchangeRate.fx_to == t, ExchangeRate.year == y)
+        ).scalar_one_or_none()
+        if auth is not None and abs(float(auth) - float(rec["rate"])) > 0.005:
+            rep.add("H2-汇率权威", y, f"{f}→{t} {y} 权威 {auth} ≠ 本文件 {rec['rate']}")
+    return rep
+
+
 def ensure_entity(session: Session, name: str, entity_type: str = "person") -> int | None:
     """确保 entity 存在，返回 id；不存在返回 None（供 H5 断链检查）。"""
     from app.model import Entity

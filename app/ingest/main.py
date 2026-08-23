@@ -56,14 +56,14 @@ def ingest(
     with SessionLocal() as s:
         rep = run_ingest(cfg.source_dir)
         ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0; rcur = 0; fx_total = 0; blocked_files = 0
+        fx_files = []
         for r in rep.ok:
             if r.category == "character" and r.records:
                 ck += writer.import_characters(s, r.records, r.file)["imported"]
             if r.category == "return_table" and r.records:
                 rcur += writer.import_return_curves(s, r.records)["n"]
             if r.category == "fx" and r.records:
-                fx_n = writer.import_fx(s, r.records)["n"]
-                fx_total += fx_n
+                fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
             if r.category == "initial_asset" and r.records:
                 st = writer.import_initial_assets(s, r.records)
                 ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
@@ -84,6 +84,18 @@ def ingest(
                 if r.category == "salary": sal += writer.import_salary(s, r.records)["stream"]
             if r.category == "household_expense" and r.records:
                 he += writer.import_household_expense(s, r.records)["n"]
+        # —— 汇率两轮：权威文件(W全量)先入库为基准；其它 fx 文件检测与权威冲突，冲突则拦 ——
+        authority = [r for r in fx_files if conflict.is_authority_fx(r.file)]
+        others = [r for r in fx_files if not conflict.is_authority_fx(r.file)]
+        for r in authority:
+            fx_total += writer.import_fx(s, r.records)["n"]
+        for r in others:
+            crep = conflict.check_fx_authority_conflict(s, r.file, r.records)
+            if crep.blocked:
+                typer.echo(f"   ⚠ fx冲突拦截 {r.file}: {len(crep.problems)} 处（以权威表为准）")
+                blocked_files += 1
+                continue
+            fx_total += writer.import_fx(s, r.records)["n"]
         closed = writer.close_2002_currency(s)["closed"]
         s.flush()
         s.commit()
