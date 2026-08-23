@@ -1,0 +1,54 @@
+"""文件→类别识别（DESIGN §6.1）。
+
+按 `input_dir 下的相对路径` 匹配；`基准/事件/` 为 Phase1 阶段项（跳过，Phase2 启用）。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+# (前缀, 类别) —— 顺序敏感：更长/更精确前缀在前
+_PREFIX_RULES: list[tuple[str, str]] = [
+    ("基准/事件/", "PHASE2_EVENT"),          # Phase1 跳过
+    ("经济/银行/", "bank"),
+    ("经济/股票/", "stock_tx"),
+    ("基准/收益表/惠民租房.md", "income_rent"),
+    ("基准/收益表/经营性房产收益.md", "income_property"),
+    ("基准/收益表/祖产股票债券收益.md", "income_security"),
+    ("基准/收益表/祖父开店.md", "income_shop"),
+    ("基准/收益表/1974-2001家庭支出.md", "household_expense"),
+    ("基准/收益表/", "return_table"),
+    ("基准/初始资产/", "initial_asset"),
+    ("基准/薪资/", "salary"),
+    ("基准/1974-2001家庭支出.md", "household_expense"),
+    ("基准/汇率/", "fx"),
+    ("人物/", "character"),
+    ("时间线.md", "timeline"),
+]
+
+
+@dataclass(frozen=True)
+class Detected:
+    relpath: str
+    category: str
+    phase2: bool = False
+
+
+def detect(rel: str) -> Detected:
+    """按相对路径返回类别。rel 用正斜杠同 input_dir 下相对路径。"""
+    rel = rel.strip().lstrip("/")
+    for prefix, cat in _PREFIX_RULES:
+        if rel.startswith(prefix):
+            return Detected(rel, cat, cat == "PHASE2_EVENT")
+    return Detected(rel, "unknown")
+
+
+def scan_dir(input_dir: Path) -> list[Detected]:
+    """扫描输入目录，收集所有 .md 的识别结果（阶段项标记但留给 ingest 跳过）。"""
+    out: list[Detected] = []
+    if not input_dir.exists():
+        return out
+    for md in sorted(input_dir.rglob("*.md")):
+        rel = md.relative_to(input_dir).as_posix()
+        out.append(detect(rel))
+    return out

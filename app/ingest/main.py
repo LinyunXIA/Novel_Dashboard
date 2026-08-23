@@ -13,6 +13,7 @@ import typer
 
 from app.config import get_config
 from app.db import check_connection
+from app.ingest.parse import run_ingest
 
 app = typer.Typer(help="Novel Dashboard ingest")
 
@@ -31,12 +32,15 @@ def run(
     env: str = typer.Option("dev", "--env"),
     full: bool = typer.Option(False, "--full", help="全量重建"),
 ):
-    """执行导入（骨架：仅打印计划；后续通过 detect→parse→normalize→import）。"""
+    """扫描输入目录 → detect → parse → 输出报告（F-P0-02；落库在后续里程碑）。"""
     cfg = get_config(env)
-    typer.echo(f"[{cfg.env}] 源目录={cfg.source_dir}")
     typer.echo(f"[{cfg.env}] 输入目录={cfg.input_dir}")
-    typer.echo(f"[{cfg.env}] 覆盖层={cfg.overlay_dir}")
-    typer.echo("计划：detect → parse → normalize → conflict → import（骨架占位）")
+    report = run_ingest(cfg.input_dir)
+    typer.echo(f"识别 {len(report.ok)} 个可解析文件 · {len(report.failed)} 需人工 · {len(report.skipped)} Phase2 跳过")
+    for r in report.ok:
+        typer.echo(f"  ✅ {r.category:12s} {r.file} ({len(r.records)} 条)")
+    for r in report.failed:
+        typer.echo(f"  ❌ {r.category:12s} {r.file} — {r.error}")
 
 
 if __name__ == "__main__":
