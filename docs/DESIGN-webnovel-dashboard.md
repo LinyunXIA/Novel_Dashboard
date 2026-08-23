@@ -816,7 +816,7 @@ class Importer(Protocol):
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动（服务函数就绪，API 端点 F-P0-13） | §8 | ✅ |
 | F-P0-11 | **健康校验** | H1–H5 汇总 + 问题清单（health.py） | §10 | ✅ |
 | F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示 | §9 | ✅ |
-| F-P0-13 | **API** | 基础路由（entities/accounts/ledger/returns/fx/snapshots/overview/wealth） | §14 | ⬜ |
+| F-P0-13 | **API** | 基础路由（entities/accounts/ledger/returns/fx/snapshots/overview/wealth） | §14 | ✅ |
 | F-P0-14 | **前端骨架** | React+Vite 10 屏骨架 + 全局日历 + 财富曲线 | §1 | ⬜ |
 
 ### Phase 1 —— P1（完整产品）

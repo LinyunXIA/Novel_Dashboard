@@ -167,6 +167,23 @@ def import_income_shop(session: Session, records: list[dict]) -> dict:
     return stats
 
 
+def import_return_curves(session: Session, records: list[dict]) -> dict:
+    """收益测算表 → return_curve（幂等：ON CONFLICT DO NOTHING）。"""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.model import ReturnCurve
+    stats = {"n": 0}
+    if not records:
+        return stats
+    stmt = pg_insert(ReturnCurve).values([
+        {"country": r["country"], "risk_lvl": r["risk_lvl"], "year": r["year"],
+         "rate": r["rate"], "source_file": r.get("source_file")} for r in records
+    ]).on_conflict_do_nothing(
+        constraint="uq_return_country_risk_year"
+    ).returning(ReturnCurve.id)
+    stats["n"] = len(session.execute(stmt).scalars().all())
+    return stats
+
+
 def import_salary(session: Session, records: list[dict]) -> dict:
     """薪资 → 逐年 income_stream(salary)，各归各（养父/养母），取文件税后值。"""
     from app.model.types import StreamType
