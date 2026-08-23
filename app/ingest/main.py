@@ -45,7 +45,7 @@ def run(
     cfg = get_config(env)
     typer.echo(f"[{cfg.env}] 输入目录={cfg.input_dir}")
     report = run_ingest(cfg.input_dir)
-    typer.echo(f"识别 {len(report.ok)} 个可解析文件 · {len(report.failed)} 需人工 · {len(report.skipped)} Phase2 跳过")
+    typer.echo(f"识别 {len(report.ok)} 个可解析文件 · {len(report.failed)} 需人工 · {len(report.skipped)} 跳过")
     for r in report.ok:
         typer.echo(f"  ✅ {r.category:12s} {r.file} ({len(r.records)} 条)")
     for r in report.failed:

@@ -40,7 +40,9 @@ def parse_amount(raw: object, unit: str | None = None) -> float | None:
     if raw is None:
         return None
     s = str(raw).strip().replace(",", "").replace(" ", "").replace("≈", "").replace("~", "")
-    s = re.sub(r"(万美金|万USD|万BEF|万|亿|USD|US|BEF|LUF|NLG|DKK|SEK|HKD|EUR|法郎|美元|元)", "", s)
+    # issue #32：长词单位（万美金/万USD/万BEF）置前优先剥离，避免「万」先命中残留「美金」
+    # 导致 float 失败返 None；补 `美金` 兜底（无「万」前缀的「X 美金」同样被清）。
+    s = re.sub(r"(万美金|万USD|万BEF|万|亿|USD|US|BEF|LUF|NLG|DKK|SEK|HKD|EUR|法郎|美元|美金|元)", "", s)
     if not s or s in ("-", "—"):
         return None
     try:
@@ -52,7 +54,9 @@ def parse_amount(raw: object, unit: str | None = None) -> float | None:
 # ---- 货币 ----
 # 单词边界避免「USD」被「US」前缀吞；移除 `US` 别名（`USD` 优先匹配）。
 # 顺序无所谓（alternation 最长优先：re 默认从左到右，但 \b 防止前缀误吞）。
-_CUR_RE = re.compile(r"\b(USD|BEF|LUF|NLG|DKK|SEK|HKD|EUR)\b", re.IGNORECASE)
+# issue #32：补 `CNY`——fx 解析会把 yuan/rmb/人民币 归一为 CNY（_cur），detect_currency
+# 口径需一致，否则「人民币」串被识别为空、下游 `cur not in _CURRENCIES` 误回退 BEF。
+_CUR_RE = re.compile(r"\b(USD|BEF|LUF|NLG|DKK|SEK|HKD|CNY|EUR|RMB)\b", re.IGNORECASE)
 
 
 def detect_currency(text: str) -> str | None:
@@ -61,12 +65,15 @@ def detect_currency(text: str) -> str | None:
     issue #24 顺带修复：旧 regex `(USD|US|BEF|...|EUR|EUR)` 中 `US` 是 `USD` 前缀，
     匹配时优先取 `US`；EUR 又被 dict fallback 到 USD → 纯「EUR」字符串被误判为 USD。
     新 regex 用 \\\\b 单词边界 + 移除 US 别名，所有代码按字面值返回。
+    issue #32：补 CNY/RMB——fx 把 yuan/rmb/人民币 归一为 CNY，与 detect 口径对齐。
+    返回 `CNY`（RMB 仅是中文习惯写法；下游 `_CURRENCIES` 白名单存 CN/Y 对应 CNY）。
     """
     m = _CUR_RE.search(text or "")
-    return m.group(1).upper() if m else None
+    code = m.group(1).upper() if m else None
+    return "CNY" if code == "RMB" else code
 
 
-_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")
+_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "CNY", "EUR")
 
 
 def _month_end(year: int, month: int) -> date:

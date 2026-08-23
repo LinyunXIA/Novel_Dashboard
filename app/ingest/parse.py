@@ -35,10 +35,6 @@ class IngestReport:
         return [r for r in self.results if not r.ok]
 
     @property
-    def skipped(self) -> list[ParseResult]:
-        return [r for r in self.results if r.category == "PHASE2_EVENT"]
-
-    @property
     def warnings(self) -> list[tuple[str, str]]:
         """收集 (file, warning) 对，供上层展示。"""
         out: list[tuple[str, str]] = []
