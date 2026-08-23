@@ -51,15 +51,20 @@ def parse_amount(raw: object, unit: str | None = None) -> float | None:
 
 
 # ---- 货币 ----
-_CUR_RE = re.compile(r"(USD|US|BEF|LUF|NLG|DKK|SEK|HKD|EUR|EUR)", re.IGNORECASE)
+# 单词边界避免「USD」被「US」前缀吞；移除 `US` 别名（`USD` 优先匹配）。
+# 顺序无所谓（alternation 最长优先：re 默认从左到右，但 \b 防止前缀误吞）。
+_CUR_RE = re.compile(r"\b(USD|BEF|LUF|NLG|DKK|SEK|HKD|EUR)\b", re.IGNORECASE)
 
 
 def detect_currency(text: str) -> str | None:
-    """从文本(或所在节标题)识别币种后缀；无则 None（由调用方继承节币种）。"""
+    """从文本(或所在节标题)识别币种后缀；无则 None（由调用方继承节币种）。
+
+    issue #24 顺带修复：旧 regex `(USD|US|BEF|...|EUR|EUR)` 中 `US` 是 `USD` 前缀，
+    匹配时优先取 `US`；EUR 又被 dict fallback 到 USD → 纯「EUR」字符串被误判为 USD。
+    新 regex 用 \\\\b 单词边界 + 移除 US 别名，所有代码按字面值返回。
+    """
     m = _CUR_RE.search(text or "")
-    if not m:
-        return None
-    return m.group(1).upper() if m.group(1) not in ("US", "EUR") else {"US": "USD"}.get(m.group(1).upper(), "USD")
+    return m.group(1).upper() if m else None
 
 
 _CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")

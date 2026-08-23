@@ -16,6 +16,10 @@ class ParseError(Exception):
     """单文件解析失败；进入 ingest_report 需人工处理。"""
 
 
+# issue #24：salary/household_expense 共用的币种白名单（与 detect_currency 输出口径一致）
+_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")
+
+
 @dataclass
 class Row:
     cells: list[str]
@@ -547,40 +551,139 @@ def parse_income_shop(path: Path) -> list[dict]:
 
 
 # ---------------- salary（薪资收入） ----------------
-def parse_salary(path: Path) -> list[dict]:
-    """逐年薪资台账：`年份 | … | 税后总收入 | …`。
+def parse_salary(path: Path) -> tuple[list[dict], list[str]]:
+    """逐年薪资台账：`年份 | … | 税后收入 | … | 币种`。
 
     归属：养父的薪资 → 养父；养母的薪资 → 养母。取文件税后值，系统不重算。
+
+    issue #24 修复：
+    - 按表头列名定位「税后」列，不再取「最后一个数字」（避免备注列含数字误采）
+    - 币种识别走 detect_currency，兼容「BEF（法郎）」等带后缀写法
+    - 表头缺失 / 金额解析失败 → warning 进 ingest_report（parse.py _call 统一收）
+
+    返回 (records, warnings)。
     """
+    from app.ingest.normalize import detect_currency
     lines = _lines(path)
     holder = "养母" if "养母" in path.stem else ("养父" if "养父" in path.stem else path.stem)
     recs: list[dict] = []
-    for line in lines:
+    warns: list[str] = []
+
+    # 找表头行：首格含「年份」且某列含「税后」
+    # 币种列匹配两类：①列名含币种 token（BEF/USD…）
+    #                ②列名是「币种」/「货币」/「currency」语义标签（数据行才放真币种）
+    header_idx = None
+    amount_col = None
+    currency_col = None
+    for i, line in enumerate(lines):
         cells = _split_table_row(line)
-        if not cells or not re.match(r"^\d{4}$", cells[0].strip()):
+        if len(cells) < 2 or "年份" not in cells[0]:
             continue
-        # 找币种列（标准代码，如 BEF/USD/EUR…）
-        cur = next((c.strip().upper() for c in cells
-                    if c.strip().upper() in ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")), None)
-        # 税后收入 = 行内最后一个纯数字（工作表最后列之前的税后总收入）
-        nums = [parse_number(c) for c in cells]
-        last_num = next((v for v in reversed(nums) if v is not None), None)
-        recs.append({"holder": holder, "year": int(cells[0]), "currency": cur,
-                     "after_tax": last_num, "note": cells[-1] if len(cells) > 1 else None})
-    return recs
+        for j, c in enumerate(cells):
+            if "税后" in c:
+                amount_col = j
+            elif (detect_currency(c) or c.strip().upper() in _CURRENCIES
+                  or c.strip() in ("币种", "货币", "currency", "Currency")):
+                currency_col = j
+        if amount_col is not None:
+            header_idx = i
+            break
+
+    if header_idx is None or amount_col is None:
+        warns.append(f"{path.name} 找不到含「年份」+「税后」的表头行，整文件跳过")
+        return recs, warns
+
+    # 数据行：表头下 1 行可能是分隔行 `|---|`，跳过
+    j = header_idx + 1
+    if j < len(lines) and _split_table_row(lines[j]) and all(
+            not _split_table_row(lines[j])[k].strip()
+            for k in range(1, len(_split_table_row(lines[j])))
+    ):
+        j += 1
+
+    for line in lines[j:]:
+        cells = _split_table_row(line)
+        if not cells or len(cells) <= amount_col:
+            continue
+        if not re.match(r"^\d{4}$", cells[0].strip()):
+            continue
+        amount = parse_number(cells[amount_col])
+        if amount is None:
+            warns.append(f"{path.name} {cells[0]} 年 {cells[amount_col]!r} 金额解析失败，跳过")
+            continue
+        # 币种：定位列 → detect_currency；未识别则默认 BEF（养父/养母薪资历史币种）
+        cur = None
+        if currency_col is not None and currency_col < len(cells):
+            cur = detect_currency(cells[currency_col]) or cells[currency_col].strip().upper()
+        if cur not in _CURRENCIES:
+            cur = "BEF"
+        recs.append({"holder": holder, "year": int(cells[0]),
+                     "currency": cur, "after_tax": amount})
+    return recs, warns
 
 
 # ---------------- household_expense（家庭支出） ----------------
-def parse_household_expense(path: Path) -> list[dict]:
-    """`年份 | … | 年度总支出`；挂 Henri Peeters 账户支出。"""
+def parse_household_expense(path: Path) -> tuple[list[dict], list[str]]:
+    """`年份 | … | 年度总支出 | … | 币种`；挂 Henri Peeters 账户支出。
+
+    issue #24 修复：
+    - 按表头列名定位「年度总支出」列，不再硬取 cells[-1]（避免末列是备注/币种时错采）
+    - 币种识别走 detect_currency；硬编码 currency='BEF' 改为按文件识别后回退 BEF
+    - 表头缺失 / 金额解析失败 → warning 进 ingest_report
+
+    返回 (records, warnings)。
+    """
+    from app.ingest.normalize import detect_currency
     lines = _lines(path)
     recs: list[dict] = []
-    for line in lines:
+    warns: list[str] = []
+
+    header_idx = None
+    amount_col = None
+    currency_col = None
+    for i, line in enumerate(lines):
         cells = _split_table_row(line)
-        if len(cells) >= 2 and re.match(r"^\d{4}$", cells[0].strip()):
-            recs.append({"holder": "Henri Peeters", "year": int(cells[0]),
-                         "amount": parse_number(cells[-1]), "currency": "BEF"})
-    return recs
+        if len(cells) < 2 or "年份" not in cells[0]:
+            continue
+        for j, c in enumerate(cells):
+            if "总支出" in c:
+                amount_col = j
+            elif (detect_currency(c) or c.strip().upper() in _CURRENCIES
+                  or c.strip() in ("币种", "货币", "currency", "Currency")):
+                currency_col = j
+        if amount_col is not None:
+            header_idx = i
+            break
+
+    if header_idx is None or amount_col is None:
+        warns.append(f"{path.name} 找不到含「年份」+「总支出」的表头行，整文件跳过")
+        return recs, warns
+
+    j = header_idx + 1
+    if j < len(lines) and _split_table_row(lines[j]) and all(
+            not _split_table_row(lines[j])[k].strip()
+            for k in range(1, len(_split_table_row(lines[j])))
+    ):
+        j += 1
+
+    for line in lines[j:]:
+        cells = _split_table_row(line)
+        if not cells or len(cells) <= amount_col:
+            continue
+        if not re.match(r"^\d{4}$", cells[0].strip()):
+            continue
+        amount = parse_number(cells[amount_col])
+        if amount is None:
+            warns.append(f"{path.name} {cells[0]} 年 {cells[amount_col]!r} 金额解析失败，跳过")
+            continue
+        cur = None
+        if currency_col is not None and currency_col < len(cells):
+            cur = detect_currency(cells[currency_col]) or cells[currency_col].strip().upper()
+        if cur not in _CURRENCIES:
+            cur = "BEF"
+        recs.append({"holder": "Henri Peeters", "year": int(cells[0]),
+                     "amount": amount, "currency": cur})
+    return recs, warns
 
 
 # ---------------- bank（银行台账） ----------------
