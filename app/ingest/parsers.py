@@ -16,7 +16,7 @@ class ParseError(Exception):
 
 
 # issue #24：salary/household_expense 共用的币种白名单（与 detect_currency 输出口径一致）
-_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")
+_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "CNY", "EUR")
 
 
 def _lines(path: Path) -> list[str]:
