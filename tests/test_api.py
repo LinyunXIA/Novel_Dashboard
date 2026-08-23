@@ -174,3 +174,35 @@ class TestTimelineEvents:
         c, _ = client
         r = c.get("/api/v1/timeline-events/99999")
         assert r.status_code == 404
+
+
+class TestCorsMiddleware:
+    """issue #30：CORSMiddleware 已挂载，PRD §13 限本地两个来源。"""
+
+    def test_cors_allows_localhost_5173(self, client):
+        """issue #30 修复点：vite dev 端口跨域通过。"""
+        c, _ = client
+        r = c.get("/api/v1/ping", headers={"Origin": "http://localhost:5173"})
+        assert r.status_code == 200
+        # CORS 预检响应头
+        assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    def test_cors_allows_127_5173(self, client):
+        c, _ = client
+        r = c.get("/api/v1/ping", headers={"Origin": "http://127.0.0.1:5173"})
+        assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
+
+    def test_cors_rejects_other_origin(self, client):
+        """非白名单来源 → 不回 ACAO 头（浏览器会拦截）。"""
+        c, _ = client
+        r = c.get("/api/v1/ping", headers={"Origin": "http://evil.example.com"})
+        assert r.status_code == 200  # 实际请求仍 OK，但 CORS 头不返回
+        assert r.headers.get("access-control-allow-origin") is None
+
+    def test_cors_middleware_registered(self):
+        """CORSMiddleware 在 app.user_middleware 中（issue #30 修复点）。"""
+        from app.api.app import _CORS_ORIGINS
+        assert "http://localhost:5173" in _CORS_ORIGINS
+        assert "http://127.0.0.1:5173" in _CORS_ORIGINS
+        cors_mw = [m for m in app.user_middleware if "CORS" in m.cls.__name__]
+        assert len(cors_mw) == 1
