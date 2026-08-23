@@ -16,6 +16,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,20 @@ from app.model import (Account, Entity, ExchangeRate, IncomeStream, LedgerEntry,
                        Notification, ReturnCurve, Snapshot, TimelineEvent)
 
 app = FastAPI(title="Novel Dashboard API", version="0.1")
+
+# issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
+# 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。
+_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 API_PREFIX = "/api/v1"
 
