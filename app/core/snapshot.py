@@ -8,27 +8,39 @@ issue #12 修复：
 - 新增 from_year 参数：仅重建 from_year 起的快照（delete 限定 as_of_year >= from_year）
 - 补 entity:* scope（按 entity_id × 币种聚合）
 - 补 family:total scope（USD 口径家族合计）
+
+issue #28 修复：
+- 内部计算全程 Decimal（避免 float 二进制误差累积）
+- 0 值且无流水的年份跳过写入（account/entity/family 三种 scope），避免快照表膨胀
 """
 from __future__ import annotations
+
+from decimal import Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.model import Account, ExchangeRate, IncomeStream, LedgerEntry, Snapshot
 
+# 写库精度：保留 2 位小数（与原 round(v, 2) 一致）
+_QUANTIZE_2 = Decimal("0.01")
+_ZERO = Decimal(0)
 
-def account_balance_at(session: Session, account_id: int, cutoff) -> float:
+
+def account_balance_at(session: Session, account_id: int, cutoff) -> Decimal:
     """账户截至 cutoff（date 级）的余额：Σ(inflow) − Σ(outflow) for date <= cutoff。
 
     与 _account_balance_series 同源口径：在 cutoff=12-30（某年年末）时两者相等，
     保证日历按日累加与预计算年度快照一致（issue #17 方案 A′）。
+
+    issue #28：返回 Decimal 而非 float，避免上层 cast 丢精度。
     """
     tin, tout = session.execute(
         select(func.coalesce(func.sum(LedgerEntry.inflow), 0),
                func.coalesce(func.sum(LedgerEntry.outflow), 0))
         .where(LedgerEntry.account_id == account_id, LedgerEntry.date <= cutoff)
     ).one()
-    return float(tin) - float(tout)
+    return Decimal(tin or 0) - Decimal(tout or 0)
 
 
 def _close_year_of(acc: Account) -> int | None:
@@ -39,11 +51,13 @@ def _close_year_of(acc: Account) -> int | None:
 
 
 def _account_balance_series(session: Session, account_id: int,
-                            years: range, close_year: int | None = None) -> dict[int, float]:
+                            years: range, close_year: int | None = None) -> dict[int, Decimal]:
     """该账户逐年 as-of 余额：初始现金 + 累计 income − 累计 expense。
 
     关池（close_year）后不双计：closed 账户自关池年起余额清零——钱已结转进承接币种
     （EUR）账户，避免与承接分录叠加（DESIGN §6.6）。
+
+    issue #28：全程 Decimal；返回 dict[year, Decimal]。
     """
     # ledger 收支（现金进 ledger）
     rows = session.execute(
@@ -53,17 +67,17 @@ def _account_balance_series(session: Session, account_id: int,
         .where(LedgerEntry.account_id == account_id)
         .group_by(func.extract("year", LedgerEntry.date))
     ).all()
-    year_in: dict[int, float] = {}
-    year_out: dict[int, float] = {}
+    year_in: dict[int, Decimal] = {}
+    year_out: dict[int, Decimal] = {}
     for y, tin, tout in rows:
-        year_in[int(y)] = float(tin)
-        year_out[int(y)] = float(tout)
+        year_in[int(y)] = Decimal(tin or 0)
+        year_out[int(y)] = Decimal(tout or 0)
     # 逐年滚动
-    series: dict[int, float] = {}
-    bal = 0.0
+    series: dict[int, Decimal] = {}
+    bal: Decimal = _ZERO
     for y in years:
-        bal += year_in.get(y, 0.0) - year_out.get(y, 0.0)
-        series[y] = 0.0 if close_year is not None and y >= close_year else bal
+        bal = bal + year_in.get(y, _ZERO) - year_out.get(y, _ZERO)
+        series[y] = _ZERO if close_year is not None and y >= close_year else bal
     return series
 
 
@@ -71,10 +85,13 @@ def _ownership_accounts(session: Session) -> list[Account]:
     return session.execute(select(Account)).scalars().all()
 
 
-def _usd_rate(session: Session, currency: str, year: int) -> float | None:
-    """currency → USD 折算率（与 wealth._usd_rate 对齐；缺汇率返回 None 不静默 fallback）。"""
+def _usd_rate(session: Session, currency: str, year: int) -> Decimal | None:
+    """currency → USD 折算率（与 wealth._usd_rate 对齐；缺汇率返回 None 不静默 fallback）。
+
+    issue #28：返回 Decimal（与内部聚合口径一致）；wealth._usd_rate 仍返 float，调用方按需转换。
+    """
     if currency == "USD":
-        return 1.0
+        return Decimal(1)
     from sqlalchemy import or_
     row = session.execute(
         select(ExchangeRate.rate).where(
@@ -83,14 +100,14 @@ def _usd_rate(session: Session, currency: str, year: int) -> float | None:
         ).order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc()).limit(1)
     ).first()
     if row is not None and row[0] is not None:
-        return 1.0 / float(row[0])
+        return Decimal(1) / Decimal(row[0])
     row2 = session.execute(
         select(ExchangeRate.rate).where(
             ExchangeRate.fx_from == currency, ExchangeRate.fx_to == "USD",
             or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
         ).order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc()).limit(1)
     ).first()
-    return float(row2[0]) if row2 is not None and row2[0] is not None else None
+    return Decimal(row2[0]) if row2 is not None and row2[0] is not None else None
 
 
 def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
@@ -99,6 +116,9 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
 
     from_year=None → 全量重建（1947 起）；
     from_year=N    → 仅重建 [N, end] 年；旧 [1947, N-1] 快照保留（§9.2c 增量）。
+
+    issue #28：value=0 且无流水的年份跳过写入（account/entity/family 三种 scope），
+    避免 79 年×每账户 每账户必写 79 行的膨胀；汇率缺失币种不计入 family（保留原语义）。
 
     返回 {"snapshots": 行数, "accounts": 账户数, "entities": 实体数, "family_years": 家族快照年数}
     """
@@ -118,72 +138,83 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
     )
 
     # 2) 先把所有账户余额 series 算好（避免 entity 聚合时再算）
-    series_by_acc: dict[int, dict[int, float]] = {}
+    series_by_acc: dict[int, dict[int, Decimal]] = {}
     for acc in _ownership_accounts(session):
         series_by_acc[acc.id] = _account_balance_series(
             session, acc.id, years, close_year=_close_year_of(acc))
 
-    # 3) 写 account:* 行
+    # 3) 写 account:* 行（issue #28：value=0 跳过；Decimal.quantize(0.01) 写回）
     for acc in _ownership_accounts(session):
         series = series_by_acc[acc.id]
+        written = False
         for y in years_list:
             if y < start:
+                continue
+            v = series.get(y, _ZERO)
+            if v == 0:
                 continue
             session.add(Snapshot(
                 as_of_year=y, as_of_date=None,
                 scope=f"account:{acc.id}:{acc.currency}",
-                value=round(series.get(y, 0.0), 2), currency=acc.currency,
+                value=v.quantize(_QUANTIZE_2), currency=acc.currency,
             ))
             stats["snapshots"] += 1
-        stats["accounts"] += 1
+            written = True
+        if written:
+            stats["accounts"] += 1
 
-    # 4) 写 entity:* 行（entity × currency 聚合）
-    # account.entity_id → entity_id；按 (entity_id, currency) 聚合
+    # 4) 写 entity:* 行（entity × currency 聚合；0 值跳过）
     accs = session.execute(select(Account)).scalars().all()
-    # entity_id × currency → {year: sum}
-    entity_agg: dict[tuple[int, str], dict[int, float]] = {}
-    entity_ids: set[int] = set()
+    entity_agg: dict[tuple[int, str], dict[int, Decimal]] = {}
     for acc in accs:
-        entity_ids.add(acc.entity_id)
         key = (acc.entity_id, acc.currency)
         ea = entity_agg.setdefault(key, {})
         series = series_by_acc.get(acc.id, {})
         for y, v in series.items():
             if y < start:
                 continue
-            ea[y] = ea.get(y, 0.0) + v
+            ea[y] = ea.get(y, _ZERO) + v
     for (eid, cur), ymap in entity_agg.items():
+        written = False
         for y in years_list:
             if y < start:
                 continue
-            v = ymap.get(y, 0.0)
+            v = ymap.get(y, _ZERO)
+            if v == 0:
+                continue
             session.add(Snapshot(
                 as_of_year=y, as_of_date=None,
                 scope=f"entity:{eid}:{cur}",
-                value=round(v, 2), currency=cur,
+                value=v.quantize(_QUANTIZE_2), currency=cur,
             ))
             stats["snapshots"] += 1
-        stats["entities"] += 1
+            written = True
+        if written:
+            stats["entities"] += 1
 
-    # 5) 写 family:total 行（USD 口径；汇率缺失币种不计入）
-    #     缺失币种可通过 wealth._usd_rate 重算 family_total_usd 时另行标记（issue #2）
+    # 5) 写 family:total 行（USD 口径；汇率缺失币种不计入；全账户 0 时跳过该年）
     for y in years_list:
         if y < start:
             continue
-        family_usd = 0.0
+        family_usd: Decimal = _ZERO
+        any_contribution = False
         for acc in accs:
             series = series_by_acc.get(acc.id, {})
-            v = series.get(y, 0.0)
+            v = series.get(y, _ZERO)
             if v == 0:
                 continue
             rate = _usd_rate(session, acc.currency, y)
             if rate is None:
                 continue                                 # 汇率缺失 → 不计入
-            family_usd += v * rate
+            family_usd = family_usd + v * rate
+            any_contribution = True
+        # issue #28：family_usd=0 跳过（避免家族层面多年 0 值行膨胀）
+        if not any_contribution or family_usd == 0:
+            continue
         session.add(Snapshot(
             as_of_year=y, as_of_date=None,
             scope="family:total",
-            value=round(family_usd, 2), currency="USD",
+            value=family_usd.quantize(_QUANTIZE_2), currency="USD",
         ))
         stats["snapshots"] += 1
         stats["family_years"] += 1
