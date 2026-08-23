@@ -265,7 +265,11 @@ def _region_from_file(fname: str) -> str:
 
 # ---------------- character（人物） ----------------
 def parse_character(path: Path) -> list[dict]:
-    """`- 字段：值` 自由列表；产出 entity 字段 + 关系。"""
+    """`- 字段：值` 自由列表；产出 entity 字段 + 关系。
+
+    issue #27 修复：「姓名」不再重复进 rels（它是 name 本身，不是关系）。
+    仅「与主角的关系」/「关系」进入 relations 列表。
+    """
     fields: dict = {}
     rels: list[tuple[str, str]] = []
     name = path.stem
@@ -276,9 +280,10 @@ def parse_character(path: Path) -> list[dict]:
         key, val = m.group(1).strip(), m.group(2).strip()
         if not key or key in ("---", "===="):
             continue
-        if key.replace(" ", "") in ("姓名", "与主角的关系", "关系") and val:
-            if key.replace(" ", "") == "姓名":
-                name = val.split("/")[0].strip()
+        kn = key.replace(" ", "")
+        if kn == "姓名" and val:
+            name = val.split("/")[0].strip()
+        elif kn in ("与主角的关系", "关系") and val:
             rels.append((key, val))
         else:
             fields[key] = val
