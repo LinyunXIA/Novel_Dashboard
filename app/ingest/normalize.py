@@ -7,8 +7,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-# ---- 千分位 / 单位 / 约等 ----
-_THOUSAND_RE = re.compile(r"[,\s]")
+# ---- 单位 / 约等 ----
 _WAN_RE = re.compile(r"(?<=\d)([万亿])(?![a-zA-Z])")
 _APPROX_RE = re.compile(r"[≈~]?\s*")
 
@@ -153,3 +152,4 @@ def currency_from(seg_title: str) -> str | None:
 
 # issue #27：原 parse_relationship 是死代码（无调用方，character 解析走 parse_character
 # 内部 KV 收集）。已删除；如未来需要展开，可从 git history 取回。
+# issue #31：_THOUSAND_RE 定义未用（千分位剥离在 parse_number/parse_amount 内联实现），已清理。
