@@ -396,18 +396,29 @@ def parse_income_security(path: Path) -> list[dict]:
 
     产出"每券"记录；归属 entity + 币种由持有国 → 铁律映射（F-P0-05）。
     逐年票息 = 面值 × 票息（固定费率，全周期不变；由 writer 生成 income_stream）。
+
+    返回：(records, warnings)
+    - records：每券字典列表
+    - warnings：country 已设但未产出记录的告警列表（如某国家债券节无 `### N.` 子项）
+
+    issue #11 修复：面值正则放宽为 [\\d,.]+ 以支持带小数面额（如「4,047.30 BEF」），
+    此前因不含小数点导致整条记录静默丢失。
     """
     from app.ingest.holders import holder_currencies
     lines = _lines(path)
     recs: list[dict] = []
+    warnings: list[str] = []
     country = None
+    country_had_records: dict[str, bool] = {}
     for idx, line in enumerate(lines):
         cm = re.match(r"^##\s*(荷兰|丹麦|瑞典|比利时|卢森堡)债券", line)
         if cm:
             country = cm.group(1)
+            country_had_records.setdefault(country, False)
             continue
         # 每券：`### N. 名称（面值 X 币种，固定票息Y%）`
-        m = re.match(r"^###\s+\d+\.\s*(.+?)（面值\s*([\d,]+)\s*([A-Za-z一-鿿]{2,8})", line)
+        # issue #11：面值正则放宽为 [\d,.]+ 支持小数（如 4,047.30 BEF）
+        m = re.match(r"^###\s+\d+\.\s*(.+?)（面值\s*([\d,.]+)\s*([A-Za-z一-鿿]{2,8})", line)
         if not m or not country:
             continue
         cur_code = m.group(3)
@@ -422,7 +433,12 @@ def parse_income_security(path: Path) -> list[dict]:
         recs.append({"country": country, "name": m.group(1).strip(),
                      "face_value": parse_number(m.group(2)), "currency": face_cur,
                      "rate_pct": rate, "holder": _bund_holder(country)})
-    return recs
+        country_had_records[country] = True
+    # issue #11：country 已设但无任何记录 → warning 进 ingest_report
+    for c, had in country_had_records.items():
+        if not had:
+            warnings.append(f"country={c} 债券节未产出任何记录（缺 ### N. 行或正则失配）")
+    return recs, warnings
 
 
 # ---------------- income_rent（惠民租房收益流） ----------------
