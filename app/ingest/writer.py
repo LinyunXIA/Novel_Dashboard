@@ -162,12 +162,17 @@ def import_initial_assets(session: Session, records: list[dict], cash_year: int 
 
 
 def import_income_security(session: Session, records: list[dict],
-                           years: tuple[int, int] = (1947, 2025), label_prefix: str = "祖产债券票息") -> dict:
+                           years: tuple[int, int] | None = None,
+                           label_prefix: str = "祖产债券票息") -> dict:
     """祖产债券每券 → 逐年 income_stream（面值 × 票息率）。
 
     归属 entity = holder；币种按券；逐年票息金额=面值×rate。
-    返回 {stream: 生成行}。
+    展开窗口默认取 factors.SECURITY_DEFAULT_YEARS（issue #69：源文件无期限列，
+    全周期固定票息；窗口可参配）。返回 {stream: 生成行}。
     """
+    from app.core.factors import SECURITY_DEFAULT_YEARS
+    if years is None:
+        years = SECURITY_DEFAULT_YEARS
     stats = {"stream": 0}
     for rec in records:
         holder = rec.get("holder")
@@ -189,30 +194,15 @@ def import_income_security(session: Session, records: list[dict],
     return stats
 
 
-def _property_factor(year: int) -> float:
-    """经营性房产逐年复利：1974 基桩=1；1975-84 +7%、85-99 +3.5%、00-07 +5%；08-16 +3%、17-22 +2.8%、23-25 +1.5%。"""
-    if year <= 1974:
-        return 1.0
-    f = 1.0
-    for y in range(1975, year + 1):
-        if y <= 1984:
-            f *= 1.07
-        elif y <= 1999:
-            f *= 1.035
-        elif y <= 2007:
-            f *= 1.05
-        elif y <= 2016:
-            f *= 1.03
-        elif y <= 2022:
-            f *= 1.028
-        else:
-            f *= 1.015
-    return f
-
-
 def import_income_property(session: Session, records: list[dict],
                            years: tuple[int, int] = (1974, 2025)) -> dict:
-    """经营性房产 → 逐年营收 income_stream（属地基准 × 分段复利；营收口径，不含人力成本—归 P1 用工成本线）。"""
+    """经营性房产 → 逐年营收 income_stream。
+
+    issue #69：逐年 = 属地基准 × 分段复利；涨幅分段外置 app/core/factors.py
+    （数值与源文件说明段一致），writer 不再硬编码。
+    （营收口径，不含人力成本—归 P1 用工成本线。）
+    """
+    from app.core.factors import property_factor
     stats = {"stream": 0}
     for rec in records:
         ent = upsert_entity(session, "person", rec["holder"])
@@ -222,7 +212,7 @@ def import_income_property(session: Session, records: list[dict],
                 continue
             session.add(IncomeStream(
                 entity_id=ent.id, stream_type="property", group_key=f"{rec.get('country')}{rec.get('prop')}",
-                currency=rec.get("currency"), year=y, amount=round(base * _property_factor(y), 2),
+                currency=rec.get("currency"), year=y, amount=round(base * property_factor(y), 2),
                 label=f"经营性房产 · {rec.get('country')}{rec.get('prop')}",
                 source_file=rec.get("source_file"),
             ))
@@ -530,24 +520,13 @@ def close_2002_currency(session: Session, currencies=("BEF", "LUF", "NLG"),
     return stats
 
 
-def _rent_factor(year: int) -> float:
-    """租房分段复利系数：1974 = 1.0（基桩年不涨）；1975 起按分段年涨幅累乘。"""
-    if year <= 1974:
-        return 1.0
-    f = 1.0
-    for y in range(1975, year + 1):
-        if y <= 1984:
-            f *= 1.07
-        elif y <= 1999:
-            f *= 1.035
-        else:
-            f *= 1.05
-    return f
-
-
 def import_income_rent(session: Session, records: list[dict],
                        years: tuple[int, int] = (1974, 2007)) -> dict:
-    """惠民租房 → 逐年租金 income_stream（单套年租金×套数×分段复利系数）。"""
+    """惠民租房 → 逐年租金 income_stream（单套年租金×套数×分段复利系数）。
+
+    issue #69：分段复利系数外置 app/core/factors.py（数值与源文件说明段一致）。
+    """
+    from app.core.factors import rent_factor
     stats = {"stream": 0}
     for rec in records:
         ent = upsert_entity(session, "person", rec["holder"])
@@ -558,7 +537,7 @@ def import_income_rent(session: Session, records: list[dict],
             session.add(IncomeStream(
                 entity_id=ent.id, stream_type="rent", group_key=f"{rec.get('country')}惠民租",
                 currency=rec.get("currency"), year=y,
-                amount=round(base * _rent_factor(y), 2),
+                amount=round(base * rent_factor(y), 2),
                 label=f"惠民租房 · {rec.get('country')}",
                 source_file=rec.get("source_file"),
             ))
