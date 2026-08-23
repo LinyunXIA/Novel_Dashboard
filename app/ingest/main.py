@@ -112,6 +112,18 @@ def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Op
 
 
 @app.command()
+def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(2001, "--year")):
+    """财富曲线视图：某年家族合计(USD) + 各币种分项。"""
+    from app.core.wealth import wealth_series
+    with SessionLocal() as s:
+        w = wealth_series(s, year, year)
+        d = w.get(year, {})
+        typer.echo(f"[{env}] {year} 家族合计(展示USD) = {d.get('family_total_usd', 0):,.0f}")
+        for cur, val in d.get("currencies", {}).items():
+            typer.echo(f"   {cur}: {val:,.0f}")
+
+
+@app.command()
 def snapshot(env: str = typer.Option("dev", "--env")):
     """重建逐年 as-of 快照（F-P0-08）。"""
     from app.core.snapshot import rebuild_snapshots

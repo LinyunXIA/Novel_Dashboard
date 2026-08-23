@@ -812,7 +812,7 @@ class Importer(Protocol):
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR | §6.5/§6.6 | ✅ |
 | F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
 | F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py） | §8 | ✅ |
-| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD） | §7/§8 | ⬜ |
+| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD） | §7/§8 | ✅ |
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动 | §8 | ⬜ |
 | F-P0-11 | **健康校验** | H1–H5 汇总 + 问题清单（health.py） | §10 | ✅ |
 | F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示 | §9 | ✅ |
