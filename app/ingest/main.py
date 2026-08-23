@@ -70,7 +70,7 @@ def ingest(
     cfg = get_config(env)
     with _session_for(env) as s:
         rep = run_ingest(cfg.source_dir)
-        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0; rcur = 0; fx_total = 0; blocked_files = 0
+        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; blocked_files = 0
         fx_files = []
         for r in rep.ok:
             if r.category == "character" and r.records:
@@ -79,6 +79,8 @@ def ingest(
                 rcur += writer.import_return_curves(s, r.records)["n"]
             if r.category == "fx" and r.records:
                 fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
+            if r.category == "timeline" and r.records:
+                tl_n += writer.import_timeline(s, r.records)["n"]
             if r.category == "initial_asset" and r.records:
                 st = writer.import_initial_assets(s, r.records)
                 ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
@@ -114,7 +116,7 @@ def ingest(
         closed = writer.close_2002_currency(s)["closed"]
         s.flush()
         s.commit()
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、2002关池 {closed}、冲突拦截 {blocked_files}")
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、2002关池 {closed}、冲突拦截 {blocked_files}")
 
 
 @app.command()

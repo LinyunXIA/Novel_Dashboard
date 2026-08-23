@@ -261,7 +261,13 @@ def parse_character(path: Path) -> list[dict]:
 
 # ---------------- timeline（时间线） ----------------
 def parse_timeline(path: Path) -> list[dict]:
-    """decade 表 `年份|事件|备注`。"""
+    """decade 表 `年份|事件|备注`。
+
+    返回：每条事件记录（含 event_year / event_date / title / note / decade / source_file）。
+
+    issue #8：parse_timeline 解析后无 writer 落库；这里额外解析 ISO 日期作为 event_date
+    （用于 H1 时间线对齐与日历游标快照）。
+    """
     lines = _lines(path)
     recs: list[dict] = []
     decade = None
@@ -273,9 +279,21 @@ def parse_timeline(path: Path) -> list[dict]:
         if len(cells) >= 2:
             y = re.match(r"(\d{4})", cells[0])
             if y and cells[1] and "年份" not in cells[0]:
+                ds = cells[0].strip()
+                # 解析 date_str：优先 YYYY-MM-DD，其次 YYYY-MM，最后 YYYY（→ 12-30）
+                from app.ingest.normalize import resolve_date
+                fm = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", ds)
+                fm_m = re.fullmatch(r"(\d{4})-(\d{2})", ds)
+                if fm:
+                    event_date = resolve_date(int(fm.group(1)), int(fm.group(2)), int(fm.group(3)))
+                elif fm_m:
+                    event_date = resolve_date(int(fm_m.group(1)), int(fm_m.group(2)))
+                else:
+                    event_date = resolve_date(int(y.group(1)))
                 recs.append({
                     "event_year": int(y.group(1)),
-                    "date_str": cells[0].strip(),
+                    "event_date": event_date,
+                    "date_str": ds,
                     "title": cells[1].strip(),
                     "note": cells[2].strip() if len(cells) > 2 else None,
                     "decade": decade,
