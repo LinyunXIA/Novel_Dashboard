@@ -562,21 +562,67 @@ def parse_household_expense(path: Path) -> list[dict]:
 
 
 # ---------------- bank（银行台账） ----------------
+_BANK_HOLDER_HINTS = (
+    "Henri Peeters", "Joren Peeters", "Johanna Peeters",
+    "祖父", "祖母", "外祖父", "外祖母", "养父", "养母",
+)
+
+
+def _extract_holder_from_title(title: str, fallback: str | None = None) -> str | None:
+    """从节标题 / 文件名抽持有人**规范化 entity.name**（issue #9：补 entity 归属）。
+
+    命中后通过 TITLE_ENTITY 映射回规范 entity.name（如「祖父」→「Henri Peeters」、
+    「外祖父」→「Frederik van Oranje」），确保 account 唯一键一致。
+    """
+    from app.ingest.holders import TITLE_ENTITY
+    # 精确命中
+    if title in TITLE_ENTITY:
+        return TITLE_ENTITY[title]
+    # 子串命中：按长度倒序避免「祖父」误吞「外祖父」（更长的 key 先匹配）
+    for k in sorted(TITLE_ENTITY.keys(), key=len, reverse=True):
+        if k in title:
+            return TITLE_ENTITY[k]
+    # fallback 也走规范映射（如 filename="祖父" → "Henri Peeters"）
+    if fallback is not None:
+        return TITLE_ENTITY.get(fallback, fallback)
+    return None
+
+
+def _extract_bank_name_from_header(lines: list[str]) -> str | None:
+    """从文件头部注释行抽开户行（如 `# 开户行：德意志银行`）。"""
+    for line in lines[:20]:
+        m = re.search(r"开户行[：:]\s*(.+)", line)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
 def parse_bank(path: Path) -> list[dict]:
-    """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。"""
+    """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。
+
+    返回：每节 dict（含 seg_title / currency / holder / bank / rows）；rows 中每条流水含
+    date / reason / inflow / outflow / balance / note。
+
+    issue #9：补持有人解析（节标题「BEF（祖父Henri Peeters注入）」→ 祖父；文件 stem
+    `祖父.md` → 祖父；最终回退 holder_entity_name）；补开户行从头部注释抽取。
+    """
+    from app.ingest.holders import holder_entity_name
     lines = _lines(path)
     out: list[dict] = []
     cur_seg: dict | None = None
+    file_holder = holder_entity_name(path.stem)        # 文件名兜底
+    bank_name = _extract_bank_name_from_header(lines)
     i = 0
-    header = ("日期", "理由", "收入", "支出")
     while i < len(lines):
         line = lines[i]
         hm = re.match(r"^##+\s*(.+)$", line.strip())
         if hm:
             title = hm.group(1)
             cur = currency_from(title)
+            seg_holder = _extract_holder_from_title(title, fallback=file_holder)
             cur = cur or (cur_seg["currency"] if cur_seg else None)
-            cur_seg = {"seg_title": title, "currency": cur, "rows": []}
+            cur_seg = {"seg_title": title, "currency": cur,
+                       "holder": seg_holder, "bank": bank_name, "rows": []}
             out.append(cur_seg)
         else:
             cells = _split_table_row(line)
