@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -48,7 +48,7 @@ def list_entities(
 def get_entity(entity_id: int, db: Session = Depends(get_db)):
     e = db.get(Entity, entity_id)
     if not e:
-        return {"detail": "not found"}, 404
+        raise HTTPException(status_code=404, detail="entity not found")
     return {"id": e.id, "type": e.entity_type, "name": e.name, "status": e.status,
             "fields": e.fields}
 
