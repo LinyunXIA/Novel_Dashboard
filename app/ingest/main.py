@@ -72,6 +72,7 @@ def ingest(
     cfg = get_config(env)
     with _session_for(env) as s:
         stats = import_all(s, cfg.source_dir, log=typer.echo)
+        s.commit()          # issue #68：import_all 只 flush；commit 由命令层负责（勿丢）
     typer.echo(f"[{cfg.env}] {stats['summary']}")
 
 
