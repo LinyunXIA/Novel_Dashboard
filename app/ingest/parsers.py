@@ -361,6 +361,29 @@ def parse_income_security(path: Path) -> list[dict]:
     return recs
 
 
+# ---------------- income_rent（惠民租房收益流） ----------------
+def parse_income_rent(path: Path) -> list[dict]:
+    """分国基础表：国家/持有人/套数/币种/1974单套年租金 → 逐年租金推导配置。
+
+    逐年租金 = 单套年租金 × 套数 × 分段复利(1974-84 +7%, 85-99 +3.5%, 00-07 +5%)。
+    """
+    lines = _lines(path)
+    recs: list[dict] = []
+    i = 0
+    while i < len(lines):
+        cells = _split_table_row(lines[i])
+        if len(cells) >= 5 and cells[0] in ("比利时", "荷兰", "丹麦", "瑞典"):
+            cur = _cur(cells[3])
+            m = re.search(r"([\d.]+)\s*([A-Za-z一-鿿]{2,6})", cells[4])
+            recs.append({
+                "country": cells[0], "holder": cells[1].strip(), "units": parse_number(cells[2]),
+                "currency": cur or _cur(cells[1]), "unit_rent": parse_number(m.group(1)) if m else None,
+                "start": 1974,
+            })
+        i += 1
+    return recs
+
+
 # ---------------- bank（银行台账） ----------------
 def parse_bank(path: Path) -> list[dict]:
     """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。"""

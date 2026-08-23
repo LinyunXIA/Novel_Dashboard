@@ -55,7 +55,7 @@ def ingest(
     cfg = get_config(env)
     with SessionLocal() as s:
         rep = run_ingest(cfg.source_dir)
-        ck = 0; ia = {"asset": 0, "cash": 0}; sec = {"stream": 0}
+        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0
         for r in rep.ok:
             if r.category == "character" and r.records:
                 ck += writer.import_characters(s, r.records, r.file)["imported"]
@@ -63,11 +63,12 @@ def ingest(
                 st = writer.import_initial_assets(s, r.records)
                 ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
             if r.category == "income_security" and r.records:
-                st = writer.import_income_security(s, r.records)
-                sec["stream"] += st["stream"]
+                sec += writer.import_income_security(s, r.records)["stream"]
+            if r.category == "income_rent" and r.records:
+                rent += writer.import_income_rent(s, r.records)["stream"]
         s.flush()
         s.commit()
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔、祖产债券逐年票息 {sec['stream']} 行")
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔、祖产票息 {sec} 行、租房租金 {rent} 行")
 
 
 if __name__ == "__main__":

@@ -108,3 +108,39 @@ def import_income_security(session: Session, records: list[dict],
             ))
             stats["stream"] += 1
     return stats
+
+
+def _rent_factor(year: int) -> float:
+    """租房分段复利系数：1974 = 1.0（基桩年不涨）；1975 起按分段年涨幅累乘。"""
+    if year <= 1974:
+        return 1.0
+    f = 1.0
+    for y in range(1975, year + 1):
+        if y <= 1984:
+            f *= 1.07
+        elif y <= 1999:
+            f *= 1.035
+        else:
+            f *= 1.05
+    return f
+
+
+def import_income_rent(session: Session, records: list[dict],
+                       years: tuple[int, int] = (1974, 2007)) -> dict:
+    """惠民租房 → 逐年租金 income_stream（单套年租金×套数×分段复利系数）。"""
+    stats = {"stream": 0}
+    for rec in records:
+        ent = upsert_entity(session, "person", rec["holder"])
+        base = (rec.get("unit_rent") or 0.0) * (rec.get("units") or 0.0)
+        for y in range(years[0], years[1] + 1):
+            if y < (rec.get("start") or 1974):
+                continue
+            session.add(IncomeStream(
+                entity_id=ent.id, stream_type="rent", group_key=f"{rec.get('country')}惠民租",
+                currency=rec.get("currency"), year=y,
+                amount=round(base * _rent_factor(y), 2),
+                label=f"惠民租房 · {rec.get('country')}",
+                source_file=rec.get("source_file"),
+            ))
+            stats["stream"] += 1
+    return stats

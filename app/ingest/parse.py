@@ -47,8 +47,8 @@ _PARSERS = {
     "timeline": parsers.parse_timeline,
     "initial_asset": parsers.parse_initial_asset,
     "income_security": parsers.parse_income_security,
-    # F-P0-05 其余 / F-P0-06：income_rent/property/shop, salary, household_expense
-    "income_rent": None,
+    "income_rent": parsers.parse_income_rent,
+    # F-P0-05 其余 / F-P0-06：income_property/shop, salary, household_expense
     "income_property": None,
     "income_shop": None,
     "salary": None,
