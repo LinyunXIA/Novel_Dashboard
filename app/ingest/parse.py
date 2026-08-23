@@ -47,6 +47,11 @@ class IngestReport:
                 out.append((r.file, w))
         return out
 
+    @property
+    def skipped(self) -> list[ParseResult]:
+        """issue #26：SKIP_* 类别（P1 范围/创作约束）单独分组，不与 unknown 报错混淆。"""
+        return [r for r in self.results if r.category.startswith("SKIP_")]
+
 
 # 解析器签名有两种：(path) -> list 或 (path) -> (list, warnings)。
 # 下面通过 _call 统一处理。
@@ -80,6 +85,10 @@ def parse_one(rel: str, path: Path) -> ParseResult:
     if det.phase2:
         pr.ok = False
         pr.error = "Phase 2 事件，Phase 1 跳过"
+        return pr
+    # issue #26：SKIP_* 类别（P1 范围/创作约束）显式跳过，不算 unknown 报错
+    if det.category.startswith("SKIP_"):
+        pr.ok = True
         return pr
     fn = _PARSERS.get(det.category)
     if fn is None:
