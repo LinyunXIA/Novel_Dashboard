@@ -12,8 +12,9 @@ from __future__ import annotations
 import typer
 
 from app.config import get_config
-from app.db import check_connection
+from app.db import SessionLocal, check_connection
 from app.ingest.parse import run_ingest
+from app.ingest import writer
 
 app = typer.Typer(help="Novel Dashboard ingest")
 
@@ -41,6 +42,31 @@ def run(
         typer.echo(f"  ✅ {r.category:12s} {r.file} ({len(r.records)} 条)")
     for r in report.failed:
         typer.echo(f"  ❌ {r.category:12s} {r.file} — {r.error}")
+
+
+@app.command()
+def ingest(
+    env: str = typer.Option("dev", "--env"),
+):
+    """F-P0-04 落库：character→entity；initial_asset→entity/account/initial_asset/现金余额。
+
+    从 Design_Folder（source_dir）读取基础数据；commit 前整批事务，失败回滚。
+    """
+    cfg = get_config(env)
+    from sqlalchemy import func
+    with SessionLocal() as s:
+        # character
+        rep = run_ingest(cfg.source_dir)
+        ck = 0; ia = {"asset": 0, "cash": 0}
+        for r in rep.ok:
+            if r.category == "character" and r.records:
+                ck += writer.import_characters(s, r.records, r.file)["imported"]
+            if r.category == "initial_asset" and r.records:
+                st = writer.import_initial_assets(s, r.records)
+                ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
+        s.flush()
+        s.commit()
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔")
 
 
 if __name__ == "__main__":

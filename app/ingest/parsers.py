@@ -104,12 +104,19 @@ def parse_fx(path: Path) -> list[dict]:
 def _cur(name: str) -> str:
     """币种名/代码 → 标准代码；无法识别返回大写原样。"""
     n = name.strip().lower()
-    if n.upper() in ("USD", "EUR", "BEF", "LUF", "NLG", "DKK", "SEK", "HKD", "CNY"):
-        return n.upper()
+    up = n.upper()
+    if up in ("USD", "EUR", "BEF", "LUF", "NLG", "DKK", "SEK", "HKD", "CNY"):
+        return up
+    alias = {"bf": "BEF", "belgian": "BEF", "gulden": "NLG", "guilder": "NLG",
+             "guiden": "NLG", "nlg": "NLG", "法郎": "BEF", "比利时法郎": "BEF",
+             "荷兰盾": "NLG", "瑞典克朗": "SEK", "丹麦克朗": "DKK", "美元": "USD"}
+    for k, v in alias.items():
+        if k in n:
+            return v
     for k, v in _CUR_NAME.items():
         if k in n:
             return v
-    return name.strip().upper()
+    return up
 
 
 def _year_from_name(name: str) -> int | None:
@@ -243,6 +250,65 @@ def parse_stock_tx(path: Path) -> list[dict]:
                     "source_file": path.name,
                 })
     return [{"info": info, "events": events, "source_file": path.name}]
+
+
+# ---------------- initial_asset（初始资产） ----------------
+def parse_initial_asset(path: Path) -> list[dict]:
+    """`- 现金：值 币种` 同行 / `- 债券:`+子项面值 / `- 股票(说明)`+编号持仓% / `- 房产`+子项。
+
+    产出存量记录；币种由持有人推断或文本识别（F-P0-04）。
+    """
+    from app.ingest.holders import holder_currencies, holder_entity_name
+    lines = _lines(path)
+    holder = path.stem
+    curs = holder_currencies(holder)
+    entity = holder_entity_name(holder) or holder
+    defcur = curs[0] if curs else None
+    recs: list[dict] = []
+    section: str | None = None
+    idx = 0
+
+    def add(at: str, name: str, currency: str | None = None, face=None, pct=None, gk=None):
+        nonlocal idx
+        recs.append({"entity_name": entity, "asset_type": at, "name": name,
+                     "currency": currency or defcur, "face_value": face, "pct": pct,
+                     "group_key": gk, "idx": idx})
+        idx += 1
+
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith(">"):
+            continue
+        # 标题（含括号说明）：`- 债券:` / `- 股票（…）` / `- 房产` / `- 现金：…`
+        th = re.match(r"[-\*]\s*(现金|债券|股票|房产)", s)
+        if th:
+            section = th.group(1)
+        if section == "现金":
+            m = re.match(r"[-\*]\s*现金\s*[:：]\s*([\d,.\s]+)\s*([A-Za-z一-鿿]{2,8})", s)
+            if m:
+                add("cash", "初始现金", _cur(m.group(2)) if _cur(m.group(2)) != m.group(2).upper() else defcur,
+                    face=parse_number(m.group(1)))
+                continue
+        if section == "债券":
+            m = re.match(r"[-\*]\s*债券[A-Za-z]?\s*[:：]\s*(.*?)（?面值\s*([\d,.\s]+)\s*([A-Za-z一-鿿]{2,8})?", s)
+            if m:
+                add("bond", (m.group(1) or "").strip() or f"债券{idx}", _cur(m.group(3) or "") or defcur,
+                    face=parse_number(m.group(2)), gk="祖产股票债券")
+                continue
+        if section == "股票":
+            m = re.match(r"[-\*]?\s*\d+\.\s*(.*?)（?[:：]?\s*最终持仓\s*([\d.]+)%", s)
+            if not m:
+                m = re.match(r"[-\*]?\s*\d+\.\s*(.*?)[:：].*?([\d.]+)%", s)
+            if m:
+                add("stock", (m.group(1) or "").strip(), defcur, pct=parse_number(m.group(2)),
+                    gk="祖产股票债券")
+                continue
+        if section == "房产":
+            m = re.match(r"[-\*]\s*房产[A-Z]?\s*[:：]\s*(.+)", s)
+            if m:
+                add("property", m.group(1).strip(), defcur, gk="房产")
+                continue
+    return recs
 
 
 # ---------------- bank（银行台账） ----------------
