@@ -112,6 +112,19 @@ def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Op
 
 
 @app.command()
+def calendar(env: str = typer.Option("dev", "--env"), as_of: str = typer.Option("2001-12-30", "--as-of")):
+    """全局日历游标：按截至日期读取快照。"""
+    from datetime import date
+    from app.core.calendar import snapshot_as_of
+    d = date.fromisoformat(as_of)
+    with SessionLocal() as s:
+        snaps = snapshot_as_of(s, d)
+        typer.echo(f"[{env}] 截至 {d} 快照 {len(snaps)} 条：")
+        for x in snaps:
+            typer.echo(f"  {x['scope']}: {x['value']:,.0f} ({x['currency']})")
+
+
+@app.command()
 def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(2001, "--year")):
     """财富曲线视图：某年家族合计(USD) + 各币种分项。"""
     from app.core.wealth import wealth_series
