@@ -81,8 +81,13 @@ def parse_fx(path: Path) -> list[dict]:
     - TSV 表 `Currency  Code  Rate(Jan-1995)`，Rate = 1 USD 兑该币 → USD→{Currency}
     """
     recs: list[dict] = []
-    cur_year = _detect_year_in_lines(_lines(path)) or _year_from_name(path.name)
-    for line in _lines(path):
+    lines = _lines(path)
+    # 格式三：中文币种名宽表（列=币种，行=年份；如「所有的货币兑换美金.md」）
+    wide = _parse_fx_wide_table(lines)
+    if wide:
+        return wide
+    cur_year = _detect_year_in_lines(lines) or _year_from_name(path.name)
+    for line in lines:
         s = line.strip()
         # 格式一：1XXX = rate YYY
         m = re.search(r"1\s*([A-Za-z]{2,4})\s*=\s*([\d.,]+)\s*([A-Za-z一-鿿]{2,6})", s, re.I)
@@ -99,6 +104,65 @@ def parse_fx(path: Path) -> list[dict]:
             recs.append({"fx_from": "USD", "rate": parse_number(t.group(3)),
                          "fx_to": code, "year": cur_year})
     return recs
+
+
+_CN_CURRENCY = {
+    "比利时法郎": "BEF", "荷兰盾": "NLG", "卢森堡法郎": "LUF",
+    "挪威克朗": "NOK", "丹麦克朗": "DKK", "港币": "HKD",
+    "人民币": "CNY", "日元": "JPY", "欧元": "EUR", "美元": "USD",
+    "瑞典克朗": "SEK", "英镑": "GBP",
+}
+
+_FX_WIDE_HEADERS = ("比利时法郎", "荷兰盾", "卢森堡法郎", "丹麦克朗", "港币", "人民币", "欧元")
+
+
+def _cn_cur(name: str) -> str | None:
+    name = name.strip()
+    if not name:
+        return None
+    for k, v in _CN_CURRENCY.items():
+        if k in name:
+            return v
+    return None
+
+
+def _parse_fx_wide_table(lines: list[str]) -> list[dict]:
+    """格式三：宽表，表头含「年份」+中文币种名，数据行 = 年份 + 各币种兑USD汇率。
+
+    语义：rate = 1 USD 兑换该币 → fx_from='USD', fx_to=<ver币种>，year=该行年份。
+    值 `-` 表示该年无数据（不产出记录）。
+    """
+    header: list[str] = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s.startswith("|") or "年份" not in s:
+            continue
+        hl = [c.strip() for c in s.strip("|").split("|")] or ["年份"]
+        if any(h in _FX_WIDE_HEADERS for h in hl):
+            header = hl
+            # 从 i+1 起扫数据行
+            cur_year = None
+            recs: list[dict] = []
+            for data_line in lines[i + 1:]:
+                ds = data_line.strip()
+                if not ds.startswith("|"):
+                    continue
+                cells = [c.strip() for c in ds.strip("|").split("|")]
+                if not cells or not re.fullmatch(r"\d{4}", cells[0]):
+                    continue
+                year = int(cells[0])
+                for col, value in enumerate(header[1:], start=1):
+                    if col >= len(cells):
+                        break
+                    code = _cn_cur(value)
+                    if not code or cells[col] in ("-", "—", ""):
+                        continue
+                    rate = parse_number(cells[col])
+                    if rate is not None:
+                        recs.append({"fx_from": "USD", "rate": rate,
+                                     "fx_to": code, "year": year})
+            return recs
+    return []
 
 
 def _cur(name: str) -> str:

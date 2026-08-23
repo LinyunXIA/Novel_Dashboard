@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.model import Account, Entity, IncomeStream, InitialAsset, LedgerEntry
+from app.model import Account, Entity, ExchangeRate, IncomeStream, InitialAsset, LedgerEntry
 
 
 def upsert_entity(session: Session, entity_type: str, name: str,
@@ -164,6 +164,25 @@ def import_income_shop(session: Session, records: list[dict]) -> dict:
                 source_file=rec.get("source_file"),
             ))
             stats["stream"] += 1
+    return stats
+
+
+def import_fx(session: Session, records: list[dict]) -> dict:
+    """汇率 → exchange_rate（幂等 on_conflict on (fx_from,fx_to,year) 近似）。"""
+    from app.model import ExchangeRate
+    stats = {"n": 0}
+    if not records:
+        return stats
+    for rec in records:
+        exists = session.execute(
+            select(ExchangeRate.id).where(
+                ExchangeRate.fx_from == rec["fx_from"], ExchangeRate.fx_to == rec["fx_to"],
+                ExchangeRate.year == rec.get("year"))
+        ).scalar_one_or_none()
+        if exists is None:
+            session.add(ExchangeRate(fx_from=rec["fx_from"], fx_to=rec["fx_to"],
+                                     year=rec.get("year"), rate=rec["rate"]))
+            stats["n"] += 1
     return stats
 
 
