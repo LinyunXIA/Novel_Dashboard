@@ -85,6 +85,21 @@ def ingest(
         typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、2002关池 {closed}、冲突拦截文件 {blocked_files}")
 
 
+@app.command()
+def health(env: str = typer.Option("dev", "--env")):
+    """运行全库健康校验（H1-H5）并输出问题清单。"""
+    from app.core.health import run_report, summarize
+    with SessionLocal() as s:
+        summ = summarize(s)
+        typer.echo(f"[{env}] 健康校验汇总（H1-H5）：")
+        for rule in ("H1", "H2", "H3", "H4", "H5"):
+            x = summ.get(rule, {"total": 0})
+            typer.echo(f"  {rule}: {x['total']} 项"
+                       + (f"（warn {x.get('warn',0)} / crit {x.get('crit',0)}）" if x["total"] else " ✓"))
+        for f in run_report(s):
+            typer.echo(f"  [{f['rule']}/{f['level']}] {f['location']}: {f['detail']}")
+
+
 def _conflict_gate(s, r) -> dict:
     """对收益类文件做导入前冲突检测：H2 金额 / H5 引用。命中冲突 → 该文件不入库。"""
     from sqlalchemy import select as _sel
