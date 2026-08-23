@@ -16,8 +16,8 @@ _APPROX_RE = re.compile(r"[≈~]?\s*")
 def parse_number(raw: object, scale: float = 1.0) -> float | None:
     """把 '12,345' '1.2万' '≈4,047.30' 解析为 float；失败返回 None。
 
-    scale 用于把源单位折成统一基底（如 万→×1, 无 special）。
-    本函数**不做** 万/亿 自动乘基数，仅清洗文本；万以下照字面。
+    scale 用于把源单位折成统一基底。万/亿 后缀自动乘基数（万=1e4、亿=1e8，
+    符合 DESIGN §6.2 万/亿 单位）；不支持单位 → None（由调用方进 ingest_report）。
     """
     if raw is None:
         return None
@@ -25,8 +25,13 @@ def parse_number(raw: object, scale: float = 1.0) -> float | None:
     s = _APPROX_RE.sub("", s)
     if not s or s in ("-", "--", "—", ""):
         return None
+    mult = 1.0
+    m = _WAN_RE.search(s)
+    if m:
+        mult = 10_000.0 if m.group(1) == "万" else 100_000_000.0
+        s = (s[:m.start()] + s[m.end():]).strip()
     try:
-        return float(s) * scale
+        return float(s) * scale * mult
     except ValueError:
         return None
 
@@ -36,7 +41,7 @@ def parse_amount(raw: object, unit: str | None = None) -> float | None:
     if raw is None:
         return None
     s = str(raw).strip().replace(",", "").replace(" ", "").replace("≈", "").replace("~", "")
-    s = re.sub(r"(万|亿|USD|US|BEF|LUF|NLG|DKK|SEK|HKD|EUR|法郎|美元|元|万美金|万USD|万BEF)", "", s)
+    s = re.sub(r"(万美金|万USD|万BEF|万|亿|USD|US|BEF|LUF|NLG|DKK|SEK|HKD|EUR|法郎|美元|元)", "", s)
     if not s or s in ("-", "—"):
         return None
     try:
