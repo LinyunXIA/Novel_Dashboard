@@ -6,32 +6,41 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.model import Account, Entity, ExchangeRate, Snapshot
+from app.model import ExchangeRate, Snapshot
 
 
 def _usd_rate(session: Session, currency: str, year: int) -> float:
-    """返回 `1 USD = X <currency>`（即 currency 每单位折多少 USD 的倒数用）；
-    优先 CNY/USD 直接：这里计算 currency→USD = 1 / (USD→currency)。"""
+    """currency → USD 折算率（1 单位 currency = X USD）。
+
+    汇率表存的是 `USD→<currency>`（1 USD 兑该币）方向，故取该方向的年汇率后取倒数。
+    优先该具体年份；无则回退基准常量（year IS NULL）；再无可 1:1。
+    """
     if currency == "USD":
         return 1.0
-    r = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == currency, ExchangeRate.fx_to == "USD",
-            ExchangeRate.year == year or ExchangeRate.year.is_(None))
-        .order_by(ExchangeRate.year.is_(None))
-    ).scalar_one_or_none()
-    if r is not None:
-        return float(r)
-    # 反向 USD→currency，取倒数
-    r2 = session.execute(
+    row = session.execute(
         select(ExchangeRate.rate).where(
             ExchangeRate.fx_from == "USD", ExchangeRate.fx_to == currency,
-            ExchangeRate.year == year)
+            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
+        )
+        # 具体年份优先于基准常量
+        .order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc())
+        .limit(1)
     ).first()
-    return 1.0 / float(r2[0]) if r2 else 1.0
+    if row is not None and row[0] is not None:
+        return 1.0 / float(row[0])
+    # 反向：允许直接 currency→USD 行（若存在）
+    row2 = session.execute(
+        select(ExchangeRate.rate).where(
+            ExchangeRate.fx_from == currency, ExchangeRate.fx_to == "USD",
+            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
+        )
+        .order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc())
+        .limit(1)
+    ).first()
+    return float(row2[0]) if row2 is not None and row2[0] is not None else 1.0
 
 
 def family_total_usd(session: Session, year: int) -> float:
