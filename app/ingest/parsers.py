@@ -384,6 +384,48 @@ def parse_income_rent(path: Path) -> list[dict]:
     return recs
 
 
+# ---------------- income_property（经营性房产收益流） ----------------
+def parse_income_property(path: Path) -> list[dict]:
+    """属地 × 房产 × 1974基准年收入(本土货币) → 逐年营收推导配置。
+
+    逐年 = 属地基准 × 分段复利(1974-2007: +7%→+3.5%→+5%（累计≈5.21）; 2008-16 +3%; 17-22 +2.8%; 23-25 +1.5%)。
+    归属: 比利时/卢森堡→Henri, 荷兰→养外祖父, 丹麦→养外祖母, 瑞典→养祖母。
+    """
+    from app.ingest.holders import holder_currencies
+    lines = _lines(path)
+    recs: list[dict] = []
+    for line in lines:
+        m = re.match(r"\| (卢森堡|比利时|荷兰|丹麦|瑞典) \| 房产([A-Z]+) \| (.+?)\|.*\| ([\d,]+) ([A-Za-z一-鿿]{2,6}) \|", line)
+        if m:
+            recs.append({
+                "country": m.group(1), "prop": "房产" + m.group(2), "name": m.group(3).strip(),
+                "base1974": parse_number(m.group(4)), "currency": _cur(m.group(5)),
+                "holder": {"卢森堡": "Henri Peeters", "比利时": "Henri Peeters",
+                           "荷兰": "养外祖父", "丹麦": "养外祖母", "瑞典": "养祖母"}[m.group(1)],
+            })
+    return recs
+
+
+# ---------------- income_shop（开店收益流） ----------------
+def parse_income_shop(path: Path) -> list[dict]:
+    """时段表 `时间段 | 货币 | … | 合并税后落袋` → 逐年(时段内取落袋均值)。
+
+    归属：开店挂 Henri Peeters 账户（祖父运营）。遇「跨期对比辅助表」后停止（避免 EUR 折算重复段）。
+    """
+    lines = _lines(path)
+    recs: list[dict] = []
+    for line in lines:
+        # 仅当"辅助表"作为表格标题（## 或 #）出现才停，避免正文含"跨期对比"字样误触
+        if line.strip().startswith("#") and ("跨期对比辅助表" in line or "对比辅助表" in line):
+            break
+        m = re.match(r"\| (\d{4})[–-](\d{4}) \| (\w+) \| .* \| ([\d.]+) \|", line)
+        if m:
+            y0, y1, cur, last = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
+            recs.append({"holder": "Henri Peeters", "y0": y0, "y1": y1,
+                         "currency": _cur(cur) or "BEF", "amount": parse_number(last)})
+    return recs
+
+
 # ---------------- bank（银行台账） ----------------
 def parse_bank(path: Path) -> list[dict]:
     """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。"""

@@ -48,9 +48,9 @@ _PARSERS = {
     "initial_asset": parsers.parse_initial_asset,
     "income_security": parsers.parse_income_security,
     "income_rent": parsers.parse_income_rent,
-    # F-P0-05 其余 / F-P0-06：income_property/shop, salary, household_expense
-    "income_property": None,
-    "income_shop": None,
+    "income_property": parsers.parse_income_property,
+    "income_shop": parsers.parse_income_shop,
+    # F-P0-06：salary, household_expense
     "salary": None,
     "household_expense": None,
 }
