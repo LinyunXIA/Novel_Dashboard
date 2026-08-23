@@ -192,13 +192,15 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
 
 
 @app.command()
-def snapshot(env: str = typer.Option("dev", "--env")):
-    """重建逐年 as-of 快照（F-P0-08）。"""
+def snapshot(env: str = typer.Option("dev", "--env"),
+             from_year: int = typer.Option(1947, "--from",
+                                            help="仅重建 from_year 起的快照（旧段保留）")):
+    """重建逐年 as-of 快照（account/entity/family 三层；F-P0-08 + issue #12）。"""
     from app.core.snapshot import rebuild_snapshots
     with _session_for(env) as s:
-        r = rebuild_snapshots(s, range(1947, 2026))
+        r = rebuild_snapshots(s, range(from_year, 2026))
         s.commit()
-        typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户")
+        typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
 
 
 def _conflict_gate(s, r) -> dict:
