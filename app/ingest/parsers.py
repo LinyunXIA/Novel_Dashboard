@@ -74,11 +74,25 @@ _CUR_NAME = {
 }
 
 
+def _year_for_line(s: str, fallback: int | None) -> int | None:
+    """行内年份优先（issue #25）：19xx/20xx token 单独成词；无则 fallback；都无则 None。
+
+    fallback 形参由 parse_fx 提供文件级推断（首个 4 位 token 或文件名年份），
+    自身不读文件，避免与 _detect_year_in_lines 的文件级扫描职责重叠。
+    """
+    fm = re.search(r"\b(?:19|20)\d{2}\b", s)
+    return int(fm.group(0)) if fm else fallback
+
+
 def parse_fx(path: Path) -> list[dict]:
     """支持两种格式（DESIGN §3）：
 
     - `1EUR=40.3399BEF` / `1 美元 = 8.2789 元人民币`（格式二）
     - TSV 表 `Currency  Code  Rate(Jan-1995)`，Rate = 1 USD 兑该币 → USD→{Currency}
+
+    行内年份优先于文件头（issue #25）：跨年文件（如 `1999-2002.md`）每行独立定年；
+    行内无 token 时回退到文件级（首个 4 位 token 或文件名年份）；
+    全无则 year=NULL（基准常量折算）。
     """
     recs: list[dict] = []
     lines = _lines(path)
@@ -86,15 +100,23 @@ def parse_fx(path: Path) -> list[dict]:
     wide = _parse_fx_wide_table(lines)
     if wide:
         return wide
-    cur_year = _detect_year_in_lines(lines) or _year_from_name(path.name)
+    # 文件级 fallback：行内/节内无年份时使用（issue #25：行/节上下文优先于文件头）
+    file_year = _detect_year_in_lines(lines) or _year_from_name(path.name)
+    current_year: int | None = file_year
     for line in lines:
         s = line.strip()
+        # 节标题型：纯 4 位年份 token（如 `1999`），更新 current_year 并跳过
+        if re.fullmatch(r"\d{4}", s):
+            current_year = int(s)
+            continue
+        # 行内年份优先于 current_year（issue #25）
+        line_year = _year_for_line(s, current_year)
         # 格式一：1XXX = rate YYY
         m = re.search(r"1\s*([A-Za-z]{2,4})\s*=\s*([\d.,]+)\s*([A-Za-z一-鿿]{2,6})", s, re.I)
         if m:
             recs.append({
                 "fx_from": m.group(1).upper(), "rate": parse_number(m.group(2)),
-                "fx_to": _cur(m.group(3)), "year": cur_year,
+                "fx_to": _cur(m.group(3)), "year": line_year,
             })
             continue
         # 格式二：TSV 表格行  `Belgian Franc  BEF  32.14`
@@ -102,7 +124,7 @@ def parse_fx(path: Path) -> list[dict]:
         if t:
             code = _cur(t.group(1)) or t.group(2).upper()
             recs.append({"fx_from": "USD", "rate": parse_number(t.group(3)),
-                         "fx_to": code, "year": cur_year})
+                         "fx_to": code, "year": line_year})
     return recs
 
 
