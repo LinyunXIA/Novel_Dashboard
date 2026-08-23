@@ -167,6 +167,54 @@ def import_income_shop(session: Session, records: list[dict]) -> dict:
     return stats
 
 
+def import_salary(session: Session, records: list[dict]) -> dict:
+    """薪资 → 逐年 income_stream(salary)，各归各（养父/养母），取文件税后值。"""
+    from app.model.types import StreamType
+    stats = {"stream": 0}
+    for rec in records:
+        ent = upsert_entity(session, "person", rec["holder"])
+        if rec.get("after_tax") is None:
+            continue
+        session.add(IncomeStream(
+            entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=f"{rec['holder']}薪资",
+            currency=rec.get("currency"), year=rec["year"], amount=rec["after_tax"],
+            label=f"{rec['holder']}薪资税后", source_file=rec.get("source_file"),
+        ))
+        stats["stream"] += 1
+    return stats
+
+
+def import_household_expense(session: Session, records: list[dict]) -> dict:
+    """家庭支出 → 逐年 ledger 支出（挂 Henri Peeters 账户，多年一致 BEF）。"""
+    stats = {"n": 0, "skipped": 0}
+    for rec in records:
+        ent = upsert_entity(session, "person", rec["holder"])
+        cur = rec.get("currency") or "BEF"
+        acc = get_or_create_account(session, ent.id, cur)
+        session.add(LedgerEntry(
+            account_id=acc.id, date=date(rec["year"], 12, 30), reason="家庭支出",
+            outflow=rec["amount"], balance=None, kind="expense",
+            source_file=rec.get("source_file"),
+        ))
+        stats["n"] += 1
+    return stats
+
+
+def close_2002_currency(session: Session, currencies=("BEF", "LUF", "NLG"),
+                        closed_on="2002-01-01", migrate_to="EUR") -> dict:
+    """2002-01-01 关闭 BEF/LUF/NLG 池 → migrate_to EUR（DESIGN §6.6）。"""
+    from datetime import date as _date
+    c = _date(2002, 1, 1)
+    accs = session.execute(
+        select(Account).where(Account.currency.in_(currencies), Account.status == "active")
+    ).scalars().all()
+    for a in accs:
+        a.status = "closed"
+        a.closed_on = c
+        a.migrate_to_currency = migrate_to
+    return {"closed": len(accs)}
+
+
 def _rent_factor(year: int) -> float:
     """租房分段复利系数：1974 = 1.0（基桩年不涨）；1975 起按分段年涨幅累乘。"""
     if year <= 1974:

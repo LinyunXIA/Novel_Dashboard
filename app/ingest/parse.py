@@ -50,9 +50,8 @@ _PARSERS = {
     "income_rent": parsers.parse_income_rent,
     "income_property": parsers.parse_income_property,
     "income_shop": parsers.parse_income_shop,
-    # F-P0-06：salary, household_expense
-    "salary": None,
-    "household_expense": None,
+    "salary": parsers.parse_salary,
+    "household_expense": parsers.parse_household_expense,
 }
 
 

@@ -55,7 +55,7 @@ def ingest(
     cfg = get_config(env)
     with SessionLocal() as s:
         rep = run_ingest(cfg.source_dir)
-        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0
+        ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0; sal = 0; he = 0
         for r in rep.ok:
             if r.category == "character" and r.records:
                 ck += writer.import_characters(s, r.records, r.file)["imported"]
@@ -70,9 +70,14 @@ def ingest(
                 prop += writer.import_income_property(s, r.records)["stream"]
             if r.category == "income_shop" and r.records:
                 shop += writer.import_income_shop(s, r.records)["stream"]
+            if r.category == "salary" and r.records:
+                sal += writer.import_salary(s, r.records)["stream"]
+            if r.category == "household_expense" and r.records:
+                he += writer.import_household_expense(s, r.records)["n"]
+        closed = writer.close_2002_currency(s)["closed"]
         s.flush()
         s.commit()
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']} 项、现金入账 {ia['cash']} 笔、祖产票息 {sec}、租房 {rent}、经营性房 {prop}、开店 {shop}")
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、2002关池 {closed}")
 
 
 if __name__ == "__main__":

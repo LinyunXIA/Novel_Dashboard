@@ -426,6 +426,43 @@ def parse_income_shop(path: Path) -> list[dict]:
     return recs
 
 
+# ---------------- salary（薪资收入） ----------------
+def parse_salary(path: Path) -> list[dict]:
+    """逐年薪资台账：`年份 | … | 税后总收入 | …`。
+
+    归属：养父的薪资 → 养父；养母的薪资 → 养母。取文件税后值，系统不重算。
+    """
+    lines = _lines(path)
+    holder = "养母" if "养母" in path.stem else ("养父" if "养父" in path.stem else path.stem)
+    recs: list[dict] = []
+    for line in lines:
+        cells = _split_table_row(line)
+        if not cells or not re.match(r"^\d{4}$", cells[0].strip()):
+            continue
+        # 找币种列（标准代码，如 BEF/USD/EUR…）
+        cur = next((c.strip().upper() for c in cells
+                    if c.strip().upper() in ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")), None)
+        # 税后收入 = 行内最后一个纯数字（工作表最后列之前的税后总收入）
+        nums = [parse_number(c) for c in cells]
+        last_num = next((v for v in reversed(nums) if v is not None), None)
+        recs.append({"holder": holder, "year": int(cells[0]), "currency": cur,
+                     "after_tax": last_num, "note": cells[-1] if len(cells) > 1 else None})
+    return recs
+
+
+# ---------------- household_expense（家庭支出） ----------------
+def parse_household_expense(path: Path) -> list[dict]:
+    """`年份 | … | 年度总支出`；挂 Henri Peeters 账户支出。"""
+    lines = _lines(path)
+    recs: list[dict] = []
+    for line in lines:
+        cells = _split_table_row(line)
+        if len(cells) >= 2 and re.match(r"^\d{4}$", cells[0].strip()):
+            recs.append({"holder": "Henri Peeters", "year": int(cells[0]),
+                         "amount": parse_number(cells[-1]), "currency": "BEF"})
+    return recs
+
+
 # ---------------- bank（银行台账） ----------------
 def parse_bank(path: Path) -> list[dict]:
     """`## 一、…BEF（祖父）` 分币种节 + 流水表 `日期|理由|收入|支出|余额|备注`。"""
