@@ -25,7 +25,7 @@ class TestParseTimelineBasic:
             "|------|------|------|\n"
             "| 1947 | 祖母去世 | 由祖父继承 |\n"
         ))
-        recs = parse_timeline(p)
+        recs, _w = parse_timeline(p)
         assert len(recs) == 1
         assert recs[0]["event_year"] == 1947
         assert recs[0]["title"] == "祖母去世"
@@ -41,7 +41,7 @@ class TestParseTimelineBasic:
             "|------|------|------|\n"
             "| 1974-01-01 | 主角出生 | - |\n"
         ))
-        recs = parse_timeline(p)
+        recs, _w = parse_timeline(p)
         assert len(recs) == 1
         assert recs[0]["event_year"] == 1974
         assert recs[0]["event_date"] == date(1974, 1, 1)
@@ -61,7 +61,7 @@ class TestParseTimelineMultiple:
             "| 1990 | 事件B | - |\n"
             "| 1992-09-16 | 黑色星期三 | 英镑脱钩ERM |\n"
         ))
-        recs = parse_timeline(p)
+        recs, _w = parse_timeline(p)
         assert len(recs) == 3
         assert [r["event_year"] for r in recs] == [1985, 1990, 1992]
         assert [r["decade"] for r in recs] == ["1980s", "1990s", "1990s"]
@@ -74,7 +74,7 @@ class TestParseTimelineMultiple:
             "|------|------|------|\n"
             "| 2008 | 金融危机 | - |\n"
         ))
-        recs = parse_timeline(p)
+        recs, _w = parse_timeline(p)
         # 表头「年份」不应被当作记录（"年份" in cells[0] → 跳过）
         assert len(recs) == 1
         assert recs[0]["event_year"] == 2008
@@ -86,7 +86,34 @@ class TestParseTimelineMultiple:
             "|------|------|------|\n"
             "| 1995 | 事件 |  |\n"
         ))
-        recs = parse_timeline(p)
+        recs, _w = parse_timeline(p)
         assert len(recs) == 1
         # 备注空白 → None 或空字符串（trim 后存）
         assert recs[0]["note"] in (None, "")
+
+class TestParseTimelineDateRule:
+    """issue #19：日期统一走 resolve_date 规则；超规则进 warnings 提示补 date_rule。"""
+
+    def test_hinted_date(self, tmp_path):
+        p = _write(tmp_path, "时间线.md", (
+            "## 1990s\n\n"
+            "| 年份 | 事件 | 备注 |\n"
+            "|------|------|------|\n"
+            "| 1992年2月上旬 | 某事 | - |\n"
+        ))
+        recs, _w = parse_timeline(p)
+        # 上旬 → 2 月 1 日（DESIGN §6.2 默认规则 F）
+        assert recs[0]["event_date"] == date(1992, 2, 1)
+
+    def test_out_of_spec_warns(self, tmp_path):
+        p = _write(tmp_path, "时间线.md", (
+            "## 1990s\n\n"
+            "| 年份 | 事件 | 备注 |\n"
+            "|------|------|------|\n"
+            "| 约1992年 | 某事 | - |\n"
+        ))
+        recs, warnings = parse_timeline(p)
+        # 超规则 → 回退当年默认(12-30) + 进 ingest_report 提示补 date_rule
+        assert recs[0]["event_date"] == date(1992, 12, 30)
+        assert warnings, "超规则日期应产生 date_rule 提示"
+        assert "date_rule" in warnings[0]

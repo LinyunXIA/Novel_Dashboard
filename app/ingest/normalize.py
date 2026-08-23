@@ -99,6 +99,45 @@ def resolve_date(year: int, month: int | None = None, day: int | None = None,
     return date(year, 12, 30)
 
 
+_DATE_HINT_WORDS = ("年初", "年首", "月初", "上旬", "中旬", "下旬")
+
+
+def _date_hint(s: str) -> str:
+    """从原始日期文本抽提示标注（年初/月初/上中下旬），用于覆盖 resolve_date 默认。"""
+    for w in _DATE_HINT_WORDS:
+        if w in s:
+            return w
+    return ""
+
+
+def parse_date_cell(raw: str) -> tuple[date | None, str | None]:
+    """把表格日期格（timeline/bank 复用）解析为 date + 命中的规则名（DESIGN §6.2(F)）。
+
+    支持：YYYY-MM-DD / YYYY-MM / YYYY（及中文分隔 YYYY年M月D日）与 年初/月初/上中下旬
+    标注 → 统一走 resolve_date 默认规则。命中 → (date, pattern)；超规则无法解析 →
+    (None, None)，由调用方进 ingest_report 提示补 date_rule。
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None, None
+    ym = re.match(r"^(?P<y>[12]\d{3})(?P<rest>.*)$", s)
+    if not ym:
+        return None, None
+    y = int(ym["y"])
+    hint = _date_hint(s)
+    # 年之后抽数值片段：1 段 → 月（year-month）；≥2 段 → 月+日（year-month-day）。
+    # 「年份」单独（rest 无数字）→ 仅年。中文 年/月/日 分隔、'-'、'/'、数字连续均解码。
+    parts = re.findall(r"\d+", ym["rest"])
+    try:
+        if len(parts) >= 2:
+            return resolve_date(y, int(parts[0]), int(parts[1])), "year-month-day"
+        if parts:
+            return resolve_date(y, int(parts[0]), hint=hint), "year-month"
+        return resolve_date(y, hint=hint), "year"
+    except ValueError:
+        return None, None
+
+
 def currency_from(seg_title: str) -> str | None:
     """从分节标题（如 `## 一、BEF（祖父）`）抽币种。"""
     for c in _CURRENCIES:
