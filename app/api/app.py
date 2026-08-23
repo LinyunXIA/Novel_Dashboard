@@ -17,7 +17,7 @@ from app.core.calendar import snapshot_as_of
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
 from app.model import (Account, Entity, ExchangeRate, IncomeStream, LedgerEntry,
-                       ReturnCurve, Snapshot)
+                       Notification, ReturnCurve, Snapshot)
 
 app = FastAPI(title="Novel Dashboard API", version="0.1")
 
@@ -131,6 +131,34 @@ def fx(fx_from: Optional[str] = None, fx_to: Optional[str] = None, db: Session =
         q = q.where(ExchangeRate.fx_to == fx_to)
     rows = db.execute(q).scalars().all()
     return [{"from": r.fx_from, "to": r.fx_to, "year": r.year, "rate": float(r.rate) if r.rate else None} for r in rows]
+
+
+# ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
+@app.get(API_PREFIX + "/notifications")
+def list_notifications(unread_only: bool = True, limit: int = Query(20, le=200),
+                       db: Session = Depends(get_db)):
+    """非阻断提示列表（重算完成/文件更新等）；默认仅未读，按创建倒序。"""
+    from datetime import datetime, timedelta
+    q = select(Notification)
+    if unread_only:
+        q = q.where(Notification.read_at.is_(None))
+    rows = db.execute(q.order_by(Notification.created_at.desc()).limit(limit)).scalars().all()
+    return [{"id": n.id, "job_id": n.job_id, "kind": n.kind, "title": n.title,
+             "message": n.message, "payload": n.payload,
+             "read": n.read_at is not None, "created_at": n.created_at.isoformat() if n.created_at else None}
+            for n in rows]
+
+
+@app.patch(API_PREFIX + "/notifications/{notif_id}")
+def mark_notification_read(notif_id: int, db: Session = Depends(get_db)):
+    """标记通知已读（DESIGN API 表：PATCH /notifications/{id} → {read_at}）。"""
+    from datetime import datetime
+    n = db.get(Notification, notif_id)
+    if not n:
+        raise HTTPException(status_code=404, detail="notification not found")
+    n.read_at = datetime.now()
+    db.commit()
+    return {"id": n.id, "read": True}
 
 
 # ---------------- 总量概览 ----------------

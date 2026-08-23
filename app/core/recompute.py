@@ -70,3 +70,26 @@ def register_job(session: Session, start_year: int, reason: str, files: Optional
     session.add(job)
     session.flush()
     return int(job.id)
+
+
+def record_recompute_done(session: Session, start_year: int, reason: str = "manual",
+                          files: Optional[list] = None) -> dict:
+    """DESIGN §9.2 步骤 3-4：写 recompute_job(status=done) → 建 recompute-done Notification。
+
+    供 ingest/recompute 成功路径调用，UI 据此弹「全局重算完成」非阻断横幅（§9.3）。
+    返回 {"job_id": int, "notification_id": int}；session.flush 后由外层 commit。
+    """
+    from app.model import Notification
+    from datetime import datetime
+    job_id = register_job(session, start_year, reason, files)
+    notif = Notification(
+        job_id=job_id,
+        kind="recompute-done",
+        title="全局重算完成",
+        message=f"已在全局重算财富与派生数据（自 {start_year} 起）",
+        payload={"start_year": start_year, "files": files or []},
+        created_at=datetime.now(),
+    )
+    session.add(notif)
+    session.flush()
+    return {"job_id": job_id, "notification_id": int(notif.id)}
