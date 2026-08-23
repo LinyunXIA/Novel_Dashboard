@@ -141,7 +141,8 @@ def ingest(
                 blocked_files += 1
                 continue
             fx_total += writer.import_fx(s, r.records)["n"]
-        closed = writer.close_2002_currency(s)["closed"]
+        cc = writer.close_2002_currency(s)
+        closed = cc["closed"]
         # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）——
         if not blocked_files:
             from app.core.recompute import recompute_all, record_recompute_done
@@ -152,7 +153,7 @@ def ingest(
         s.flush()
         s.commit()
         notif_part = f"；recompute job#{job['job_id']} 通知#{job['notification_id']}" if not blocked_files else ""
-        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}（seg 跳过 {bank_seg_skip}）、2002关池 {closed}、冲突拦截 {blocked_files}{notif_part}")
+        typer.echo(f"[{cfg.env}] 落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}（seg 跳过 {bank_seg_skip}）、2002关池 {closed}（EUR承接 {cc['migrated']} / 零结转跳过 {cc['skipped_zero']}）、冲突拦截 {blocked_files}{notif_part}")
 
 
 @app.command()

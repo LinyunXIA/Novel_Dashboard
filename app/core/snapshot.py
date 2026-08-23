@@ -17,9 +17,34 @@ from sqlalchemy.orm import Session
 from app.model import Account, ExchangeRate, IncomeStream, LedgerEntry, Snapshot
 
 
+def account_balance_at(session: Session, account_id: int, cutoff) -> float:
+    """账户截至 cutoff（date 级）的余额：Σ(inflow) − Σ(outflow) for date <= cutoff。
+
+    与 _account_balance_series 同源口径：在 cutoff=12-30（某年年末）时两者相等，
+    保证日历按日累加与预计算年度快照一致（issue #17 方案 A′）。
+    """
+    tin, tout = session.execute(
+        select(func.coalesce(func.sum(LedgerEntry.inflow), 0),
+               func.coalesce(func.sum(LedgerEntry.outflow), 0))
+        .where(LedgerEntry.account_id == account_id, LedgerEntry.date <= cutoff)
+    ).one()
+    return float(tin) - float(tout)
+
+
+def _close_year_of(acc: Account) -> int | None:
+    """账户关池年：closed 且有关池日 → closed_on.year，否则 None（DESIGN §6.6）。"""
+    if acc.status == "closed" and acc.closed_on is not None:
+        return acc.closed_on.year
+    return None
+
+
 def _account_balance_series(session: Session, account_id: int,
-                            years: range) -> dict[int, float]:
-    """该账户逐年 as-of 余额：初始现金 + 累计 income − 累计 expense。"""
+                            years: range, close_year: int | None = None) -> dict[int, float]:
+    """该账户逐年 as-of 余额：初始现金 + 累计 income − 累计 expense。
+
+    关池（close_year）后不双计：closed 账户自关池年起余额清零——钱已结转进承接币种
+    （EUR）账户，避免与承接分录叠加（DESIGN §6.6）。
+    """
     # ledger 收支（现金进 ledger）
     rows = session.execute(
         select(func.extract("year", LedgerEntry.date),
@@ -38,7 +63,7 @@ def _account_balance_series(session: Session, account_id: int,
     bal = 0.0
     for y in years:
         bal += year_in.get(y, 0.0) - year_out.get(y, 0.0)
-        series[y] = bal
+        series[y] = 0.0 if close_year is not None and y >= close_year else bal
     return series
 
 
@@ -95,7 +120,8 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
     # 2) 先把所有账户余额 series 算好（避免 entity 聚合时再算）
     series_by_acc: dict[int, dict[int, float]] = {}
     for acc in _ownership_accounts(session):
-        series_by_acc[acc.id] = _account_balance_series(session, acc.id, years)
+        series_by_acc[acc.id] = _account_balance_series(
+            session, acc.id, years, close_year=_close_year_of(acc))
 
     # 3) 写 account:* 行
     for acc in _ownership_accounts(session):

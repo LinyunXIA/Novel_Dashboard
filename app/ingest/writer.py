@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.model import Account, Entity, ExchangeRate, IncomeStream, InitialAsset, LedgerEntry
@@ -347,19 +347,89 @@ def import_bank(session: Session, segments: list[dict], source_file: str | None 
     return stats
 
 
+# EMU 锁定不变折算率：EUR=X → balance/rate（DESIGN §6.6；BEF 明文，LUF 与 BEF 平比价，NLG 官方锁定）
+_EUR_CONVERSION = {"BEF": 40.3399, "LUF": 40.3399, "NLG": 2.20371}
+
+
 def close_2002_currency(session: Session, currencies=("BEF", "LUF", "NLG"),
                         closed_on="2002-01-01", migrate_to="EUR") -> dict:
-    """2002-01-01 关闭 BEF/LUF/NLG 池 → migrate_to EUR（DESIGN §6.6）。"""
+    """2002-01-01 关闭 BEF/LUF/NLG 池 → migrate_to EUR，并开 EUR 承接分录（DESIGN §6.6）。
+
+    按 entity 聚合：同 entity 的所有被关旧币账户（可多币种/多账户）合并计入该 entity
+    的**一条** EUR 承接分录（DESIGN §6.6「开一条承接分录」）。对每个 entity：
+    1. 置其全部 active 旧币账户为 closed（closed_on/migrate_to_currency）。
+    2. 开/复用同 entity 的 EUR 池（存在多个 EUR 池时归入首个，避免 multi-result）。
+    3. 每条旧币账户取关池日余额 = Σ(inflow) − Σ(outflow) for date ≤ 2002-01-01
+       （不依赖 ledger.balance——重算链可能尚未跑，source/bank 余额不可靠）；余额为 0 计入
+       skipped_zero、不结转。
+    4. 各币种折算后汇总为 EUR，写一条承接 inflow（note 记各原币金额与折算汇率；balance=inflow 作 EUR 池起点）。
+
+    幂等：
+    - 外层按 status='active' 过滤 → 二次运行不再重复关池/承接；
+    - 写前查 EUR 池是否已有 2002-01-01「关池划转」入账，有则跳过（按 entity 一条，天然防重）。
+
+    返回 {"closed": 关池账户数, "migrated": 承接分录(entity)数, "skipped_zero": 零余额未结转账户数}。
+    """
+    from collections import defaultdict
     from datetime import date as _date
     c = _date(2002, 1, 1)
     accs = session.execute(
         select(Account).where(Account.currency.in_(currencies), Account.status == "active")
     ).scalars().all()
+    by_entity: dict[int, list[Account]] = defaultdict(list)
     for a in accs:
-        a.status = "closed"
-        a.closed_on = c
-        a.migrate_to_currency = migrate_to
-    return {"closed": len(accs)}
+        by_entity[a.entity_id].append(a)
+    stats = {"closed": 0, "migrated": 0, "skipped_zero": 0}
+    for eid, alist in by_entity.items():
+        for a in alist:
+            a.status = "closed"
+            a.closed_on = c
+            a.migrate_to_currency = migrate_to
+        stats["closed"] += len(alist)
+        # EUR 承接池：取同 entity 任一 EUR 账户；无则新建（bank=None 统一池）
+        eur_acc = session.execute(
+            select(Account).where(Account.entity_id == eid, Account.currency == migrate_to)
+        ).scalars().first()
+        if eur_acc is None:
+            eur_acc = Account(entity_id=eid, currency=migrate_to, bank=None)
+            session.add(eur_acc)
+            session.flush()
+        # 幂等防重：EUR 池已有关池日承接入账 → 跳过（按 entity 一条）
+        already = session.execute(
+            select(LedgerEntry.id).where(
+                LedgerEntry.account_id == eur_acc.id, LedgerEntry.date == c,
+                LedgerEntry.reason.like("%关池划转%")).limit(1)
+        ).scalar_one_or_none()
+        if already is not None:
+            continue
+        # 各旧币账户折算汇总
+        parts: list[str] = []
+        total_eur = 0.0
+        for a in alist:
+            rate = _EUR_CONVERSION.get(a.currency)
+            if rate is None:
+                continue
+            tin, tout = session.execute(
+                select(func.coalesce(func.sum(LedgerEntry.inflow), 0),
+                       func.coalesce(func.sum(LedgerEntry.outflow), 0))
+                .where(LedgerEntry.account_id == a.id, LedgerEntry.date <= c)
+            ).one()
+            legacy = float(tin) - float(tout)
+            if legacy == 0:
+                stats["skipped_zero"] += 1
+                continue
+            total_eur += legacy / rate
+            parts.append(f"{a.currency} {legacy:,.2f}（折算汇率 1 {migrate_to} = {rate} {a.currency}）")
+        if not parts:
+            continue
+        amount = round(total_eur, 2)
+        note = "承接自 " + "；".join(parts)
+        session.add(LedgerEntry(
+            account_id=eur_acc.id, date=c, reason=f"2002关池划转 ({'/'.join(currencies)}→{migrate_to})",
+            inflow=amount, outflow=None, balance=amount, kind="income", note=note,
+        ))
+        stats["migrated"] += 1
+    return stats
 
 
 def _rent_factor(year: int) -> float:
