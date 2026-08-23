@@ -5,7 +5,6 @@ F-P0-02：基础形态解析；收益/初始资产/薪资/支出的细粒度挂�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 import re
 
@@ -18,11 +17,6 @@ class ParseError(Exception):
 
 # issue #24：salary/household_expense 共用的币种白名单（与 detect_currency 输出口径一致）
 _CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "EUR")
-
-
-@dataclass
-class Row:
-    cells: list[str]
 
 
 def _lines(path: Path) -> list[str]:
@@ -39,31 +33,6 @@ def _split_table_row(line: str) -> list[str]:
         return []
     s = s.strip("|")
     return [c.strip() for c in s.split("|")]
-
-
-def _rows_between(lines: list[str], start: int, header_needs: list[str]) -> tuple[list[Row], int]:
-    """从 line[start] 起找第一个含所有 header_needs 的表格，返回 (数据行, 结束行号)。
-    返回行号供后续指针推进。
-    """
-    i = start
-    while i < len(lines):
-        cells = _split_table_row(lines[i])
-        if len(cells) >= 2 and all(any(h in c for c in cells) for h in header_needs):
-            # 表头下可能是分隔行 `|---|`
-            j = i + 1
-            rows: list[Row] = []
-            while j < len(lines):
-                rc = _split_table_row(lines[j])
-                if not rc:
-                    break
-                if j == i + 1 and rc and all(not c.strip() for c in rc[1:]):
-                    j += 1
-                    continue
-                rows.append(Row(rc))
-                j += 1
-            return rows, j
-        i += 1
-    return [], i
 
 
 # ---------------- fx（汇率） ----------------
