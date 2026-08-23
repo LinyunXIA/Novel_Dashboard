@@ -109,5 +109,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 三环境均同源代码，仅 `APP_ENV` + 库名(`novel_*`) + 数据目录不同；`Design_Folder` 为只读源。
 
 **仓库与 git**：
-- `Design_Folder/`（创作素材）已被 `.gitignore` 排除，**不入 git、不提交**；仅 `docs/` + `CLAUDE.md` + `.gitignore` 入版本库。
+- **入库范围**（Dashboard 工程线全部代码入版本库）：`app/`（FastAPI + ingest + 模型）、`frontend/`（React+Vite）、`migrations/` + `alembic.ini`、`tests/`、`requirements.txt`、`docs/`、`CLAUDE.md`、`.gitignore`、`data/*`（仅 `.gitkeep` 占位）。
+- `Design_Folder/`（创作素材）已被 `.gitignore` 排除，**不入 git、不提交**。
 - 远程：`origin` → github.com/LinyunXIA/Novel_Dashboard（private）。
