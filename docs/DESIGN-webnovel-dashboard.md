@@ -348,6 +348,14 @@ CREATE TABLE notification (
 );
 ```
 
+> **实现超集（issue #33 回写）**：上表 DDL 为设计基线，实际 `app/model/core.py` / `derived.py`（经 alembic 落地）在之上新增列/约束/索引，alembic autogenerate 应以实现为准：
+> - `ledger_entry` 新增 `kind` 列（`income/expense/investment/investment_income/pool`，CHECK `ck_ledger_kind`）+ 索引 `ix_ledger_acct_date(account_id, date)`。
+> - `initial_asset` 加 CHECK `ck_initial_asset_type`（`cash/bond/stock/property`）。
+> - `income_stream` 的 `stream_type` 收严为 `NOT NULL`，并加 CHECK `ck_income_stream_type`（`rent/property/security/shop/salary`）。
+> - `holding_event` 加索引 `ix_holding_entity(entity_id, company)`。
+> - `timeline_event` 加索引 `ix_timeline_year(event_year)`。
+> - `finance_entry` 另含 CHECK `ck_finance_kind` 与 `ck_finance_entity_kind`（`person/company`）。
+
 ---
 
 ## 6. 解析器设计
@@ -811,13 +819,13 @@ class Importer(Protocol):
 | F-P0-05 | **Phase1 摄入** | 收益文件模块化挂账(income_stream)：租/经营性房/祖产债券/开店（薪资在 F-P0-06） | §6.5/§6.3 | ✅ |
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR | §6.5/§6.6 | ✅ |
 | F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
-| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py） | §8 | ✅ |
-| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD） | §7/§8 | ✅ |
+| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量已实现，逐年完整覆盖随真实数据联调 | §8 | 🟨 |
+| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD）｜接口已上线，前端曲线仅 Dashboard 单屏可见 | §7/§8 | 🟨 |
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动（服务函数就绪，API 端点 F-P0-13） | §8 | ✅ |
 | F-P0-11 | **健康校验** | H1–H5 汇总 + 问题清单（health.py） | §10 | ✅ |
-| F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示 | §9 | ✅ |
+| F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示｜register_job/notification 已接线，范围边界待核实 | §9 | 🟨 |
 | F-P0-13 | **API** | 基础路由（entities/accounts/ledger/returns/fx/snapshots/overview/wealth） | §14 | ✅ |
-| F-P0-14 | **前端骨架** | React+Vite 10 屏骨架 + 全局日历 + 财富曲线 | §1 | ✅ |
+| F-P0-14 | **前端骨架** | React+Vite 10 屏骨架 + 全局日历 + 财富曲线｜仅 Dashboard 单屏骨架，10 屏未全实现 | §1 | 🟨 |
 
 ### Phase 1 —— P1（完整产品）
 
