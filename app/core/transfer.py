@@ -90,13 +90,18 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
     """划拨（同币）/ 换汇（跨币）。返回 {operation, source_account_id,
     target_account_id, source_currency, target_currency, amount, target_amount, year}。
 
-    校验：金额>0；源/目标账户存在；源自 year 起全链 as-of 非负（否则拒绝）；换汇需该年汇率。
-    成功后：写两笔 ledger（year-12-30）→ 编年史 overlay。
+    校验：金额>0；源/目标账户存在；源非关池（§6.6 只读终态，issue #83）；源自 year 起全链
+    as-of 非负（否则拒绝）；换汇需该年汇率。成功后：写两笔 ledger（year-12-30）→ 编年史 overlay。
     调用方负责 flush/commit + recompute_all + rebuild_snapshots + record_recompute_done。
     """
     source = session.get(Account, source_account_id)
     if not source:
         raise ValidationError(f"源账户 #{source_account_id} 不存在")
+    if source.status == "closed":
+        # §6.6：关池后 BEF/LUF/NLG 进入只读终态，不可再存/投/换汇——历史资金已全额
+        # 结转 EUR 承接池，再从旧池转出会造成双份资金或污染 H4 余额链。
+        raise ValidationError(
+            f"源账户 #{source.id}（{source.currency}）已于 {source.closed_on} 关池进入只读终态，不可转出")
     target = primary_account(session, target_entity_id, target_currency)
     if not target:
         raise ValidationError(f"目标主体 #{target_entity_id} 无 {target_currency} 账户")

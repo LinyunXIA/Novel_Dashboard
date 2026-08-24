@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.app import app
 from app.api.deps import get_db
 from app.db import Base
-from app.model import Account, Entity, LedgerEntry, ReturnCurve
+from app.model import Account, Entity, LedgerEntry, Relationship, ReturnCurve
 
 
 @pytest.fixture
@@ -115,6 +115,47 @@ def test_post_transfer_422_no_rate(client):
     })
     assert r.status_code == 422
     assert "汇率" in r.json()["detail"]
+
+
+def test_post_transfer_closed_source_rejected(client):
+    """issue #83：源 account.status=closed → 422（§6.6 关池只读终态）。"""
+    c, Session = client
+    _seed(Session())
+    s = Session()
+    src = s.query(Account).filter(Account.currency == "BEF").first()
+    src.status = "closed"
+    src.closed_on = date(2002, 1, 1)
+    src.migrate_to_currency = "EUR"
+    bv = Entity(entity_type="company", name="Peeters BV")
+    s.add(bv)
+    s.flush()
+    s.add(Account(entity_id=bv.id, currency="BEF"))
+    s.commit()
+    r = c.post("/api/v1/transfers", json={
+        "source_account_id": src.id, "target_entity_id": bv.id,
+        "target_currency": "BEF", "amount": 10, "year": 2003,
+    })
+    assert r.status_code == 422
+    assert "关池" in r.json()["detail"]
+
+
+def test_get_graph_all_endpoint(client):
+    """issue #84：GET /graph/all 包含跨类型边 + 节点 type 字段。"""
+    c, Session = client
+    s = Session()
+    h = Entity(entity_type="person", name="Stijn Peeters")
+    bv = Entity(entity_type="company", name="Peeters BV")
+    s.add_all([h, bv])
+    s.flush()
+    s.add(Relationship(from_entity_id=h.id, to_entity_id=bv.id, rel_type="member"))
+    s.commit()
+    r = c.get("/api/v1/graph/all")
+    assert r.status_code == 200
+    body = r.json()
+    types = {n["type"] for n in body["nodes"]}
+    assert "person" in types and "company" in types
+    assert any(e["rel_type"] == "member" and e["from_type"] == "person" and e["to_type"] == "company"
+               for e in body["edges"])
 
 
 def test_investment_redeemed_and_unlock_flow(client):

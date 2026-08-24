@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
-from app.core.graph import company_graph, person_graph
+from app.core.graph import all_graph, company_graph, person_graph
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
 from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream,
@@ -358,6 +358,16 @@ def graph_companies(db: Session = Depends(get_db)):
     注：外部 API①② 对接（importers）留待外部系统文档后实现（F-P1-05 未完成部分）。
     """
     return company_graph(db)
+
+
+@app.get(API_PREFIX + "/graph/all")
+def graph_all(db: Session = Depends(get_db)):
+    """全量图谱（issue #84 / PRD §6.4 P1-1）：节点含 person/company/asset/family，边含跨类型。
+
+    纯类型视图 /graph/persons、/graph/companies 保留不删；本端点供「人—公司」等跨类型关系
+    可视化（前端按 entity_type 着色）。
+    """
+    return all_graph(db)
 
 
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------

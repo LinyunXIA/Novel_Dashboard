@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.invest import ValidationError
 from app.core.transfer import transfer
 from app.db import Base
-from app.model import Account, Entity, ExchangeRate, LedgerEntry
+from app.model import Account, Entity, ExchangeRate, FinanceEntry, LedgerEntry
 
 
 @pytest.fixture
@@ -90,3 +90,37 @@ def test_transfer_causing_negative_rejected(session):
     with pytest.raises(ValidationError):
         transfer(session, source_account_id=a1.id, target_entity_id=j.id,
                  target_currency="BEF", amount=60, year=1980)
+
+
+def test_transfer_closed_source_rejected_issue_83(session):
+    """issue #83：§6.6 关池（status=closed）只读终态，转出必拒。"""
+    h, j, a1, a2, a3 = _seed(session)
+    # 把 BEF 主账户置为关池
+    a1.status = "closed"
+    a1.closed_on = date(2002, 1, 1)
+    a1.migrate_to_currency = "EUR"
+    session.flush()
+    with pytest.raises(ValidationError) as e:
+        transfer(session, source_account_id=a1.id, target_entity_id=j.id,
+                 target_currency="BEF", amount=100, year=2003)
+    assert "关池" in str(e.value.detail)
+
+
+def test_transfer_active_source_after_close_still_works(session):
+    """issue #83：关池账户被拒，但同主体下 active EUR 账户可正常转出。"""
+    h, j, a1, a2, a3 = _seed(session)
+    a1.status = "closed"
+    a1.closed_on = date(2002, 1, 1)
+    # 给 EUR 池补一笔 inflow，使其可作转出源
+    session.add(LedgerEntry(account_id=a3.id, date=date(2002, 1, 1),
+                            inflow=100, balance=100, kind="income"))
+    session.flush()
+    # 用 a3(EUR) 作源 → 同币划拨到公司 BEF（其实跨币，这里用 a3 EUR → 公司 EUR）
+    eur_company = Account(entity_id=j.id, currency="EUR")
+    session.add(eur_company)
+    session.flush()
+    out = transfer(session, source_account_id=a3.id, target_entity_id=j.id,
+                   target_currency="EUR", amount=50, year=2003)
+    session.flush()
+    assert out["operation"] == "划拨"
+    assert out["amount"] == 50
