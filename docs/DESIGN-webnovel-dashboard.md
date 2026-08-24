@@ -863,7 +863,7 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | F-P1-05 | **公司图谱** | 公司—公司关系 + 外部 API①② 导入（只增不减 + status）｜**外部 API① 已实现**（`POST /graph/companies/import`，公司图谱页按钮触发，§13.3）；API②（用工成本）仍待文档 | §13 | 🟨 |
 | F-P1-06 | **各国收益曲线** | return_curve（R1–R5）对比渲染 + 地区起始年下限｜GET /returns/regions + SVG 五线对比 | §14 | ✅ |
 | F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜API + 屏已上线；生产写入链路已接通（UI 派生 invest/redeem + ingest 镜像 source=file，issue #80），真实库 ingest 验收后再 ✅；编年史同步口径见 §19 决策备注（issue #86） | §5 | 🟨 |
-| F-P1-08 | **统一搜索** | LLM+embedding RAG（omlx 本地）条目检索装配 + serve 后处理｜⚠ 阻塞于本地 omlx 不可用，维持待续 | §18 | ⬜ |
+| F-P1-08 | **统一搜索** | LLM+embedding RAG（omlx 本地）条目检索装配 + serve 后处理｜已实现：`search_index` pgvector + 提取器 + `search-index` CLI 索引 + `GET /api/v1/search`（embed→余弦 top-k→LLM 装配→serve 后处理；omxl 未起 503 降级）。EMBED_MODEL 实测 4096 维（ivfflat>2000 不可用→精确扫描） | §18 | ✅ |
 | F-P1-09 | 四类 UI 改数据操作 | 统一模板：年份×池 + 后传重算 + 失败整体拒绝 + overlay 同步｜useDataOp 钩子已用于投资/划拨屏 | §6.8/§19 | ✅ |
 | F-P1-10 | **用工成本·加薪规则** | 本地基准（工资/CPI/税率）+ 外部 API② 在岗岗位导入 → 逐岗位算用工成本 → 每公司 finance_entry 落账；「加薪规则/用工成本」屏展示加薪规则 + 拉岗位计算 + 结果表｜app/core/labor_cost.py + ingest/importers/positions.py；税率公式细节只在后台（含比利时十三薪/双倍假期、日本 3 月奖金等隐藏项） | §13 | ✅ |
 

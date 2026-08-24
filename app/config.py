@@ -45,7 +45,8 @@ class EnvConfig:
     embed_url: str = field(default_factory=lambda: _env_str("EMBED_URL", "http://127.0.0.1:8000"))
     embed_model: str = field(default_factory=lambda: _env_str("EMBED_MODEL", "Qwen3-Embedding-8B-4bit-DWQ"))
     llm_model_context: int | None = field(default_factory=lambda: _env_int("LLM_MODEL_CONTEXT", None))
-    embed_dim: int | None = field(default_factory=lambda: _env_int("EMBED_DIM", None))
+    # 向量维（search_index.embedding 固定列宽；须与 EMBED_MODEL 输出一致——实测 Qwen3-Embedding-8B=4096）。
+    embed_dim: int = field(default_factory=lambda: _env_int("EMBED_DIM", 4096) or 4096)
 
     # 外部系统 API①（公司基础信息，DESIGN §13/§13.3 · F-P1-05）：URL 指向其 `/api/v1` 根。
     # 优先级：环境变量 EXTERNAL_API_BASE_URL > 该 per-env 默认。凭据（用户名/密码）不入 config，
