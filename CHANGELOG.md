@@ -3,6 +3,20 @@
 本项目为网文创作数据 Dashboard（Postgres + FastAPI + ingest + React）。  
 开发进度跟踪以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单为准。
 
+## [Phase 2 · F-P2-03] — 2026-08-24
+
+**事件·股票：分拆/并购三形态成本随链引擎**（DESIGN §19.6）
+
+- `app/core/stock_cost.py`：纯函数 `split_position / cash_share_position / cash_merger` + DB 写入 `apply_merger`。
+  - 形态1 纯换股/分拆：旧成本按**新股数占比**摊到新持仓（如 UTC→CARR/OTIS/RTX 1:0.5:1）。
+  - 形态2 换股+现金：股票腿成本全额随链、现金入余额（如 MVL→30USD+0.7452DIS）。
+  - 形态3 纯现金：持仓归 0、现金入余额、不记损益。
+- 写新 `holding_event` 批次 + 结清旧行 + 现金 `ledger_entry`；幂等（date+新公司重复应用跳过）。
+- `tests/test_stock_cost.py` 7 用例（复现 UTC 分拆 / 2‑for‑1 / MVL‑DIS / 纯现金 / 幂等）；全量 295 passed。
+- 说明：prose 事件文件解析、FIFO 卖出/分红底座(F-P2-02)、账户/币种解析另做。
+
+---
+
 ## [Phase 1 · P1 收尾] — 2026-08-24
 
 Phase 1 P1 全部功能落地 ✅（DESIGN §20 F-P1-01..10）。本阶段关键交付：
