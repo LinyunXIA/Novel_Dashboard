@@ -167,6 +167,14 @@ class TestImportEndpoint:
             app.dependency_overrides.pop(get_db, None)
 
 
+class TestApiRoot:
+    def test_api_root_adds_and_dedupes_prefix(self):
+        assert company_info._api_root("http://127.0.0.1:7273") == "http://127.0.0.1:7273/api/v1"
+        assert company_info._api_root("http://127.0.0.1:7273/") == "http://127.0.0.1:7273/api/v1"
+        assert company_info._api_root("http://127.0.0.1:7273/api/v1") == "http://127.0.0.1:7273/api/v1"
+        assert company_info._api_root("http://127.0.0.1:8000/api/v1") == "http://127.0.0.1:8000/api/v1"
+
+
 class TestWriterExtras:
     def test_upsert_relationship_sets_until_year_on_existing(self, session):
         a = writer.upsert_entity(session, "company", "A")
