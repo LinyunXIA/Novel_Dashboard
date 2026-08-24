@@ -1,4 +1,4 @@
-"""外部系统 API① 连接与凭据加载（DESIGN §13.3 · F-P1-05）。
+"""外部系统 API 连接与凭据加载（DESIGN §13.3）。
 
 凭据铁律（DESIGN §13.3）：外部 API 凭据放本地 `secrets.local.yaml`（.gitignore 排除，
 不入 git、不入 DB）；可被环境变量覆盖；在本模块读取，不落入日志/notification。
