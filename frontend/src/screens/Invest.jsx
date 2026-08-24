@@ -21,6 +21,7 @@ export default function Invest() {
 
   const submit = useDataOp(() => inv.refresh())
   const redeem = useDataOp(() => inv.refresh())
+  const unlock = useDataOp(() => inv.refresh())
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const setAlloc = (i, k, v) => setForm(f => ({
@@ -99,23 +100,28 @@ export default function Invest() {
 
       <div className="panel">
         <h3>投资状态（GET /investments）</h3>
-        <p className="note">已投年份置灰锁定；「赎回」在 12-30 划回本金+收益、专款池清空</p>
+        <p className="note">已投年份置灰锁定；「赎回」在 12-30 划回本金+收益、专款池清空（已赎回禁点）；「解锁」整笔抹除重输（issue #81/#82）</p>
         <table>
-          <thead><tr><th>年</th><th>地区</th><th>R</th><th>发生日</th><th>分配</th><th></th></tr></thead>
+          <thead><tr><th>年</th><th>地区</th><th>R</th><th>发生日</th><th>分配</th><th>状态</th><th></th></tr></thead>
           <tbody>
             {(inv.data?.items || []).map(x => (
               <tr key={x.id}>
                 <td>{x.year}</td><td>{x.region}</td><td>{x.risk_lvl}</td>
                 <td className="mono">{x.start_date}</td>
                 <td className="muted">{(x.allocs || []).map(a => `${a.currency}${a.is_all ? '(全部)' : a.amount}`).join('、')}</td>
-                <td><button className="ghost" disabled={redeem.busy}
-                  onClick={() => redeem.submit(`/api/v1/investments/${x.id}/redeem`, {})}>赎回</button></td>
+                <td>{x.redeemed ? '已赎回' : (x.locked ? '已投·锁定' : '已解锁')}</td>
+                <td>
+                  <button className="ghost" disabled={redeem.busy || x.redeemed}
+                    onClick={() => redeem.submit(`/api/v1/investments/${x.id}/redeem`, {})}>赎回</button>
+                  <button className="ghost" disabled={unlock.busy || x.redeemed}
+                    onClick={() => unlock.submit(`/api/v1/investments/${x.id}`, { locked: false }, { method: 'PATCH' })}>解锁</button>
+                </td>
               </tr>
             ))}
-            {!(inv.data?.items || []).length && <tr><td colSpan={6} className="note">暂无投资</td></tr>}
+            {!(inv.data?.items || []).length && <tr><td colSpan={7} className="note">暂无投资</td></tr>}
           </tbody>
         </table>
-        <ErrorBox error={redeem.error} />
+        <ErrorBox error={redeem.error || unlock.error} />
       </div>
     </div>
   )

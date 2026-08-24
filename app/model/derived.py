@@ -204,6 +204,8 @@ class Investment(Base):
     risk_lvl: Mapped[str] = mapped_column(String, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     locked: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # issue #82：已赎回标记（防重 to 按笔而非按年；GET 据此暴露 redeemed 置灰）
+    redeemed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class InvestmentAlloc(Base):

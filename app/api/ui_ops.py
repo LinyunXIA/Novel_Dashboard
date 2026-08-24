@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.invest import (
-    create_investment, redeem_investment, region_start_years,
+    create_investment, redeem_investment, region_start_years, unlock_investment,
 )
 from app.core.recompute import recompute_all, record_recompute_done
 from app.core.snapshot import rebuild_snapshots
@@ -77,14 +77,19 @@ def list_investments(year: Optional[int] = None, region: Optional[str] = None,
         allocs = db.execute(
             select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
         ).scalars().all()
-        out.append({
-            "id": inv.id, "year": inv.year, "region": inv.region,
-            "risk_lvl": inv.risk_lvl, "start_date": inv.start_date.isoformat(),
-            "locked": inv.locked,
-            "allocs": [{"entity_id": a.entity_id, "currency": a.currency,
-                        "amount": float(a.amount), "is_all": a.is_all} for a in allocs],
-        })
+        out.append(_inv_dict(inv, allocs))
     return {"items": out, "total": len(out)}
+
+
+def _inv_dict(inv, allocs) -> dict:
+    """投资 → dict；expose redeemed（issue #82：前端置灰已赎回）。"""
+    return {
+        "id": inv.id, "year": inv.year, "region": inv.region,
+        "risk_lvl": inv.risk_lvl, "start_date": inv.start_date.isoformat(),
+        "locked": inv.locked, "redeemed": inv.redeemed_at is not None,
+        "allocs": [{"entity_id": a.entity_id, "currency": a.currency,
+                    "amount": float(a.amount), "is_all": a.is_all} for a in allocs],
+    }
 
 
 @router.get("/investments/{investment_id}")
@@ -95,12 +100,7 @@ def get_investment(investment_id: int, db: Session = Depends(get_db)):
     allocs = db.execute(
         select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
     ).scalars().all()
-    return {
-        "id": inv.id, "year": inv.year, "region": inv.region, "risk_lvl": inv.risk_lvl,
-        "start_date": inv.start_date.isoformat(), "locked": inv.locked,
-        "allocs": [{"entity_id": a.entity_id, "currency": a.currency,
-                    "amount": float(a.amount), "is_all": a.is_all} for a in allocs],
-    }
+    return _inv_dict(inv, allocs)
 
 
 @router.post("/investments", status_code=201)
@@ -132,6 +132,33 @@ def post_redeem(investment_id: int, db: Session = Depends(get_db)):
         _apply_error(e)
     _after_ui_write(db, inv.year, f"赎回投资 {inv.region} R{inv.risk_lvl} {inv.year}")
     return {"id": inv.id, **out}
+
+
+class InvestmentPatch(BaseModel):
+    locked: bool = False
+
+
+@router.patch("/investments/{investment_id}")
+def patch_investment(investment_id: int, body: InvestmentPatch,
+                     db: Session = Depends(get_db)):
+    """§19.1 解锁重输（issue #81）：抹除本投资全部派生写入 + 置 locked=False。
+
+    已赎回 → 409；解锁后重输走 POST /investments（unlocked 覆盖分支）。
+    """
+    inv = db.get(Investment, investment_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail="investment not found")
+    if not body.locked:
+        # 解锁（locked=false）：抹除旧写入，恢复 as-of
+        try:
+            inv = unlock_investment(db, inv)
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            _apply_error(e)
+        _after_ui_write(db, inv.year, f"解锁投资 {inv.region} {inv.year}")
+    return _inv_dict(inv, db.execute(
+        select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
+    ).scalars().all())
 
 
 @router.post("/transfers")

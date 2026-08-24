@@ -13,12 +13,12 @@ export function useDataOp(onSuccess) {
   const [error, setError] = useState(null)
   const [last, setLast] = useState(null)
 
-  const submit = async (url, body) => {
+  const submit = async (url, body, { method = 'POST' } = {}) => {
     setBusy(true)
     setError(null)
     try {
       const r = await fetch(url, {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })

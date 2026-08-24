@@ -2,7 +2,14 @@
 
 UI 派生的第三类改数据通道：选 年份 × 地区（对应 return_curve.country）× R 级 ×
 【主体 × 币种 × 金额/$全部】提交 → 划出银行入专款池 → 年末(12-30)赎回本金+收益回银行。
-一年一次（UNIQUE(year, region)）；已投锁灰，解锁=整笔抹除重输。
+一年一次（UNIQUE(year, region)）；已投锁灰，解锁=整笔抹除重输，已赎回不可解锁。
+
+issue #80：UI 派生落 finance_entry（划出 kind='investment'；赎回 kind='pool'+'investment_income'），
+            source='ui' —— 财务收支屏据此可见 UI 派生数据。
+issue #81：解锁(locked=False) 整笔抹除本投资的全部派生写入（ledger/finance/timeline，按 note/label
+            标签 `inv#{id}` 定位）+ 覆盖分支同语义），杜绝重输双扣；已赎回投资拒绝解锁/覆盖(409)。
+issue #82：赎回按笔防重——redeemed_at 非空即 409（不再按年扫全库 pool 流入，避免同年多地区互堵）；
+            GET 据 redeemed_at 暴露 redeemed。
 
 数值纪律：
 - 计息公式（§19.2）：days=(当年12-30 − start_date)；gross=R/100/365×days；
@@ -13,17 +20,19 @@ UI 派生的第三类改数据通道：选 年份 × 地区（对应 return_curv
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.snapshot import account_balance_at
 from app.model import (
-    Account, Investment, InvestmentAlloc, LedgerEntry, ReturnCurve, TimelineEvent,
+    Account, Entity, FinanceEntry, Investment, InvestmentAlloc, LedgerEntry,
+    ReturnCurve, TimelineEvent,
 )
+from app.model.types import SourceKind
 
 # 区域 → 收益曲线国家（return_curve.country）映射（DESIGN §19.1）
 REGION_COUNTRY = {
@@ -62,6 +71,11 @@ class ValidationError(InvestmentError):
 class ConflictError(InvestmentError):
     def __init__(self, detail: str):
         super().__init__(detail, 409)
+
+
+def _inv_tag(inv) -> str:
+    """投资派生写入的定位标签（inv#{id}），供解锁/覆盖时整体抹除。"""
+    return f"inv#{inv.id}"
 
 
 def region_start_years() -> dict:
@@ -148,6 +162,42 @@ def _rate(session: Session, region: str, risk_lvl: str, year: int) -> Optional[D
     return Decimal(row[0]) if row and row[0] is not None else None
 
 
+def _delete_investment_writes(session: Session, inv: Investment) -> None:
+    """整笔抹除该投资落下的全部派生写入（issue #81）：ledger 划出/赎回、finance_entry、
+    overlay 时间线条目——按 note/label 标签 `inv#{id}` 精确定位，避免误删他人数据。
+
+    调用方（解锁/覆盖）须随后 recompute + rebuild_snapshots，恢复账户 to 投资前。
+    """
+    tag = _inv_tag(inv)
+    session.execute(delete(LedgerEntry).where(LedgerEntry.note.like(f"%{tag}%")))
+    session.execute(delete(FinanceEntry).where(FinanceEntry.label.like(f"%{tag}%")))
+    session.execute(delete(TimelineEvent).where(
+        TimelineEvent.note.like(f"%{tag}%"),
+        TimelineEvent.overlay.is_(True),
+    ))
+
+
+def unlock_investment(session: Session, investment: Investment) -> Investment:
+    """§19.1「解锁 = 整笔抹除重输」：抹除该投资全部派生写入 + 置 locked=False（issue #81）。
+
+    已赎回投资拒绝解锁（409）。抹除后账户 as-of 恢复 to 投资前；重输走 create_investment
+    的 unlocked 覆盖分支（同样整笔抹除）。调用方随后须 recompute_all + rebuild_snapshots。
+    """
+    if investment.redeemed_at is not None:
+        raise ConflictError(f"该投资 {investment.region} {investment.year} 已赎回，不可解锁")
+    if not investment.locked:
+        return investment  # 已解锁，幂等
+    _delete_investment_writes(session, investment)
+    investment.locked = False
+    return investment
+
+
+def _entity_kind(session: Session, entity_id: int) -> str:
+    """finance_entry.entity_kind：按 entity.entity_type，限定 person/company。"""
+    e = session.get(Entity, entity_id)
+    return e.entity_type if e and e.entity_type in ("person", "company") else "person"
+
+
 def compute_interest(session: Session, investment: Investment) -> list[dict]:
     """§19.2 计息：逐 alloc 返回 {entity_id, currency, days, rate, gross, principal, interest}。
 
@@ -185,62 +235,72 @@ def compute_interest(session: Session, investment: Investment) -> list[dict]:
 def redeem_investment(session: Session, investment: Investment) -> dict:
     """§19.2 年末赎回：本金+收益从专款池划回银行（12-30）、专款池清空。
 
-    每 alloc 两笔 inflow：本金 kind='pool' + 收益 kind='investment_income'。
-    已赎回防重：该年已有 pool 流入 → ConflictError(409)。余额 None 交由 recompute 回填。
+    每 alloc 两笔 inflow：本金 kind='pool' + 收益 kind='investment_income'；
+    并落 finance_entry（source='ui'，issue #80）。余额 None 交由 recompute 回填。
+
+    防重（issue #82）：按本笔 redeemed_at 判重，非空 → 409；不再按年扫全库，同年多地区互不阻塞。
     """
-    # 防重：该 alloc 主体该币池该年若已有 pool 流入即视为已赎回
-    existing = session.execute(
-        select(LedgerEntry).where(
-            LedgerEntry.kind == "pool",
-            LedgerEntry.date >= date(investment.year, 1, 1),
-            LedgerEntry.date <= date(investment.year, 12, 31),
-        ).limit(1)
-    ).scalars().first()
-    if existing is not None:
-        raise ConflictError(f"该年 {investment.year} {investment.region} 投资已赎回，勿重复")
+    if investment.redeemed_at is not None:
+        raise ConflictError(f"该投资 {investment.region} {investment.year} 已赎回，勿重复")
     interests = compute_interest(session, investment)
+    tag = _inv_tag(investment)
     settlement = date(investment.year, 12, 30)
     made = 0
     for it in interests:
         acc = _primary_account(session, it["entity_id"], it["currency"])
         if acc is None:
             raise ValidationError(f"主体 #{it['entity_id']} 无 {it['currency']} 账户，无法赎回")
+        ek = _entity_kind(session, it["entity_id"])
         # 本金划回（kind=pool）
         session.add(LedgerEntry(
             account_id=acc.id, date=settlement, reason=f"赎回本金 {investment.region} R{investment.risk_lvl}",
             inflow=Decimal(it["principal"]), kind="pool",
-            note="UI 投资年末赎回·本金",         ))
+            note=f"UI 投资赎回本金 {tag}",
+        ))
+        session.add(FinanceEntry(
+            entity_id=it["entity_id"], entity_kind=ek, year=investment.year, kind="pool",
+            amount=Decimal(it["principal"]), currency=it["currency"],
+            label=f"投资赎回本金 {tag}", source=SourceKind.UI.value,
+        ))
         # 收益划回（kind=investment_income）
         session.add(LedgerEntry(
             account_id=acc.id, date=settlement, reason=f"投资损益 {investment.region} R{investment.risk_lvl}",
             inflow=Decimal(it["interest"]), kind="investment_income",
-            note="UI 投资年末结算·收益",         ))
+            note=f"UI 投资赎回收益 {tag}",
+        ))
+        session.add(FinanceEntry(
+            entity_id=it["entity_id"], entity_kind=ek, year=investment.year,
+            kind="investment_income", amount=Decimal(it["interest"]), currency=it["currency"],
+            label=f"投资赎回收益 {tag}", source=SourceKind.UI.value,
+        ))
         made += 1
     # 编年史 overlay 同步（§19.5 记年）
     session.add(TimelineEvent(
         event_year=investment.year, event_date=settlement,
         title=f"{investment.region} R{investment.risk_lvl} 投资赎回",
-        note=f"本金+收益划回银行，专款池清空",
+        note=f"本金+收益划回银行，专款池清空（{tag}）",
         decade=f"{investment.year // 10 * 10}s", overlay=True,
-            ))
+    ))
+    investment.redeemed_at = datetime.now()
     return {"investment_id": investment.id, "allocs": made}
 
 
 def create_investment(session: Session, *, year: int, region: str, risk_lvl: str,
                       start_date: date, allocs: list[dict]) -> Investment:
-    """创建投资（§19.1/§19.3 校验链 + §19.2 划出）。
+    """创建投资（§19.1/§19.3 校验链 + §19.2 划出 + §19.x finance_entry 镜像，issue #80）。
 
     allocs = [{entity_id, currency, amount(float|None), is_all(bool)}]；
     is_all=True → amount 忽略，取该主体该币种 as-of 全投。
 
     校验链（顺序）：
       1. region 起始年下限 → 422；
-      2. (year, region) 年度幂等：已存在 locked → 409（解锁重输）；存在 unlocked → 级联抹除覆盖；
+      2. (year, region) 年度幂等：已存在 locked → 409（须解锁重输）；unlocked → **整笔抹除旧写入**
+         后覆盖重建（issue #81）；已赎回 → 409（不可覆盖）；
       3. R 级合法 + 无收益值且跨天 → 422；
       4. 每 alloc：amount>0 且 ≤ 该主体该币种 as-of 余额（is_all 取全量）→ 422；
-      5. 覆盖连锁拒绝：划出后账户向后全程非负，否则 → 409 整体拒绝。
-    成功后：写 Investment+Alloc → 划出走账(kind='investment') → 编年史 overlay。
-    调用方负责 flush/commit + recompute_all + rebuild_snapshots + record_recompute_done。
+      5. 覆盖连锁拒绝：划出后账户向后全程非负，否则 → 422。
+    成功后：写 Investment+Alloc → 划出走账(kind='investment') + finance_entry(kind='investment',
+    source='ui') → 编年史 overlay。调用方负责 flush/commit + recompute_all + rebuild_snapshots。
     """
     # 1) 区域起始年下限
     if region not in REGION_START_YEAR:
@@ -251,14 +311,20 @@ def create_investment(session: Session, *, year: int, region: str, risk_lvl: str
     if risk_lvl not in ("R1", "R2", "R3", "R4", "R5"):
         raise ValidationError(f"risk_lvl 必须为 R1–R5，得到 {risk_lvl!r}")
 
-    # 2) 年度幂等
+    # 2) 年度幂等（issue #81：覆盖须整笔抹除旧写入，避免重输双扣）
     existing = session.execute(
         select(Investment).where(Investment.year == year, Investment.region == region).limit(1)
     ).scalar_one_or_none()
-    if existing is not None and existing.locked:
-        raise ConflictError(f"该年 {year} 该地区 {region} 已投（locked），须解锁重输")
-    if existing is not None:  # unlocked → 覆盖：级联抹除旧投资
-        session.delete(existing)  # allocs 由 ondelete CASCADE
+    if existing is not None:
+        if existing.locked:
+            raise ConflictError(f"该年 {year} 该地区 {region} 已投（locked），须解锁重输")
+        if existing.redeemed_at is not None:
+            raise ConflictError(f"该年 {year} 该地区 {region} 投资已赎回，不可覆盖")
+        # issue #81：不依赖 DB FK CASCADE（SQLite 测试未开外键；Postgres 也显式稳健）——
+        # 显式删 allocs + 派生写入后再删 investment 行
+        _delete_investment_writes(session, existing)
+        session.execute(delete(InvestmentAlloc).where(InvestmentAlloc.investment_id == existing.id))
+        session.delete(existing)
         session.flush()
 
     # 3) 收益值预检（跨天的投资必须能取值；days=0 允许无值）
@@ -295,7 +361,8 @@ def create_investment(session: Session, *, year: int, region: str, risk_lvl: str
         session.add(InvestmentAlloc(investment_id=inv.id, entity_id=eid,
                                     currency=cur, amount=amount, is_all=is_all))
 
-    # 划出走账（kind='investment'，balance 由 recompute 回填）
+    # 划出走账（kind='investment'，balance 由 recompute 回填）+ finance_entry 镜像（source='ui'）
+    tag = _inv_tag(inv)
     for alloc in session.execute(
             select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
     ).scalars().all():
@@ -306,11 +373,19 @@ def create_investment(session: Session, *, year: int, region: str, risk_lvl: str
             account_id=acc.id, date=start_date,
             reason=f"划入专款池 {region} R{risk_lvl} {alloc.currency}",
             outflow=Decimal(alloc.amount), kind="investment",
-            note="UI 投资·划出",         ))
+            note=f"UI 投资划出 {tag}",
+        ))
+        session.add(FinanceEntry(
+            entity_id=alloc.entity_id, entity_kind=_entity_kind(session, alloc.entity_id),
+            year=year, kind="investment", amount=Decimal(alloc.amount),
+            currency=alloc.currency, label=f"投资 {region} R{risk_lvl} {tag}",
+            source=SourceKind.UI.value,
+        ))
     session.add(TimelineEvent(
         event_year=year, event_date=start_date,
         title=f"{region} R{risk_lvl} 投资 {[_a['currency'] for _a in allocs]}",
-        note=f"投入专款池，年末赎回",
-        decade=f"{year // 10 * 10}s", overlay=True,     ))
+        note=f"投入专款池，年末赎回（{tag}）",
+        decade=f"{year // 10 * 10}s", overlay=True,
+    ))
     session.flush()
     return inv

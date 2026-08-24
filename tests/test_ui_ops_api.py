@@ -51,6 +51,7 @@ def _seed(session):
     session.add(LedgerEntry(account_id=a.id, date=date(1974, 1, 1),
                             inflow=1000, balance=1000, kind="income"))
     session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1989, rate=10.0))
+    session.add(ReturnCurve(country="英国", risk_lvl="R3", year=1989, rate=12.0))
     session.commit()
     return h.id
 
@@ -114,3 +115,32 @@ def test_post_transfer_422_no_rate(client):
     })
     assert r.status_code == 422
     assert "汇率" in r.json()["detail"]
+
+
+def test_investment_redeemed_and_unlock_flow(client):
+    c, Session = client
+    eid = _seed(Session())
+    body = {
+        "year": 1989, "region": "欧洲", "risk_lvl": "R3", "start_date": "1989-06-30",
+        "allocs": [{"entity_id": eid, "currency": "BEF", "amount": 100, "is_all": False}],
+    }
+    r = c.post("/api/v1/investments", json=body)
+    assert r.status_code == 201
+    inv_id = r.json()["id"]
+    # 未赎回 → 公开 redeemed=False / locked=True
+    g = c.get(f"/api/v1/investments/{inv_id}").json()
+    assert g["redeemed"] is False and g["locked"] is True
+    assert "redeemed" in c.get("/api/v1/investments").json()["items"][0]
+    # 赎回 → redeemed=True
+    assert c.post(f"/api/v1/investments/{inv_id}/redeem", json={}).status_code == 200
+    assert c.get(f"/api/v1/investments/{inv_id}").json()["redeemed"] is True
+    # 已赎回 → 解锁 409（issue #81）
+    assert c.patch(f"/api/v1/investments/{inv_id}", json={"locked": False}).status_code == 409
+    # 解锁普通投资 → 200 locked=False（另造一笔未赎回，不同地区英国）
+    r2 = c.post("/api/v1/investments", json={
+        **body, "region": "英国", "start_date": "1989-07-01",
+    })
+    assert r2.status_code == 201
+    uid = r2.json()["id"]
+    assert c.patch(f"/api/v1/investments/{uid}", json={"locked": False}).status_code == 200
+    assert c.get(f"/api/v1/investments/{uid}").json()["locked"] is False
