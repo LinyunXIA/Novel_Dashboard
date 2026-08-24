@@ -79,8 +79,9 @@ class TestIncomeStreamConflictDetail:
             "holder": "不存在的人", "year": 2000, "currency": "BEF", "after_tax": 10.0,
         }])
         rep = check_income_stream_conflict(session, "工资.md", recs)
-        assert rep.blocked is True
-        assert any(p["rule"] == "H5-引用" and "不存在的人" in p["detail"] for p in rep.problems)
+        # issue #72：H5 按 §11.4 定级为「标」——软警告、不再 hard-block
+        assert rep.blocked is False
+        assert any(w["rule"] == "H5-引用" and "不存在的人" in w["detail"] for w in rep.warnings)
 
 
 class TestIncomeStreamConflictYearsAmounts:
@@ -143,8 +144,9 @@ class TestBankImportConflict:
                  "rows": [{"date": "1981-01-01", "reason": "b", "inflow": 1, "outflow": None,
                            "balance": 1, "note": None}]}]
         rep = check_bank_import_conflict(session, "x.md", segs)
-        assert rep.blocked is True
-        assert any(p["rule"] == "H5-引用" for p in rep.problems)
+        # issue #72：H5 软警告（标），不拦整文件
+        assert rep.blocked is False
+        assert any(w["rule"] == "H5-引用" for w in rep.warnings)
 
     def test_new_account_no_h4(self, session):
         h = Entity(entity_type="person", name="祖父")

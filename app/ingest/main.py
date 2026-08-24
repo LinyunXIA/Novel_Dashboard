@@ -89,6 +89,7 @@ def import_all(session, source_dir, log=None) -> dict:
     ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0
     sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; bank_n = 0; bank_seg_skip = 0
     blocked_files = 0
+    soft_warnings = 0
     job: dict = {}
     fx_files = []
     rep = run_ingest(source_dir)
@@ -126,6 +127,7 @@ def import_all(session, source_dir, log=None) -> dict:
                 for p in crep.problems:
                     log(f"   ❌ {src}: [{p['rule']}] {p['line']}: {p['detail']}")
                 continue
+            soft_warnings += _log_soft(log, src, crep)
             st = writer.import_bank(session, r.records, source_file=src)
             bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
             _record_current_version(session, r, source_dir)
@@ -141,11 +143,15 @@ def import_all(session, source_dir, log=None) -> dict:
                 continue
             crep = conflict.check_income_stream_conflict(
                 session, r.file, _normalize_conflict_recs(r.category, r.records))
+            # issue #72：H1 增量瘦版（收益年份 vs 编年史覆盖）随 H2 一并预检
+            crep.merge(conflict.check_timeline_alignment(
+                session, r.file, _normalize_conflict_recs(r.category, r.records)))
             if crep.blocked:
                 blocked_files += 1
                 for p in crep.problems:
                     log(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
                 continue
+            soft_warnings += _log_soft(log, r.file, crep)
             for rec in r.records:
                 rec.setdefault("source_file", r.file)
             if r.category == "income_security": sec += writer.import_income_security(session, r.records)["stream"]
@@ -166,10 +172,13 @@ def import_all(session, source_dir, log=None) -> dict:
         fx_total += writer.import_fx(session, r.records)["n"]
     for r in others:
         crep = conflict.check_fx_authority_conflict(session, r.file, r.records)
+        # issue #72：H3 链式闭合增量预检（新汇率 ∪ DB 视图，两跳 vs 直接 >0.5% → 挡）
+        crep.merge(conflict.check_fx_chain_closure(session, r.file, r.records))
         if crep.blocked:
             log(f"   ⚠ fx冲突拦截 {r.file}: {len(crep.problems)} 处（以权威表为准）")
             blocked_files += 1
             continue
+        soft_warnings += _log_soft(log, r.file, crep)
         fx_total += writer.import_fx(session, r.records)["n"]
     cc = writer.close_2002_currency(session)
     closed = cc["closed"]
@@ -188,8 +197,9 @@ def import_all(session, source_dir, log=None) -> dict:
         f"（seg 跳过 {bank_seg_skip}）、2002关池 {closed}"
         f"（EUR承接 {cc['migrated']} / 零结转跳过 {cc['skipped_zero']}）、冲突拦截 {blocked_files}"
         + (f"；recompute job#{job['job_id']} 通知#{job['notification_id']}" if job else "")
+        + (f"；软警告 {soft_warnings}" if soft_warnings else "")
     )
-    return {"summary": summary, "blocked": blocked_files,
+    return {"summary": summary, "blocked": blocked_files, "soft_warnings": soft_warnings,
             "characters": ck, "initial_assets": ia["asset"], "cash": ia["cash"],
             "security": sec, "rent": rent, "property": prop, "shop": shop,
             "salary": sal, "household": he, "return_curves": rcur, "fx": fx_total,
@@ -197,6 +207,13 @@ def import_all(session, source_dir, log=None) -> dict:
 
 
 # ---- 收益/银行文件的幂等 + 内容变更提示（issue #14；issue #68 通用化） ----
+
+def _log_soft(log, file: str, crep) -> int:
+    """输出软警告（§11.4「标」：入库但高亮），返回条数（issue #72）。"""
+    for w in crep.warnings:
+        log(f"   ⚠ {file}: [{w['rule']}] {w['line']}: {w['detail']}")
+    return len(crep.warnings)
+
 
 def _content_fingerprint(content: str) -> str:
     import hashlib
