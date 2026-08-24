@@ -47,6 +47,12 @@ class EnvConfig:
     llm_model_context: int | None = field(default_factory=lambda: _env_int("LLM_MODEL_CONTEXT", None))
     embed_dim: int | None = field(default_factory=lambda: _env_int("EMBED_DIM", None))
 
+    # 外部系统 API①（公司基础信息，DESIGN §13/§13.3 · F-P1-05）：URL 指向其 `/api/v1` 根。
+    # 优先级：环境变量 EXTERNAL_API_BASE_URL > 该 per-env 默认。凭据（用户名/密码）不入 config，
+    # 走 secrets.local.yaml + 环境变量（见 app/ingest/importers/_client.py）。
+    external_api_url: str = field(
+        default_factory=lambda: _env_str("EXTERNAL_API_BASE_URL", "http://127.0.0.1:7273"))
+
 
 def _dsn(db_name: str) -> str:
     host = os.environ.get("PGHOST", "127.0.0.1")
@@ -75,6 +81,14 @@ def get_config(env: str | None = None) -> EnvConfig:
         "test": "data/overlay-test",
         "prod": "data/overlay",
     }
+    # 外部系统 API① 公司基础信息（DESIGN §13）；dev/test 连 7273，prod 连 7274。
+    # 环境变量 EXTERNAL_API_BASE_URL 可覆盖（default_factory 已读；这里仅在未设时给 per-env 默认）。
+    external_urls = {
+        "dev":  "http://127.0.0.1:7273",
+        "test": "http://127.0.0.1:7273",
+        "prod": "http://127.0.0.1:7274",
+    }
+    external_api_url = os.environ.get("EXTERNAL_API_BASE_URL") or external_urls[env]
 
     return EnvConfig(
         env=env,
@@ -82,6 +96,7 @@ def get_config(env: str | None = None) -> EnvConfig:
         source_dir=source_dir,
         input_dir=PROJECT_ROOT / inputs[env],
         overlay_dir=PROJECT_ROOT / overlays[env],
+        external_api_url=external_api_url,
     )
 
 

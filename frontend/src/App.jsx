@@ -5,6 +5,8 @@ import Transfer from './screens/Transfer'
 import Returns from './screens/Returns'
 import Finance from './screens/Finance'
 import Graph from './screens/Graph'
+import { ErrorBox } from './screens/ui'
+import { useDataOp } from './screens/useDataOp'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -59,13 +61,48 @@ export default function App() {
         {active === 'returns' && <Returns />}
         {active === 'finance' && <Finance />}
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
-        {active === 'companies' && <Graph url="/api/v1/graph/companies" />}
+        {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
         {(active === 'timeline' || active === 'search' || active === 'health') && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
         )}
       </main>
     </div>
+  )
+}
+
+/**
+ * 公司图谱屏（F-P1-05 / F-U7）：公司图谱 + 右上「获取/导入公司」按钮，人工触发
+ * POST /api/v1/graph/companies/import（外部系统 API① 公司基础信息）→ 成功后 bump key
+ * 重挂载 Graph 重新拉取展示新节点/边（后端已在同一请求内 commit）。
+ */
+function CompanyGraph() {
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [stats, setStats] = useState(null)
+  const { submit, busy, error } = useDataOp(data => {
+    setStats(data?.stats || null)
+    setRefreshKey(k => k + 1)
+  })
+
+  const statsText = stats
+    ? `已处理 ${stats.companies} 家公司 · 新增 ${stats.companies_created} 家 · 股权关系 ${stats.rels} 条`
+    : null
+
+  return (
+    <Graph
+      key={refreshKey}
+      url="/api/v1/graph/companies"
+      action={
+        <>
+          <button className="ghost" disabled={busy}
+            onClick={() => submit('/api/v1/graph/companies/import', {})}>
+            {busy ? '导入中…' : '获取/导入公司'}
+          </button>
+          {statsText && <span className="note" style={{ marginLeft: 8 }}>{statsText}</span>}
+          <ErrorBox error={error} />
+        </>
+      }
+    />
   )
 }
 

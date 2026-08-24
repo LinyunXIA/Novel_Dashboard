@@ -36,11 +36,14 @@ def upsert_entity(session: Session, entity_type: str, name: str,
 
 
 def upsert_relationship(session: Session, from_entity_id: int, to_entity_id: int,
-                        rel_type: str, source_file: str | None = None) -> Relationship | None:
+                        rel_type: str, source_file: str | None = None,
+                        since_year: int | None = None,
+                        until_year: int | None = None) -> Relationship | None:
     """按 (from, to, rel_type) 幂等 upsert Relationship；同 (from, to, rel_type) 已存在 → 复用。
 
     issue #27：character 关系字段解析后必须持久化进 relationship 表，P1 人物图谱前置。
-    返回 None 表示 from==to（自环）跳过。
+    since_year/until_year：可选，覆盖新建/已存在关系的生效年窗（外部 API① 公司持股用；
+    保持同键自环跳过语义）。返回 None 表示 from==to（自环）跳过。
     """
     if from_entity_id == to_entity_id:
         return None
@@ -52,10 +55,15 @@ def upsert_relationship(session: Session, from_entity_id: int, to_entity_id: int
         ).limit(1)
     ).scalar_one_or_none()
     if exists is not None:
+        if since_year is not None:
+            exists.since_year = since_year
+        if until_year is not None:
+            exists.until_year = until_year
         return exists
     rel = Relationship(
         from_entity_id=from_entity_id, to_entity_id=to_entity_id,
         rel_type=rel_type, source_file=source_file,
+        since_year=since_year, until_year=until_year,
     )
     session.add(rel)
     session.flush()

@@ -368,9 +368,31 @@ def graph_persons(db: Session = Depends(get_db)):
 def graph_companies(db: Session = Depends(get_db)):
     """公司图谱只读视图（公司—公司关系）。
 
-    注：外部 API①② 对接（importers）留待外部系统文档后实现（F-P1-05 未完成部分）。
+    外部 API① 导入走 POST /graph/companies/import（F-P1-05；F-U7 UI 按钮触发）。
     """
     return company_graph(db)
+
+
+@app.post(API_PREFIX + "/graph/companies/import")
+def import_companies(db: Session = Depends(get_db)):
+    """触发外部系统 API① 公司基础信息导入（DESIGN §13.1 · F-P1-05 / F-U7）。
+
+    公司图谱页「获取/导入公司」按钮调用：拉取外部 /public/companies → 按只增不减
+    upsert entity(company) + 股权关系 → commit → 返回统计 + 刷新后的公司图谱。
+    本端点是 DESIGN §6.6/§13.1 明示的 UI 用户触发通道，故不挂 require_importer（§14.1
+    注记不适用：此为 UI 派生动作）。网络/凭据失败 → 502/401，不落库。
+    """
+    from app.ingest.importers.company_info import run_external_company_import
+    import httpx
+    try:
+        stats = run_external_company_import(db)
+        db.commit()
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else 502
+        raise HTTPException(status_code=status, detail=f"外部 API 请求失败（HTTP {status}）")
+    except (httpx.RequestError, httpx.TimeoutException):
+        raise HTTPException(status_code=502, detail="无法连接外部系统 API（请确认其已启动）")
+    return {"stats": stats, "graph": company_graph(db)}
 
 
 @app.get(API_PREFIX + "/graph/all")

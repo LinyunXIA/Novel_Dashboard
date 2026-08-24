@@ -21,7 +21,7 @@ const TYPE_LABEL = {
  * 纯类型视图（/graph/persons、/graph/companies）单色；/graph/all 多类型混合。
  * 静态布局，无交互拖拽（G6/ECharts 留待需要交互时再换）。
  */
-export default function Graph({ url, emptyHint }) {
+export default function Graph({ url, emptyHint, action }) {
   const g = useFetch(url)
   const { nodes = [], edges = [] } = g.data || {}
   const isAll = url.startsWith('/api/v1/graph/all')
@@ -42,7 +42,7 @@ export default function Graph({ url, emptyHint }) {
   const pos = layout.pos || {}
   return (
     <div className="panel">
-      <h3>{title}</h3>
+      <h3>{title}{action && <span style={{ float: 'right', marginLeft: 8 }}>{action}</span>}</h3>
       <p className="note">只读视图 · {nodes.length} 节点 · {edges.length} 关系（rel_type 标注）{isAll ? ' · 形状/颜色按 entity_type 区分' : ''}</p>
       {nodes.length === 0 ? (
         <div className="plot"><span className="ph">{emptyHint || '暂无节点（需 entity/relationship 数据）'}</span></div>
