@@ -14,42 +14,21 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.model import ExchangeRate, Snapshot
+from app.core.currency import usd_rate
+from app.model import Snapshot
 
 
 def _usd_rate(session: Session, currency: str, year: int) -> float | None:
-    """currency → USD 折算率（1 单位 currency = X USD）。
+    """currency → USD 折算率（issue #71：委托 core/currency.py 权威实现，float 适配）。
 
     返回 None 表示汇率缺失；调用方必须 1) 跳过该币种贡献，2) 记入 missing_rates。
     绝不静默返回 1.0 防止 BEF/DKK/NLG/SEK 裸加当美元（issue #2 根因）。
     """
-    if currency == "USD":
-        return 1.0
-    # 正向：USD→<currency> 行，rate 是 1 USD 兑多少 currency；取倒数
-    row = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == "USD", ExchangeRate.fx_to == currency,
-            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
-        )
-        # 具体年份优先于基准常量（NULL 排后）
-        .order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc())
-        .limit(1)
-    ).first()
-    if row is not None and row[0] is not None:
-        return 1.0 / float(row[0])
-    # 反向：<currency>→USD 行，按基准常量（year IS NULL）回退保持对称
-    row2 = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == currency, ExchangeRate.fx_to == "USD",
-            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
-        )
-        .order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc())
-        .limit(1)
-    ).first()
-    return float(row2[0]) if row2 is not None and row2[0] is not None else None
+    d = usd_rate(session, currency, year)
+    return float(d) if d is not None else None
 
 
 def _missing_rates_from_snaps(session: Session, snaps: list[Snapshot], year: int) -> list[str]:

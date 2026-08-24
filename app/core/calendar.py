@@ -12,7 +12,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.snapshot import _usd_rate, account_balance_at
+from app.core.currency import usd_rate
+from app.core.snapshot import account_balance_at
 from app.model import Account
 
 
@@ -27,7 +28,7 @@ def snapshot_as_of(session: Session, as_of_date: date) -> list[dict]:
     口径与 rebuild_snapshots 一致，仅核对到 as_of_date 当日（而非某年年末）：
     - account  ：逐账户 balance=Σ(inflow−outflow) for date<=as_of_date，scope account:{id}:{cur}
     - entity   ：按 (entity_id, currency) 聚合，scope entity:{eid}:{cur}
-    - family   ：复用 _usd_rate 折算美元（汇率缺失币种不计入），scope family:total
+    - family   ：复用 usd_rate 折算美元（汇率缺失币种不计入），scope family:total
     返回 dict 列表（含 year=as_of_date.year），与既有调用方（API /snapshots?as_of=、CLI calendar）兼容。
     """
     year = as_of_date.year
@@ -44,9 +45,9 @@ def snapshot_as_of(session: Session, as_of_date: date) -> list[dict]:
                     "value": round(bal, 2), "currency": a.currency, "year": year})
         key = (a.entity_id, a.currency)
         entity_agg[key] = entity_agg.get(key, 0.0) + bal
-        rate = _usd_rate(session, a.currency, year)
+        rate = usd_rate(session, a.currency, year)
         if rate is not None:
-            family_usd += bal * rate
+            family_usd += bal * float(rate)
     for (eid, cur), bal in entity_agg.items():
         out.append({"scope": f"entity:{eid}:{cur}",
                     "value": round(bal, 2), "currency": cur, "year": year})

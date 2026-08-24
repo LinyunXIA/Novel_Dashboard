@@ -20,7 +20,8 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.model import Account, ExchangeRate, IncomeStream, LedgerEntry, Snapshot
+from app.core.currency import usd_rate
+from app.model import Account, IncomeStream, LedgerEntry, Snapshot
 
 # 写库精度：保留 2 位小数（与原 round(v, 2) 一致）
 _QUANTIZE_2 = Decimal("0.01")
@@ -86,28 +87,8 @@ def _ownership_accounts(session: Session) -> list[Account]:
 
 
 def _usd_rate(session: Session, currency: str, year: int) -> Decimal | None:
-    """currency → USD 折算率（与 wealth._usd_rate 对齐；缺汇率返回 None 不静默 fallback）。
-
-    issue #28：返回 Decimal（与内部聚合口径一致）；wealth._usd_rate 仍返 float，调用方按需转换。
-    """
-    if currency == "USD":
-        return Decimal(1)
-    from sqlalchemy import or_
-    row = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == "USD", ExchangeRate.fx_to == currency,
-            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
-        ).order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc()).limit(1)
-    ).first()
-    if row is not None and row[0] is not None:
-        return Decimal(1) / Decimal(row[0])
-    row2 = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == currency, ExchangeRate.fx_to == "USD",
-            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
-        ).order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc()).limit(1)
-    ).first()
-    return Decimal(row2[0]) if row2 is not None and row2[0] is not None else None
+    """currency → USD 折算率（issue #71：委托 core/currency.py 权威实现）。"""
+    return usd_rate(session, currency, year)
 
 
 def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
