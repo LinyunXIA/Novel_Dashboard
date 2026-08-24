@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.currency import usd_rate
-from app.core.snapshot import account_balance_at
+from app.core.snapshot import account_balance_at, pool_in_transit
 from app.model import Account
 
 
@@ -37,17 +38,26 @@ def snapshot_as_of(session: Session, as_of_date: date) -> list[dict]:
     entity_agg: dict[tuple[int, str], float] = {}
     family_usd = 0.0
     for a in accs:
-        bal = account_balance_at(session, a.id, as_of_date)
+        bal = account_balance_at(session, a.id, as_of_date)      # Decimal（issue #28）
         # 关池后不双计：closed 账户自关池日起余额清 0（钱已结转进承接 EUR 账户，DESIGN §6.6）
         if a.status == "closed" and a.closed_on is not None and as_of_date >= a.closed_on:
-            bal = 0.0
+            bal = Decimal(0)
         out.append({"scope": f"account:{a.id}:{a.currency}",
-                    "value": round(bal, 2), "currency": a.currency, "year": year})
+                    "value": round(float(bal), 2), "currency": a.currency, "year": year})
         key = (a.entity_id, a.currency)
-        entity_agg[key] = entity_agg.get(key, 0.0) + bal
+        entity_agg[key] = entity_agg.get(key, 0.0) + float(bal)
         rate = usd_rate(session, a.currency, year)
         if rate is not None:
-            family_usd += bal * float(rate)
+            family_usd += float(bal) * float(rate)
+    # §19.4（issue #85）：净值 = 银行 + 专款池合计。在途资金不凹陷——投资划出后、赎回前，
+    # 该币种本金仍在池中，应在 entity/family 聚合时加回，使投资期间总净值不变。
+    # account scope 保留纯银行余额（专款池是"在途仓"，区别于银行现金）。
+    pool = pool_in_transit(session, as_of_date)
+    for (eid, cur), amt in pool.items():
+        entity_agg[(eid, cur)] = entity_agg.get((eid, cur), 0.0) + float(amt)
+        rate = usd_rate(session, cur, year)
+        if rate is not None:
+            family_usd += float(amt) * float(rate)
     for (eid, cur), bal in entity_agg.items():
         out.append({"scope": f"entity:{eid}:{cur}",
                     "value": round(bal, 2), "currency": cur, "year": year})

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDataOp, useFetch } from './useDataOp'
 import { ErrorBox, Field } from './ui'
 
@@ -9,20 +9,34 @@ export default function Transfer() {
   const op = useDataOp()
 
   const [form, setForm] = useState({
-    year: 2001, source_account_id: '', target_entity_id: '', target_currency: 'USD', amount: '',
+    year: 2001, source_account_id: '', target_entity_id: '', target_currency: '', amount: '',
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const fx = useFetch(form.year ? `/api/v1/exchange-rates?year=${form.year}&page_size=500` : null)
 
   const acctOpts = accounts.data?.items || []
   const entOpts = (entities.data?.items || []).filter(e => e.type === 'person' || e.type === 'company')
   const src = acctOpts.find(a => a.id === Number(form.source_account_id))
+
+  // issue #87-1：目标币种下拉 = 源币种（同币划拨）+ 该年与源币种有正向/反向汇率的方向
+  const validTargets = useMemo(() => {
+    const s = new Set()
+    if (src?.currency) s.add(src.currency)
+    for (const r of (fx.data?.items || [])) {
+      if (r.from === src?.currency) s.add(r.to)
+      if (r.to === src?.currency) s.add(r.from)          // 反向可用
+    }
+    return [...s].sort()
+  }, [fx.data, src])
+  // 源账户/年份变化后目标币种随之回落到合法首项（避免显示与提交不一致）
+  const effTarget = validTargets.includes(form.target_currency) ? form.target_currency : (validTargets[0] || '')
 
   const doSubmit = async () => {
     if (!form.source_account_id || !form.target_entity_id) return
     const res = await op.submit('/api/v1/transfers', {
       source_account_id: Number(form.source_account_id),
       target_entity_id: Number(form.target_entity_id),
-      target_currency: form.target_currency,
+      target_currency: effTarget || form.target_currency,
       amount: Number(form.amount),
       year: Number(form.year),
     })
@@ -60,8 +74,12 @@ export default function Transfer() {
               </select>
             </Field>
             <Field label="目标币种">
-              <input value={form.target_currency} style={{ width: 90 }}
-                onChange={e => set('target_currency', e.target.value)} />
+              <select value={effTarget}
+                style={{ width: 110 }}
+                onChange={e => set('target_currency', e.target.value)}>
+                <option value="">币种</option>
+                {validTargets.map(c => <option key={c}>{c}</option>)}
+              </select>
             </Field>
           </div>
           <Field label="金额（源币）">

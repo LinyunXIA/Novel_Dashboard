@@ -608,6 +608,9 @@ class Importer(Protocol):
 - **视图资源**（多资源聚合）以 `/api/v1/overview`、`/api/v1/graph/{kind}`、`/api/v1/wealth`、`/api/v1/returns`、`/api/v1/finance` 提供，只读 GET。
 - **URL 版本段**：所有内部 API 一律以 **`/api/v1/`** 为前缀；后续不兼容演进发布 v2 时**并行运行 v1**（v1 进入维护期，仅修 bug、不加新端点），客户端可显式指定版本。
 - **写端点授权**：除 `timeline-events`（编年史，经覆盖层）与 `source-files/{id}/versions*`（diff 决策）外，其余**写端点**（创建/全量替换/局部更新/删除 `entities`、新增 `ledger-entries`、新增 `finance-entries` 等）**不面向普通 UI 用户**，仅供 importer / 数据调整员（受限通道，对齐 PRD §1.4 铁律）。普通 UI 对这类写端点的调用应由 serve 层拒绝（409/403）。
+  > **实现注记（issue #87-4）**：守卫 `app/api/deps.py:require_importer` 已实现（`X-Importer: 1` 放行，否则 403），
+  > 但**当前无任何写端点挂载**（现有写端点即四类 UI 派生通道 §19，天然放行）——授权矩阵处于「空转」状态，
+  > 无实际风险。待 P1-05 外部 importer 或任一类受限写端点上线时**强制挂载并补 403 测试**。
 
 ### 14.2 资源端点
 
@@ -791,6 +794,19 @@ class Importer(Protocol):
 - **校验**：**转出年起向后全链 as-of 不得为负**，任一年拐负 → 整体拒绝转出（同投资选 i 的整体拒绝，复用同一套向后重算传播校验）。划拨目标可为另一实体账户（人物 A→公司 A）。
 - **记年**：锁输入年份；落 `ledger_entry` 后传重算；同步编年史 overlay。
 
+### ★ 实现决策备注：UI 派生编年史直写 overlay（issue #86 定案）
+
+UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**直写 `timeline_event(overlay=True)`**，
+**不经** `user_data_overlay` 表 + `overlay_dir/编年史.md` 覆盖层文件通道（§6.4）。
+实现位置：`app/core/invest.py`（创建 §19.1 / 赎回 §19.2）、`app/core/transfer.py`（§19.5）。
+
+- **理由**：派生行由系统生成、无用户自由文本编辑需求；timeline ingest 为 insert-only 幂等键
+  `(event_year, title, source_file)`（`app/ingest/writer.py`），重导不会冲掉这些行，数据安全可接受——
+  是对 PRD §1.4「界面更新经覆盖层」字面约束的**有意偏离**（架构决策），据此固化为文档基线。
+- **后果**：§6.4 覆盖层能力（覆盖层 md 导出 / 差异 / 重置回源 / 以源为最新）对这批派生
+  `overlay=True` 行**不适用**。P2-05「编年史 UI 编辑」落地时须明确处理策略占位：视为**系统行
+  只读**（落库按 `note` 标签 `inv#<id>` / `UI 转移` 定位），用户编辑一律走真实覆盖层通道。
+
 ### 19.6 事件·股票与资产模型（Phase 2）
 - **导入链**：`基准/事件/股票/**` Phase 2 重新纳入 detect → 数据调整员导入**不关联账户** → UI 用户按**同币种**手动关联到某账户(人物/公司)；现金流经事件生成 `ledger_entry` 进账户。
 - **总资产**：`银行账户余额(现金) + 投资专款池 + 股票持仓市值`；现金与市值不重叠（买入=ledger 支出「购入股票」移除现金）。
@@ -820,8 +836,8 @@ class Importer(Protocol):
 | F-P0-05 | **Phase1 摄入** | 收益文件模块化挂账(income_stream)：租/经营性房/祖产债券/开店（薪资在 F-P0-06）｜因子外置 core/factors.py，源文件仅基桩值 (#69) | §6.5/§6.3 | ✅ |
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR｜家庭支出幂等同 #68 | §6.5/§6.6 | ✅ |
 | F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
-| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量已实现，逐年完整覆盖随真实数据联调 | §8 | 🟨 |
-| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD）｜接口已上线，前端曲线仅 Dashboard 单屏可见 | §7/§8 | 🟨 |
+| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量已实现；§19.4 专款池在途净值口径经 `pool_in_transit` 加回（issue #85，entity/family 不凹陷），逐年完整覆盖随真实数据联调 | §8/§19.4 | 🟨 |
+| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD）｜接口已上线；年中日历拖动在途不凹陷（issue #85，align §19.4），前端曲线仅 Dashboard 单屏可见 | §7/§8/§19.4 | 🟨 |
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动（服务函数就绪，API 端点 F-P0-13） | §8 | ✅ |
 | F-P0-11 | **健康校验** | H1–H5 汇总 + 问题清单（health.py） | §10 | ✅ |
 | F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示｜register_job/notification 已接线，范围边界待核实 | §9 | 🟨 |
@@ -838,7 +854,7 @@ class Importer(Protocol):
 | F-P1-04 | **人物图谱** | 人—人/人—公司关系可视化（ECharts graph）｜core/graph.py + SVG 环形静态布局（非 ECharts，交互留待）；issue #84 补 `/graph/all` 全量图谱（节点按 entity_type 形状/颜色区分，跨类型边虚线标出）覆盖 PRD P1-1 | §1/§14 | ✅ |
 | F-P1-05 | **公司图谱** | 公司—公司关系 + 外部 API①② 导入（只增不减 + status）｜仅只读视图完成；外部 API①② 待用户提供文档后实现 | §13 | 🟨 |
 | F-P1-06 | **各国收益曲线** | return_curve（R1–R5）对比渲染 + 地区起始年下限｜GET /returns/regions + SVG 五线对比 | §14 | ✅ |
-| F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜API + 屏已上线；生产写入链路已接通（UI 派生 invest/redeem + ingest 镜像 source=file，issue #80），真实库 ingest 验收后再 ✅ | §5 | 🟨 |
+| F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜API + 屏已上线；生产写入链路已接通（UI 派生 invest/redeem + ingest 镜像 source=file，issue #80），真实库 ingest 验收后再 ✅；编年史同步口径见 §19 决策备注（issue #86） | §5 | 🟨 |
 | F-P1-08 | **统一搜索** | LLM+embedding RAG（omlx 本地）条目检索装配 + serve 后处理｜⚠ 阻塞于本地 omlx 不可用，维持待续 | §18 | ⬜ |
 | F-P1-09 | 四类 UI 改数据操作 | 统一模板：年份×池 + 后传重算 + 失败整体拒绝 + overlay 同步｜useDataOp 钩子已用于投资/划拨屏 | §6.8/§19 | ✅ |
 

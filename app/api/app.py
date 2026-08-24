@@ -191,6 +191,16 @@ def wealth(year_from: int = 1947, year_to: int = 2025, db: Session = Depends(get
 
 
 # ---------------- 收益曲线 ----------------
+@app.get(API_PREFIX + "/returns/countries")
+def returns_countries(db: Session = Depends(get_db)):
+    """收益曲线在库国家列表（issue #87-3：前端动态渲染，不再硬编码 9 国）。"""
+    rows = db.execute(
+        select(ReturnCurve.country).where(ReturnCurve.country.isnot(None))
+        .distinct().order_by(ReturnCurve.country)
+    ).scalars().all()
+    return {"countries": rows}
+
+
 @app.get(API_PREFIX + "/returns")
 def returns(
     country: Optional[str] = None,
@@ -223,16 +233,19 @@ def returns(
 def fx(
     fx_from: Optional[str] = None,
     fx_to: Optional[str] = None,
+    year: Optional[int] = None,                       # issue #87-1：按年筛可用方向
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """issue #23：补分页。"""
+    """issue #23：补分页；issue #87-1：补 year 筛选（前端换汇目标币种可用方向）。"""
     q = select(ExchangeRate)
     if fx_from:
         q = q.where(ExchangeRate.fx_from == fx_from)
     if fx_to:
         q = q.where(ExchangeRate.fx_to == fx_to)
+    if year:
+        q = q.where(ExchangeRate.year == year)
     total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
     rows = db.execute(q.order_by(ExchangeRate.fx_from, ExchangeRate.fx_to, ExchangeRate.year)
                       .offset((page - 1) * page_size).limit(page_size)).scalars().all()

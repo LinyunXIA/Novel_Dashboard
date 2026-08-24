@@ -4,12 +4,16 @@ import { Field } from './ui'
 
 const RISK_COLOR = { R1: 'var(--s3)', R2: '#2a78d6', R3: '#8878e0', R4: 'var(--s2)', R5: 'var(--crit)' }
 const RISK_ORDER = ['R1', 'R2', 'R3', 'R4', 'R5']
-const COUNTRIES = ['比利时', '卢森堡', '荷兰', '丹麦', '瑞典', '美国', '英国', '中国香港', '中国大陆']
 
-/** F-P1-06 各国收益曲线：R1–R5 五条 SVG 线对比。 */
+/** F-P1-06 各国收益曲线：R1–R5 五条 SVG 线对比。
+ *  issue #87-3：国家下拉来自 /returns/countries，不再前端硬编码 9 国。 */
 export default function Returns() {
-  const [country, setCountry] = useState('比利时')
-  const data = useFetch(country ? `/api/v1/returns?country=${encodeURIComponent(country)}&page_size=500` : null)
+  const [country, setCountry] = useState('')
+  const countries = useFetch('/api/v1/returns/countries')
+  const countryList = countries.data?.countries || []
+  // 国家列表加载后，取当前选中在库者；否则回退首个在库国家（避免硬编码默认）
+  const effective = (country && countryList.includes(country)) ? country : (countryList[0] || '比利时')
+  const data = useFetch(effective ? `/api/v1/returns?country=${encodeURIComponent(effective)}&page_size=500` : null)
   const regions = useFetch('/api/v1/returns/regions')
 
   const series = useMemo(() => {
@@ -28,9 +32,10 @@ export default function Returns() {
       <div className="panel">
         <h3>各国收益曲线（R1–R5 对比）</h3>
         <p className="note">DESIGN §14 returns · §19.3 地区起始年下限由 /returns/regions 标注</p>
-        <Field label="国家">
-          <select value={country} onChange={e => setCountry(e.target.value)}>
-            {COUNTRIES.map(c => <option key={c}>{c}</option>)}
+        <Field label="国家（来自 /returns/countries）">
+          <select value={effective} onChange={e => setCountry(e.target.value)}>
+            {countryList.length ? countryList.map(c => <option key={c}>{c}</option>)
+              : <option>{effective}</option>}
           </select>
         </Field>
         <div className="plot" style={{ height: 300 }}>

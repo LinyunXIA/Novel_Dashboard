@@ -39,7 +39,9 @@ def primary_account(session: Session, entity_id: int, currency: str) -> Optional
 def _fx_rate(session: Session, fx_from: str, fx_to: str, year: int) -> Optional[Decimal]:
     """该年直接货币对汇率（§19.5：换汇命中该年汇率才可换，不做全时段穷举）。
 
-    只取该年具体行（year==year，不含 year IS NULL 基准常量）——缺失即无该年汇率。
+    只取该年具体行（year==year，不含 year IS NULL 基准常量）。
+    issue #87-1：缺正向方向时取反向行（fx_to→fx_from）取倒数——来源币向通常只存单向，
+    EUR↔BEF 应可双向成交（倒数是精确的数学逆）。
     """
     row = session.execute(
         select(ExchangeRate.rate).where(
@@ -48,7 +50,28 @@ def _fx_rate(session: Session, fx_from: str, fx_to: str, year: int) -> Optional[
             ExchangeRate.year == year,
         ).limit(1)
     ).first()
-    return Decimal(row[0]) if row and row[0] is not None else None
+    if row is not None and row[0] is not None:
+        return Decimal(str(row[0]))
+    rrow = session.execute(
+        select(ExchangeRate.rate).where(
+            ExchangeRate.fx_from == fx_to,
+            ExchangeRate.fx_to == fx_from,
+            ExchangeRate.year == year,
+        ).limit(1)
+    ).first()
+    if rrow is not None and rrow[0] is not None and Decimal(str(rrow[0])) != 0:
+        return Decimal(1) / Decimal(str(rrow[0]))
+    return None
+
+
+def available_fx_pairs(session: Session, year: int) -> list[tuple[str, str]]:
+    """该年在库的直接货币对方向（issue #87-1：供错误提示/前端可用方向下拉）。"""
+    return session.execute(
+        select(ExchangeRate.fx_from, ExchangeRate.fx_to)
+        .where(ExchangeRate.year == year, ExchangeRate.rate.isnot(None))
+        .order_by(ExchangeRate.fx_from, ExchangeRate.fx_to)
+        .distinct()
+    ).all()
 
 
 def _simulate_annual_asof_nonneg(session: Session, account_id: int,
@@ -125,8 +148,11 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
     else:
         rate = _fx_rate(session, source.currency, target.currency, year)
         if rate is None:
+            pairs = available_fx_pairs(session, year)
+            hint = ("；该年可用方向：" + "、".join(f"{f}→{t}" for f, t in pairs)
+                    ) if pairs else "；该年无任何汇率行（缺 year-12-30 单，请数据调整员先导入）"
             raise ValidationError(
-                f"缺 {year} 年 {source.currency}→{target.currency} 汇率，无法换汇；请数据调整员先导入该年汇率")
+                f"缺 {year} 年 {source.currency}→{target.currency} 汇率，无法换汇{hint}")
         target_amount = (amt * rate).quantize(Decimal("0.01"))
         op = "换汇"
         reason_src = f"换汇 {amt} {source.currency} → {target.currency} @{year}"
