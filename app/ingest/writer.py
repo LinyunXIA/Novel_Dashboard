@@ -585,3 +585,55 @@ def import_income_rent(session: Session, records: list[dict],
                                source_file=rec.get("source_file"))
             stats["stream"] += 1
     return stats
+
+
+def backfill_finance_entries(session: Session) -> dict:
+    """F-P1-07 真实库回填：把 issue #80 之前已导入的既有 income_stream / 家庭支出镜像到 finance_entry。
+
+    现有数据早于 _mirror_to_finance，重浇灌幂等跳过 → finance_entry 为空；此回填补上财务收支屏数据源。
+    幂等：按 (entity_id, year, kind, label, amount) 存在则跳过。返回统计。
+    """
+    stats = {"income": 0, "expense": 0, "skipped_income": 0, "skipped_expense": 0,
+             "unresolved_entity": 0}
+    bis = session.execute(select(Entity)).scalars().all()
+    ents = {e.id: e for e in bis}
+    # income_stream → finance_entry(income)
+    for s in session.execute(select(IncomeStream)).scalars().all():
+        e = ents.get(s.entity_id)
+        if e is None or e.entity_type not in ("person", "company"):
+            stats["unresolved_entity"] += 1
+            continue
+        label = s.label or ""
+        dup = session.execute(select(FinanceEntry.id).where(
+            FinanceEntry.entity_id == s.entity_id, FinanceEntry.year == s.year,
+            FinanceEntry.kind == "income", FinanceEntry.amount == s.amount,
+            FinanceEntry.label == label).limit(1)).scalar_one_or_none()
+        if dup is not None:
+            stats["skipped_income"] += 1
+            continue
+        session.add(FinanceEntry(entity_id=s.entity_id, entity_kind=e.entity_type,
+                                 year=s.year, kind="income", amount=s.amount,
+                                 currency=s.currency, label=label, source="file"))
+        stats["income"] += 1
+    # ledger 家庭支出 → finance_entry(expense)
+    expense_rows = session.execute(
+        select(LedgerEntry).where(LedgerEntry.reason == "家庭支出")).scalars().all()
+    for le in expense_rows:
+        acc = session.get(Account, le.account_id)
+        e = ents.get(acc.entity_id) if acc else None
+        if e is None:
+            stats["unresolved_entity"] += 1
+            continue
+        dup = session.execute(select(FinanceEntry.id).where(
+            FinanceEntry.entity_id == e.id, FinanceEntry.year == le.date.year,
+            FinanceEntry.kind == "expense", FinanceEntry.amount == le.outflow,
+            FinanceEntry.label == "家庭支出").limit(1)).scalar_one_or_none()
+        if dup is not None:
+            stats["skipped_expense"] += 1
+            continue
+        session.add(FinanceEntry(entity_id=e.id, entity_kind=e.entity_type,
+                                 year=le.date.year, kind="expense", amount=le.outflow,
+                                 currency=acc.currency if acc else None,
+                                 label="家庭支出", source="file"))
+        stats["expense"] += 1
+    return stats

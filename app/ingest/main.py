@@ -446,5 +446,19 @@ def search_index(env: str = typer.Option("dev", "--env"),
         typer.echo(f"[{env}] 索引完成：{r}")
 
 
+@app.command()
+def finance_backfill(env: str = typer.Option("dev", "--env")):
+    """F-P1-07 财务收支回填：把 issue #80 前已导入的 income_stream/家庭支出 镜像到 finance_entry。
+
+    现有真实库数据早于 _mirror_to_finance，重浇灌幂等跳过 → 财务收支屏无数据；此命令补上。
+    """
+    from app.ingest.writer import backfill_finance_entries
+    with _session_for(env) as s:
+        r = backfill_finance_entries(s)
+        s.commit()
+        typer.echo(f"[{env}] 财务收支回填：收入 {r['income']}、支出 {r['expense']}"
+                   f"（跳过 收入{r['skipped_income']}/支出{r['skipped_expense']}）")
+
+
 if __name__ == "__main__":
     app()
