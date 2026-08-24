@@ -1,21 +1,21 @@
 """增量重算（DESIGN §9）：从受影响起点年向后重算，不全量。
 
 recompute_account(session, account_id, from_year)：
-- 重算该账户 from_year 起的余额链（ledger 逐行：后 = 前 + 入 − 出，按日期排序）
+- 重算该账户 from_year 起的余额链（含杠杆复利：balance_y = balance_{y-1}*(1+rate)+净流入）
 - 写回 ledger.balance；之后可供快照/曲线读取。
 
 issue #28 修复：内部计算全程 Decimal（避免 float 二进制误差累积进账本）。
-SQLAlchemy Numeric 列读出来本就是 Decimal，原代码用 float() 转换丢精度。
+杠杆/收益曲线计算委托 leverage.py（DESIGN §7.2），提供 recompute_one 供增量复用。
 """
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.leverage import recompute_one as _recompute_one
 from app.model import LedgerEntry
 from app.model.types import AccountStatus
 
@@ -23,40 +23,9 @@ from app.model.types import AccountStatus
 def recompute_account(session: Session, account_id: int, from_year: int) -> dict:
     """从 from_year 起重算账户余额链（DESIGN §9.2 recompute_one）。
 
-    关键约束：
-    1. 基线只取 from_year 前最后一条分录的余额作为起算余额；from_year 起的所有行
-       一律滚动重算（同年内不再「沿用已存在 balance 跳过」）。
-    2. 不再有死代码覆盖：base 永远等于上一行的累计余额（首行则为 from_year 前最后
-       一行的 balance，未取到则 0）。
-    3. issue #28：内部计算全程 Decimal；e.balance / e.inflow / e.outflow 读出来已
-       是 Decimal（SQLAlchemy Numeric 列），直接相加不再转 float。
+    委托 leverage.recompute_one 实现（含杠杆复利滚动）。
     """
-    entries = session.execute(
-        select(LedgerEntry).where(LedgerEntry.account_id == account_id)
-        .order_by(LedgerEntry.date, LedgerEntry.id)
-    ).scalars().all()
-
-    # 基线：from_year 前最后一条分录的余额；取不到则 0
-    baseline: Decimal = Decimal(0)
-    for e in entries:
-        if e.date.year < from_year and e.balance is not None:
-            baseline = Decimal(e.balance)
-        elif e.date.year >= from_year:
-            break
-
-    balance: Decimal = baseline
-    years_updated = 0
-    for e in entries:
-        if e.date.year < from_year:
-            continue                              # 锁定基线之前的行
-        inflow = Decimal(e.inflow) if e.inflow is not None else Decimal(0)
-        outflow = Decimal(e.outflow) if e.outflow is not None else Decimal(0)
-        balance = balance + inflow - outflow
-        if e.balance is None or Decimal(e.balance) != balance:
-            e.balance = balance
-            years_updated += 1
-    return {"account_id": account_id, "from_year": from_year,
-            "entries": len(entries), "updated": years_updated}
+    return _recompute_one(session, account_id, from_year)
 
 
 def recompute_all(session: Session, from_year: int, reason: str = "manual") -> list[dict]:
@@ -91,7 +60,6 @@ def record_recompute_done(session: Session, start_year: int, reason: str = "manu
     返回 {"job_id": int, "notification_id": int}；session.flush 后由外层 commit。
     """
     from app.model import Notification
-    from datetime import datetime
     job_id = register_job(session, start_year, reason, files)
     notif = Notification(
         job_id=job_id,
