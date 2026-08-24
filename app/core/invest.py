@@ -89,22 +89,18 @@ def _primary_account(session: Session, entity_id: int, currency: str) -> Optiona
 
     UNIQUE(entity_id, currency, bank) 允许同主体多 bank 同币种账户；投资划出/赎回
     统一落在最小 id 的 active 账户，保证余额链可重算（实测每主体每币种仅一个账户）。
+
+    关池（status=closed）账户不接受——§6.6 BEF/LUF/NLG 2002-01-01 关池后只读终态，
+    若主体该币种仅 closed 池，应走 EUR 承接池而非 silent 回退（issue #83 收紧）。
+    返回 None 以便调用方显式拒绝（Error 422 含币种/主体）。
     """
-    acc = session.execute(
+    return session.execute(
         select(Account).where(
             Account.entity_id == entity_id,
             Account.currency == currency,
             Account.status == "active",
         ).order_by(Account.id).limit(1)
     ).scalar_one_or_none()
-    if acc is None:
-        # 回退到任意账户（含已关池，避免全无时报错；正常数据不会走这）
-        return session.execute(
-            select(Account).where(Account.entity_id == entity_id,
-                                  Account.currency == currency)
-            .order_by(Account.id).limit(1)
-        ).scalar_one_or_none()
-    return acc
 
 
 def _pool_balance(session: Session, entity_id: int, currency: str, cutoff: date) -> Decimal:

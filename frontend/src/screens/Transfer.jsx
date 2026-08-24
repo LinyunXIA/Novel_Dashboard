@@ -41,10 +41,15 @@ export default function Transfer() {
                 onChange={e => set('year', Number(e.target.value))} />
             </Field>
           </div>
-          <Field label="源账户（主体·币种）">
+          <Field label="源账户（主体·币种 · 关池不可选）">
             <select value={form.source_account_id} onChange={e => set('source_account_id', e.target.value)}>
               <option value="">—选择源账户—</option>
-              {acctOpts.map(a => <option key={a.id} value={a.id}>#{a.id} · entity{a.entity_id} · {a.currency}{a.status === 'closed' ? '（关池）' : ''}</option>)}
+              {acctOpts.map(a => (
+                <option key={a.id} value={a.id} disabled={a.status === 'closed'}
+                  title={a.status === 'closed' ? `§6.6 关池后只读终态（${a.closed_on || ''}）` : ''}>
+                  #{a.id} · entity{a.entity_id} · {a.currency}{a.status === 'closed' ? '（关池·禁选）' : ''}
+                </option>
+              ))}
             </select>
           </Field>
           <div className="row">

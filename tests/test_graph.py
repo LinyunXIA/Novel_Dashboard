@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import BigInteger, Integer, create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.graph import company_graph, person_graph
+from app.core.graph import all_graph, company_graph, person_graph
 from app.db import Base
 from app.model import Entity, Relationship
 
@@ -57,3 +57,23 @@ def test_company_graph(session):
     assert g["node_count"] == 2
     assert [e["rel_type"] for e in g["edges"]] == ["holds"]
     assert g["edges"][0]["from_name"] == "Peeters Americas"
+
+
+def test_all_graph_includes_cross_edges_issue_84(session):
+    """issue #84：/graph/all 包含跨类型（人—公司）边，节点 type 标注。"""
+    _seed(session)
+    g = all_graph(session)
+    # 全量节点：3 person + 2 company = 5
+    assert g["node_count"] == 5
+    by_type = {}
+    for n in g["nodes"]:
+        by_type.setdefault(n["type"], []).append(n)
+    assert len(by_type["person"]) == 3 and len(by_type["company"]) == 2
+    # 跨类型边：member（person→company）应出现
+    cross = [e for e in g["edges"]
+             if e["from_type"] == "person" and e["to_type"] == "company"]
+    assert any(e["rel_type"] == "member" for e in cross)
+    # 同类型边也都在
+    assert any(e["rel_type"] == "parent" for e in g["edges"])
+    # 节点 type 字段填充（前端据此着色）
+    assert all("type" in n and n["type"] in ("person", "company") for n in g["nodes"])

@@ -14,6 +14,7 @@ const TABS = [
   { key: 'finance', label: '财务收支' },
   { key: 'persons', label: '人物图谱' },
   { key: 'companies', label: '公司图谱' },
+  { key: 'graphall', label: '全图谱' },
   { key: 'timeline', label: '编年史' },
   { key: 'search', label: '搜索' },
   { key: 'health', label: '健康校验' },
@@ -59,6 +60,7 @@ export default function App() {
         {active === 'finance' && <Finance />}
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <Graph url="/api/v1/graph/companies" />}
+        {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
         {(active === 'timeline' || active === 'search' || active === 'health') && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
         )}
