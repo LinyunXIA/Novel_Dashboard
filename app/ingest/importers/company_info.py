@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ingest import writer
-from app.ingest.importers._client import load
+from app.ingest.importers._client import _api_root, load, login
 from app.model import Entity
 
 
@@ -30,31 +30,6 @@ def _year(d: str | None) -> int | None:
         return int(str(d)[:4])
     except (TypeError, ValueError):
         return None
-
-
-def _api_root(base_url: str) -> str:
-    """把 base_url（host:port，如 http://127.0.0.1:7273）归一为 API 根（含 /api/v1）。
-
-    外部系统端点均在 /api/v1 前缀下（文档 curl：/api/v1/auth/login、/api/v1/public/companies）。
-    base_url 已含 /api/v1 时直接复用，避免重复。"""
-    base = (base_url or "").rstrip("/")
-    if base.endswith("/api/v1"):
-        return base
-    return base + "/api/v1"
-
-
-def login(url: str, username: str, password: str, client: httpx.Client | None = None) -> str:
-    """POST {api_root}/auth/login → 返回 access_token。凭据错误 → 抛 httpx.HTTPStatusError。"""
-    owned = client is None
-    client = client or httpx.Client(timeout=15)
-    try:
-        r = client.post(f"{_api_root(url)}/auth/login",
-                        json={"username": username, "password": password})
-        r.raise_for_status()
-        return r.json()["access_token"]
-    finally:
-        if owned:
-            client.close()
 
 
 def fetch_companies(url: str, token: str, client: httpx.Client | None = None) -> list[dict]:

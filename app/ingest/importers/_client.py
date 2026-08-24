@@ -1,4 +1,4 @@
-"""外部系统 API① 连接与凭据加载（DESIGN §13.3 · F-P1-05）。
+"""外部系统 API 连接与凭据加载（DESIGN §13.3）。
 
 凭据铁律（DESIGN §13.3）：外部 API 凭据放本地 `secrets.local.yaml`（.gitignore 排除，
 不入 git、不入 DB）；可被环境变量覆盖；在本模块读取，不落入日志/notification。
@@ -13,11 +13,36 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import httpx
 import yaml
 
 from app.config import PROJECT_ROOT, CONFIG
 
 _SECRETS_PATH = PROJECT_ROOT / "secrets.local.yaml"
+
+
+def _api_root(base_url: str) -> str:
+    """base_url（host:port）→ API 根（含 /api/v1）。
+
+    外部系统端点均在 /api/v1 前缀下；base_url 已含 /api/v1 则去重复用。"""
+    base = (base_url or "").rstrip("/")
+    if base.endswith("/api/v1"):
+        return base
+    return base + "/api/v1"
+
+
+def login(url: str, username: str, password: str, client: httpx.Client | None = None) -> str:
+    """POST {api_root}/auth/login → access_token。凭据错误 → 抛 httpx.HTTPStatusError。"""
+    owned = client is None
+    client = client or httpx.Client(timeout=15)
+    try:
+        r = client.post(f"{_api_root(url)}/auth/login",
+                        json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()["access_token"]
+    finally:
+        if owned:
+            client.close()
 
 
 def _load_secrets() -> dict:
