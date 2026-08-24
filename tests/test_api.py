@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.app import app
 from app.api.deps import get_db
 from app.db import Base
-from app.model import Account, Entity, ExchangeRate, Snapshot, TimelineEvent
+from app.model import Account, Entity, ExchangeRate, ReturnCurve, Snapshot, TimelineEvent
 
 
 @pytest.fixture
@@ -206,3 +206,38 @@ class TestCorsMiddleware:
         assert "http://127.0.0.1:5173" in _CORS_ORIGINS
         cors_mw = [m for m in app.user_middleware if "CORS" in m.cls.__name__]
         assert len(cors_mw) == 1
+
+
+class TestIssue87Endpoints:
+    """issue #87：/returns/countries 动态国家列表 + exchange-rates 按年筛方向。
+
+    两个新端点是"静态路由先于动态 /returns、/exchange-rates"展开的补充；
+    验证不吞路由且按预期返回。
+    """
+
+    def test_returns_countries_distinct(self, client):
+        c, Session = client
+        s = Session()
+        s.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1980, rate=10.0))
+        s.add(ReturnCurve(country="比利时", risk_lvl="R2", year=1981, rate=5.0))
+        s.add(ReturnCurve(country="卢森堡", risk_lvl="R3", year=1980, rate=8.0))
+        s.commit()
+        r = c.get("/api/v1/returns/countries")
+        assert r.status_code == 200
+        assert r.json()["countries"] == ["卢森堡", "比利时"]      # distinct + 排序（字典序）
+
+    def test_exchange_rates_year_filter_and_routes_static_first(self, client):
+        c, Session = client
+        s = Session()
+        s.add(ExchangeRate(fx_from="BEF", fx_to="EUR", year=1980, rate=0.024789))
+        s.add(ExchangeRate(fx_from="BEF", fx_to="EUR", year=1981, rate=0.025))
+        s.add(ExchangeRate(fx_from="BEF", fx_to="USD", year=1980, rate=0.02))
+        s.commit()
+        # 静态路由 /exchange-rates 与 /returns 不受 /returns/countries 影响
+        r = c.get("/api/v1/exchange-rates?year=1980&page_size=50")
+        assert r.status_code == 200
+        items = r.json()["items"]
+        assert len(items) == 2                               # 仅 1980 两条（1981 被 year 筛掉）
+        # /exchange-rates?year=1 的长整形校验（year 非路由后缀）
+        r2 = c.get("/api/v1/exchange-rates?year=1981")
+        assert [i["from"] for i in r2.json()["items"]] == ["BEF"]

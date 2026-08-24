@@ -81,6 +81,32 @@ def test_fx_conversion_correct(session):
     assert out["target_amount"] == pytest.approx(round(100 * 0.024789, 2), abs=0.01)
 
 
+def test_fx_reverse_pair_when_forward_missing_issue_87( session):
+    """issue #87-1：仅存 EUR→BEF 反向行时，BEF→EUR 换汇应取倒数成交。"""
+    h, j, a1, a2, a3 = _seed(session)
+    session.add(ExchangeRate(fx_from="EUR", fx_to="BEF", year=1980, rate=1 / 0.024789))
+    session.flush()
+    out = transfer(session, source_account_id=a1.id, target_entity_id=h.id,
+                   target_currency="EUR", amount=100, year=1980)
+    session.flush()
+    assert out["operation"] == "换汇"
+    # 反向倒数折算：100 BEF × (1/rate_eur_to_bef) = 100 × 0.024789
+    assert out["target_amount"] == pytest.approx(round(100 * 0.024789, 2), abs=0.01)
+
+
+def test_fx_missing_error_lists_available_directions( session):
+    """issue #87-1：缺目标方向但该年有其他方向时，错误信息列出可用方向（含反向提示）。"""
+    h, j, a1, a2, a3 = _seed(session)
+    session.add(ExchangeRate(fx_from="BEF", fx_to="USD", year=1980, rate=0.02))
+    session.flush()
+    with pytest.raises(ValidationError) as e:
+        transfer(session, source_account_id=a1.id, target_entity_id=h.id,
+                 target_currency="EUR", amount=100, year=1980)
+    msg = str(e.value.detail)
+    assert "BEF→EUR" in msg
+    assert "BEF→USD" in msg      # 可用方向被列出
+
+
 def test_transfer_causing_negative_rejected(session):
     h, j, a1, a2, a3 = _seed(session)
     # 该账户 1981 又有一笔 950 支出 → 1980 划出 60 后 1981 年未拐负

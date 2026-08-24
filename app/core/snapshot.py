@@ -12,9 +12,15 @@ issue #12 修复：
 issue #28 修复：
 - 内部计算全程 Decimal（避免 float 二进制误差累积）
 - 0 值且无流水的年份跳过写入（account/entity/family 三种 scope），避免快照表膨胀
+
+issue #85 修复：
+- 净值口径对齐 §19.4：净值 = 银行 + 专款池合计。投资在途（划出后~赎回前）本金不使
+  family/entity 净值凹陷——entity/family 聚合时经 `pool_in_transit` 加回在途本金；
+  account scope 仍为纯银行余额。
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import delete, func, select
@@ -49,6 +55,39 @@ def _close_year_of(acc: Account) -> int | None:
     if acc.status == "closed" and acc.closed_on is not None:
         return acc.closed_on.year
     return None
+
+
+def pool_in_transit(session: Session, as_of: date) -> dict[tuple[int, str], Decimal]:
+    """各 (entity_id, currency) 截至 as_of 的在途专款池本金（DESIGN §19.4 / issue #85）。
+
+    口径：净值 = 银行 + 专款池合计。投资本金在 `start_date` 划出银行入池（kind='investment'
+    ledger 支出）、至该投资年 12-30 划回（kind='pool' 流入）；**在途期间该笔资金归入专款池
+    而非令净值凹陷**。本实现走 ledger 累计：在途本金 = Σ(kind='investment' 支出) −
+    Σ(kind='pool' 流入)，截止 as_of——按日期天然与银行账目一致，且不依赖 redeemed_at
+    （那只作防重标记，非结算日）。
+
+    返回 {(entity_id, currency): 在途本金}；无在途资金返回空 dict。供
+    - calendar.snapshot_as_of（日级 as-of）与
+    - rebuild_snapshots #5/#4（年）在聚合 family:total / entity:* 时加回，
+    保持「投资期间总净值不变」。
+    """
+    rows = session.execute(
+        select(
+            Account.entity_id,
+            Account.currency,
+            func.coalesce(func.sum(func.coalesce(LedgerEntry.outflow, 0)), 0),
+            func.coalesce(func.sum(func.coalesce(LedgerEntry.inflow, 0)), 0),
+        )
+        .join(Account, Account.id == LedgerEntry.account_id)
+        .where(LedgerEntry.date <= as_of, LedgerEntry.kind.in_(["investment", "pool"]))
+        .group_by(Account.entity_id, Account.currency)
+    ).all()
+    out: dict[tuple[int, str], Decimal] = {}
+    for eid, cur, o, i in rows:
+        net = Decimal(o or 0) - Decimal(i or 0)       # 划出(投资) − 划回(pool本金)
+        if net != 0:
+            out[(int(eid), cur)] = net
+    return out
 
 
 def _account_balance_series(session: Session, account_id: int,
@@ -109,6 +148,14 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
         return stats
     start = from_year if from_year is not None else years_list[0]
 
+    # 0) 专款池在途（issue #85 §19.4）：逐年 12-30 在途本金，供 entity/family 聚合时加回，
+    #    保证年度净值口径 = 银行 + 专款池合计（投资在途不凹陷）。
+    pool_by_year: dict[int, dict[tuple[int, str], Decimal]] = {}
+    for y in years_list:
+        if y < start:
+            continue
+        pool_by_year[y] = pool_in_transit(session, date(y, 12, 30))
+
     # 1) 清旧：仅清 from_year 起（含）的 account/entity/family 三种 scope 行
     scope_prefixes = ("account:", "entity:", "family:")
     session.execute(
@@ -160,7 +207,8 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
         for y in years_list:
             if y < start:
                 continue
-            v = ymap.get(y, _ZERO)
+            # §19.4：净值 = 银行 + 专款池在途；entity 口径把该年 12-30 在途本金加回（issue #85）
+            v = ymap.get(y, _ZERO) + pool_by_year[y].get((eid, cur), _ZERO)
             if v == 0:
                 continue
             session.add(Snapshot(
@@ -188,6 +236,14 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
             if rate is None:
                 continue                                 # 汇率缺失 → 不计入
             family_usd = family_usd + v * rate
+            any_contribution = True
+        # §19.4：净值 = 银行 + 专款池在途；family:total 补回该年 12-30 在途本金（issue #85）。
+        # 在途本金按主体×币种记（account 银行余额已含划出凹陷，这里加回对冲）。
+        for (eid, cur), amt in pool_by_year[y].items():
+            rate = _usd_rate(session, cur, y)
+            if rate is None:
+                continue                                 # 汇率缺失 → 不计入
+            family_usd = family_usd + amt * rate
             any_contribution = True
         # issue #28：family_usd=0 跳过（避免家族层面多年 0 值行膨胀）
         if not any_contribution or family_usd == 0:

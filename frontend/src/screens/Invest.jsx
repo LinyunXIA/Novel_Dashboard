@@ -8,16 +8,27 @@ const RISK = ['R1', 'R2', 'R3', 'R4', 'R5']
 export default function Invest() {
   const regions = useFetch('/api/v1/returns/regions')
   const ents = useFetch('/api/v1/entities?page_size=200')
+  const accts = useFetch('/api/v1/accounts?page_size=500')      // issue #87-2：币种下拉
   const inv = useFetch('/api/v1/investments')
 
   const [form, setForm] = useState({
     year: 1989, region: '欧洲', risk_lvl: 'R3', start_date: '1989-06-30',
-    allocs: [{ entity_id: '', currency: 'BEF', amount: '', all: false }],
+    allocs: [{ entity_id: '', currency: '', amount: '', all: false }],
   })
   const [localErr, setLocalErr] = useState(null)
 
   const regionMap = regions.data || {}
   const entityOpts = (ents.data?.items || []).filter(e => e.type === 'person' || e.type === 'company')
+  // issue #87-2：币种可选来自该主体真实账户池（active，排除关池只读终态 §6.6）
+  const currenciesFor = (eid) => {
+    const n = Number(eid)
+    if (!n) return []
+    const curMap = {}
+    for (const a of (accts.data?.items || [])) {
+      if (a.entity_id === n && a.status === 'active' && !curMap[a.currency]) curMap[a.currency] = true
+    }
+    return Object.keys(curMap)
+  }
 
   const submit = useDataOp(() => inv.refresh())
   const redeem = useDataOp(() => inv.refresh())
@@ -27,6 +38,12 @@ export default function Invest() {
   const setAlloc = (i, k, v) => setForm(f => ({
     ...f, allocs: f.allocs.map((a, idx) => idx === i ? { ...a, [k]: v } : a),
   }))
+  // issue #87-2：选中主体后自动填首个可用币种（避免自由文本拼错大小写落服务端才报无账户）
+  const pickEntity = (i, eid) => {
+    const cs = currenciesFor(eid)
+    setAlloc(i, 'entity_id', eid)
+    setAlloc(i, 'currency', cs[0] || '')
+  }
   const addAlloc = () => setForm(f => ({ ...f, allocs: [...f.allocs, { entity_id: '', currency: '', amount: '', all: false }] }))
   const delAlloc = (i) => setForm(f => ({ ...f, allocs: f.allocs.filter((_, idx) => idx !== i) }))
 
@@ -74,12 +91,15 @@ export default function Invest() {
           <div className="label" style={{ marginTop: 10 }}>分配（主体 × 币种 × 金额 / $全部）</div>
           {form.allocs.map((a, i) => (
             <div key={i} className="alloc-row">
-              <select value={a.entity_id} onChange={e => setAlloc(i, 'entity_id', e.target.value)} style={{ flex: 1 }}>
+              <select value={a.entity_id} onChange={e => pickEntity(i, e.target.value)} style={{ flex: 1 }}>
                 <option value="">—主体—</option>
                 {entityOpts.map(e => <option key={e.id} value={e.id}>{e.type}:{e.name}</option>)}
               </select>
-              <input placeholder="币种" value={a.currency} style={{ width: 76 }}
-                onChange={e => setAlloc(i, 'currency', e.target.value)} />
+              <select value={a.currency} style={{ width: 90 }}
+                onChange={e => setAlloc(i, 'currency', e.target.value)}>
+                <option value="">币种</option>
+                {currenciesFor(a.entity_id).map(c => <option key={c}>{c}</option>)}
+              </select>
               <input type="number" placeholder="金额" value={a.amount} disabled={a.all} style={{ width: 90 }}
                 onChange={e => setAlloc(i, 'amount', e.target.value)} />
               <label className="chk"><input type="checkbox" checked={a.all}
