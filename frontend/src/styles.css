@@ -50,3 +50,31 @@ table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8
 th { text-align: left; color: var(--muted); font-weight: 550; padding: 6px 8px; border-bottom: 1px solid var(--axis); }
 td { padding: 6px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
 .num { text-align: right; }
+
+/* F-P1 表单 / 图谱 / 操作模板 */
+.form { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-2); }
+.flabel { font-size: 11.5px; color: var(--ink-2); }
+.field input, .field select {
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--axis);
+  background: var(--page); color: var(--ink); font-size: 13px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+button.primary { background: var(--ink); color: var(--page); border: 1px solid var(--ink);
+  padding: 8px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+button.primary:disabled { opacity: .45; cursor: not-allowed; }
+button.ghost { background: var(--card); border: 1px solid var(--border); color: var(--ink-2);
+  padding: 5px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+button.ghost:hover { color: var(--ink); }
+.alloc-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.alloc-row select, .alloc-row input { padding: 6px 8px; border: 1px solid var(--axis);
+  border-radius: 7px; background: var(--page); color: var(--ink); font-size: 12.5px; }
+.chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.errbox { background: color-mix(in srgb, var(--crit) 10%, var(--page));
+  border: 1px solid color-mix(in srgb, var(--crit) 45%, transparent); color: var(--crit);
+  padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+.warn { color: var(--warn); font-size: 12px; }
+.result { margin-top: 8px; font-size: 13px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--s3) 12%, var(--page)); border: 1px solid color-mix(in srgb, var(--s3) 40%, transparent); }
+.legend { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+.muted { color: var(--muted); }
