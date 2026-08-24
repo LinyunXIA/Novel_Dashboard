@@ -460,5 +460,24 @@ def finance_backfill(env: str = typer.Option("dev", "--env")):
                    f"（跳过 收入{r['skipped_income']}/支出{r['skipped_expense']}）")
 
 
+@app.command()
+def events_movie(env: str = typer.Option("dev", "--env")):
+    """F-P2-01 事件·电影导入：扫 基准/事件/电影/ → 解析 → 落库 movie_event（幂等 upsert）。"""
+    from app.ingest.parsers.event_movie import parse_event_movie
+    from app.ingest.writer import import_movie_events
+    cfg = get_config(env)
+    base = cfg.source_dir / "基准" / "事件" / "电影"
+    if not base.exists():
+        typer.echo(f"[{env}] 无电影事件目录: {base}")
+        return
+    all_records = []
+    for f in sorted(base.glob("*.md")):
+        all_records.extend(parse_event_movie(f))
+    with _session_for(env) as s:
+        r = import_movie_events(s, all_records)
+        s.commit()
+    typer.echo(f"[{env}] 电影事件导入 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
+
+
 if __name__ == "__main__":
     app()

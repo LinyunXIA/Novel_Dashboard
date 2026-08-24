@@ -3,6 +3,18 @@
 本项目为网文创作数据 Dashboard（Postgres + FastAPI + ingest + React）。  
 开发进度跟踪以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单为准。
 
+## [Phase 2 · F-P2-01] — 2026-08-24
+
+**事件·电影：导入 + 不关联 + 同币种 UI 手动关联**（DESIGN §19.6）
+
+- `movie_event` 表 + `event_movie` 解析器（best-effort 正则，8 部：泰坦尼克投资90M/本金90M@1998-09/分红376.74M 全中）+ `ingest events-movie` 导入。
+- 移除解析 Phase 2 早 return：事件类别真正进到 parser（event_stock 仍为桩，留 F-P2-02）。
+- API `GET/POST /movie-events(+/link/unlink)`：关联写 投资出/本金返还/分红 ledger（幂等），解关联只清标记不动历史账。
+- 前端「电影事件」屏（未关联列表 + 同币种账户关联 + 已关联/解关联）。
+- `tests/test_movie_event.py`（解析/upsert/phase2 放行/link 幂等）；全量 299 passed。
+
+---
+
 ## [Phase 2 · F-P2-03] — 2026-08-24
 
 **事件·股票：分拆/并购三形态成本随链引擎**（DESIGN §19.6）

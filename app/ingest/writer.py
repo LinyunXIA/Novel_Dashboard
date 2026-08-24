@@ -637,3 +637,18 @@ def backfill_finance_entries(session: Session) -> dict:
                                  label="家庭支出", source="file"))
         stats["expense"] += 1
     return stats
+
+def import_movie_events(session: Session, records: list[dict]) -> dict:
+    """F-P2-01：电影事件落库（幂等 upsert by title+source_file）。"""
+    from app.model.movie_event import MovieEvent
+    stats = {"inserted": 0, "skipped": 0}
+    for r in records:
+        dup = session.execute(select(MovieEvent.id).where(
+            MovieEvent.title == r["title"],
+            MovieEvent.source_file == r["source_file"]).limit(1)).scalar_one_or_none()
+        if dup is not None:
+            stats["skipped"] += 1
+            continue
+        session.add(MovieEvent(**{k: v for k, v in r.items()}))
+        stats["inserted"] += 1
+    return stats
