@@ -10,6 +10,7 @@ from app.model.derived import (
     DateRule, ExchangeRate, Investment, InvestmentAlloc, Notification, RecomputeJob,
     Relationship, ReturnCurve, Snapshot, SourceFileVersion, TimelineEvent, UserDataOverlay,
 )
+from app.model.labor import LaborCpiGrowth, LaborTaxBenchmark, LaborWageBenchmark
 
 __all__ = [
     "Base",
@@ -18,4 +19,5 @@ __all__ = [
     "ReturnCurve", "ExchangeRate", "DateRule", "TimelineEvent", "Relationship",
     "UserDataOverlay", "Snapshot", "SourceFileVersion", "RecomputeJob", "Notification",
     "Investment", "InvestmentAlloc",
+    "LaborWageBenchmark", "LaborCpiGrowth", "LaborTaxBenchmark",
 ]

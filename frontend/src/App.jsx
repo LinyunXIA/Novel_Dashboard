@@ -7,6 +7,7 @@ import Finance from './screens/Finance'
 import Graph from './screens/Graph'
 import { ErrorBox } from './screens/ui'
 import { useDataOp } from './screens/useDataOp'
+import LaborCost from './screens/LaborCost'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -14,6 +15,7 @@ const TABS = [
   { key: 'transfer', label: '划拨/换汇' },
   { key: 'returns', label: '收益曲线' },
   { key: 'finance', label: '财务收支' },
+  { key: 'labor', label: '加薪规则/用工成本' },
   { key: 'persons', label: '人物图谱' },
   { key: 'companies', label: '公司图谱' },
   { key: 'graphall', label: '全图谱' },
@@ -60,6 +62,7 @@ export default function App() {
         {active === 'transfer' && <Transfer />}
         {active === 'returns' && <Returns />}
         {active === 'finance' && <Finance />}
+        {active === 'labor' && <LaborCost />}
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}

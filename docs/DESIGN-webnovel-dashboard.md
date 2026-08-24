@@ -593,7 +593,8 @@ class Importer(Protocol):
 ```
 - 配置 provider + 凭据（本地）；结果出现在「导入状态」屏；失败进入需人工处理。
 - **凭据存放**：外部 API 凭据放本地 `secrets.local.yaml`（**不入 git、不入 DB**）；adapter 只通过配置键读取，不在日志或 notification 中泄露。
-- **实现（API① · F-P1-05）**：`app/ingest/importers/company_info.py`（login→fetch `/public/companies`→按 `(entity_type='company', name)` 只增不减 upsert，source=`external-api`；股权结构→公司/自然人股东建实体 + `rel_type='holds'` 边，有效期窗取开停业年份；开停业日期/外部ID/持股比落 `entity.fields` JSONB，不开迁移）。凭据 `secrets.local.yaml` + 环境变量 `EXTERNAL_API_BASE_URL / EXTERNAL_API_USER / EXTERNAL_API_PASSWORD`，URL per-env 默认 dev/test 7273、prod 7274。触发：`POST /api/v1/graph/companies/import`（F-U7 公司图谱页按钮）。
+- **实现（API① · F-P1-05）**：`app/ingest/importers/company_info.py`（login→fetch `/public/companies`→按 `(entity_type='company', name)` 只增不减 upsert，source=`external-api`；股权结构→公司/自然人股东建实体 + `rel_type='holds'` 边；开停业日期/外部ID/持股比落 `entity.fields` JSONB）。凭据 `secrets.local.yaml` + 环境变量覆盖，URL per-env 默认 dev/test 7273、prod 7274。触发 `POST /api/v1/graph/companies/import`。
+- **实现（API② 用工成本 · F-P1-10）**：`app/core/labor_cost.py`（本地基准 + 税率公式执行器 + 逐岗位成本；Level/外包/晋级规则表，也是「加薪规则」屏数据源）+ `app/ingest/importers/positions.py`（`GET /public/positions?year=` 拉流入岗岗位 → 逐岗位算成本 → 每公司×年 `finance_entry(entity_kind='company', kind='expense')` 落账）。基准三表 `labor_wage_benchmark / labor_cpi_growth / labor_tax_benchmark`（`python -m app.ingest.main labor-baseline`）。税率公式细节只在后台（含说明文字隐藏项：比利时 CP200 十三薪/双倍假期、英国学徒税 >£3m、日本固定奖金 3 月等）；UI 只展示加薪规则。端点 `POST /labor-cost/compute`、`GET /labor-cost/rules|results`。
 
 ---
 
@@ -864,6 +865,7 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜API + 屏已上线；生产写入链路已接通（UI 派生 invest/redeem + ingest 镜像 source=file，issue #80），真实库 ingest 验收后再 ✅；编年史同步口径见 §19 决策备注（issue #86） | §5 | 🟨 |
 | F-P1-08 | **统一搜索** | LLM+embedding RAG（omlx 本地）条目检索装配 + serve 后处理｜⚠ 阻塞于本地 omlx 不可用，维持待续 | §18 | ⬜ |
 | F-P1-09 | 四类 UI 改数据操作 | 统一模板：年份×池 + 后传重算 + 失败整体拒绝 + overlay 同步｜useDataOp 钩子已用于投资/划拨屏 | §6.8/§19 | ✅ |
+| F-P1-10 | **用工成本·加薪规则** | 本地基准（工资/CPI/税率）+ 外部 API② 在岗岗位导入 → 逐岗位算用工成本 → 每公司 finance_entry 落账；「加薪规则/用工成本」屏展示加薪规则 + 拉岗位计算 + 结果表｜app/core/labor_cost.py + ingest/importers/positions.py；税率公式细节只在后台（含比利时十三薪/双倍假期、日本 3 月奖金等隐藏项） | §13 | ✅ |
 
 ### Phase 2 —— 事件 / 增强
 

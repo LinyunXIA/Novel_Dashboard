@@ -404,5 +404,28 @@ def snapshot(env: str = typer.Option("dev", "--env"),
         typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
 
 
+@app.command()
+def labor_baseline(env: str = typer.Option("dev", "--env"),
+                   office: str = typer.Option("", "--office", help="仅采集指定税率 office（缺省全部）")):
+    """用工成本基准落库（API② · F-P1-10）：工资(10区)+CPI(10区)+税率(12 office)。
+
+    从 Design_Folder 解析三份基准 → labor_wage_benchmark/labor_cpi_growth/labor_tax_benchmark。
+    """
+    from app.config import get_config
+    from app.ingest.labor_baseline import import_labor_baseline, import_wage, import_cpi, import_tax
+    cfg = get_config(env)
+    with _session_for(env) as s:
+        if office:
+            r = import_tax(s, cfg.source_dir, log=typer.echo, office_list=[office])
+        else:
+            r = import_labor_baseline(s, cfg.source_dir, log=typer.echo)
+        s.commit()
+    for k, v in r.items():
+        if isinstance(v, dict):
+            typer.echo(f"[{env}] {k}: {v}")
+        else:
+            typer.echo(f"[{env}] {k}: {v}")
+
+
 if __name__ == "__main__":
     app()
