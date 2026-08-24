@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.api.labor_cost import router as labor_cost_router
+from app.api.restricted import router as restricted_router
 from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
 from app.core.graph import all_graph, company_graph, person_graph
@@ -33,6 +34,7 @@ from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream
 app = FastAPI(title="Novel Dashboard API", version="0.1")
 app.include_router(ui_ops_router)
 app.include_router(labor_cost_router)
+app.include_router(restricted_router)
 
 # issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
 # 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。
