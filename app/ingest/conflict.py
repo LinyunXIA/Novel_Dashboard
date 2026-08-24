@@ -1,11 +1,17 @@
 """导入前冲突检测 hard-block（DESIGN §11.4）。
 
-在写库前比对 新记录 vs DB 既有相关记录：
-- 金额冲突(H2)：同 entity×stream_type×currency×year 已有不同金额 → 拦（不入库）
-- 余额断链(H4)：账户追加流水时，新首笔前值 ≠ 已存在末余额 → 拦
-- 断链/引用(H5)：回引不存在的 entity/account → 拦
+在写库前比对 新记录 vs DB 既有相关记录。严重度两级（issue #72 对齐 §11.4）：
 
-命中冲突：抛 ConflictError，由上层将整文件标为"需人工"、不入库。
+**挡（hard-block，problems）**——该文件不入库：
+- 金额冲突(H2)：同 entity×stream_type×currency×year 已有不同金额
+- 余额断链(H4)：账户追加流水时，新首笔前值 ≠ 已存在末余额
+- 汇率闭合(H3)：新汇率使 A→B→C ≠ A→C（>0.5%）
+
+**标（soft warning，warnings）**——入库但在 ingest_report 高亮：
+- 时间线对齐(H1)：收益年份无任何编年史条目（增量瘦版）
+- 断链/引用(H5)：回引不存在的 entity
+
+命中冲突由上层将整文件标为"需人工"、不入库；软警告随导入输出。
 """
 from __future__ import annotations
 
@@ -27,8 +33,14 @@ class ConflictError(Exception):
 
 @dataclass
 class ConflictReport:
+    """单文件冲突检测报告。
+
+    - problems：硬冲突（§11.4「挡」），任一命中 → 整文件不入库
+    - warnings：软警告（§11.4「标」），入库但需在报告中高亮
+    """
     file: str
     problems: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
 
     @property
     def blocked(self) -> bool:
@@ -36,6 +48,13 @@ class ConflictReport:
 
     def add(self, rule: str, line: object, desc: str):
         self.problems.append({"rule": rule, "line": line, "detail": desc})
+
+    def add_warning(self, rule: str, line: object, desc: str):
+        self.warnings.append({"rule": rule, "line": line, "detail": desc})
+
+    def merge(self, other: "ConflictReport") -> None:
+        self.problems.extend(other.problems)
+        self.warnings.extend(other.warnings)
 
 
 def _resolve_entity_id(session: Session, name: str | None) -> int | None:
@@ -67,13 +86,13 @@ def _resolve_entity_id(session: Session, name: str | None) -> int | None:
 def check_income_stream_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
     """income_stream 金额冲突（H2）：同 (entity, stream_type, currency, year) 已存在且金额不同 → 拦。"""
     rep = ConflictReport(file)
-    from app.model import Entity
     for rec in records:
         # issue #68：键存在值为 None 时 .get 的 default 不生效 → 显式 or 回退
         ent_name = rec.get("entity_name") or rec.get("holder")
         ent = _resolve_entity_id(session, ent_name)
         if ent is None:
-            rep.add("H5-引用", rec, f"entity 不存在: {ent_name}")
+            # issue #72：H5 引用失配按 §11.4 定级为「标」（soft）
+            rep.add_warning("H5-引用", rec, f"entity 不存在: {ent_name}")
             continue
         st = rec.get("stream_type")
         cur = rec.get("currency")
@@ -91,6 +110,26 @@ def check_income_stream_conflict(session: Session, file: str, records: list[dict
         ).scalar_one_or_none()
         if existing is not None and existing != amt:
             rep.add("H2-金额", year, f"{st} {cur} {year} 既有 {existing} ≠ 新 {amt}")
+    return rep
+
+
+def check_timeline_alignment(session: Session, file: str, records: list[dict]) -> ConflictReport:
+    """H1 增量瘦版（issue #72）：新收益年份在 timeline_event 无任何条目 → 标。
+
+    §11.4「时间线对齐」的导入侧实现：不比对具体事件，只查年份覆盖盲区；
+    全量跨文件 JOIN 仍归 health.py（导入后汇总视图）。
+    """
+    rep = ConflictReport(file)
+    from app.model import TimelineEvent
+    years = sorted({int(r["year"]) for r in records if r.get("year") is not None})
+    if not years:
+        return rep
+    covered = set(session.execute(
+        select(TimelineEvent.event_year).where(TimelineEvent.event_year.in_(years))
+    ).scalars().all())
+    for y in years:
+        if y not in covered:
+            rep.add_warning("H1-时间线", y, f"{y} 无任何时间线事件（可能缺编年史条目）")
     return rep
 
 
@@ -113,11 +152,10 @@ def check_account_balance_conflict(session: Session, file: str,
 def check_bank_import_conflict(session: Session, file: str, segments: list[dict]) -> ConflictReport:
     """银行台账导入前冲突（issue #15）：H5 引用 + H4 余额断链。
 
-    - H5：segment 持有人映射 entity 不存在 → 拦
+    - H5：segment 持有人映射 entity 不存在 → 标（issue #72：soft，§11.4 定级）
     - H4：segment 命中已存在 account 且首笔余额 ≠ 既有末余额 → 拦
     新建账户（无既有余额）不构成 H4 断链。返回 ConflictReport 供上层原样输出明细。
     """
-    from app.model import Entity
     rep = ConflictReport(file)
     for seg in segments:
         holder = seg.get("holder")
@@ -128,7 +166,8 @@ def check_bank_import_conflict(session: Session, file: str, segments: list[dict]
             continue                                  # 缺持有人/无流水的 segment 归 writer 跳过，非阻断
         ent = _resolve_entity_id(session, holder)
         if ent is None:
-            rep.add("H5-引用", seg.get("seg_title") or holder, f"entity 不存在: {holder}")
+            rep.add_warning("H5-引用", seg.get("seg_title") or holder,
+                            f"entity 不存在: {holder}")
             continue
         if not cur:
             continue
@@ -156,6 +195,62 @@ def is_authority_fx(file: str) -> bool:
     return any(f in file for f in AUTHORITY_FX_FILES)
 
 
+def _rate_map(session: Session, staged: list[dict]) -> dict[tuple[str, str], dict]:
+    """汇率视图：DB ∪ 本批暂存（暂存优先），键 (from,to) → {year_or_0: rate}。"""
+    from app.model import ExchangeRate
+    out: dict[tuple[str, str], dict] = {}
+    for r in session.execute(select(ExchangeRate)).scalars().all():
+        out.setdefault((r.fx_from, r.fx_to), {})[r.year or 0] = float(r.rate)
+    for rec in staged:
+        f, t, y = rec.get("fx_from"), rec.get("fx_to"), rec.get("year")
+        if f and t and rec.get("rate") is not None:
+            out.setdefault((f, t), {})[y or 0] = float(rec["rate"])
+    return out
+
+
+def check_fx_chain_closure(session: Session, file: str, records: list[dict]) -> ConflictReport:
+    """H3 链式闭合增量预检（issue #72）：新汇率参与下 A→B→C ≠ A→C（>0.5%）→ 挡。
+
+    视图 = DB 现有汇率 ∪ 本批暂存；仅评估两跳链 vs 直接汇率，
+    全量闭合校验仍归 health.check_h3_fx_closure（导入后）。
+    """
+    rep = ConflictReport(file)
+    if not records:
+        return rep
+    pairs = _rate_map(session, records)
+
+    def _val(f: str, t: str, y: int | None):
+        d = pairs.get((f, t))
+        if not d:
+            return None
+        return d.get(y or 0, d.get(0))
+
+    seen: set[tuple] = set()
+    for rec in records:
+        a, b, y = rec.get("fx_from"), rec.get("fx_to"), rec.get("year")
+        if not (a and b):
+            continue
+        direct = _val(a, b, y)
+        if direct is None or direct == 0:
+            continue
+        # 遍历所有 a→x→b 两跳链
+        for (p, q), _ in pairs.items():
+            if p != a or q == b or q == a:
+                continue
+            v1 = _val(p, q, y)
+            v2 = _val(q, b, y)
+            if v1 is None or v2 is None or v1 * v2 == 0:
+                continue
+            key = (a, b, q, y)
+            if key in seen:
+                continue
+            seen.add(key)
+            if abs(v1 * v2 - direct) / abs(direct) > 0.005:
+                rep.add("H3-汇率闭合", y,
+                        f"{a}→{q}→{b} 链式 {v1*v2:.4f} ≠ 直接 {direct}（{a}→{b} @{y or '常量'}）")
+    return rep
+
+
 def check_fx_authority_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
     """其它汇率文件导入前：同一 (fx_from, fx_to, year) 若权威表已有且值不同 → 冲突(hard-block)。
 
@@ -169,7 +264,6 @@ def check_fx_authority_conflict(session: Session, file: str, records: list[dict]
         f, t, y = rec.get("fx_from"), rec.get("fx_to"), rec.get("year")
         if not (f and t):
             continue
-        # 查权威值（source 来自权威文件——这里用 exchange_rate 里已存在的那一行；权威已入库）
         auth = session.execute(
             select(ExchangeRate.rate).where(
                 ExchangeRate.fx_from == f, ExchangeRate.fx_to == t, ExchangeRate.year == y)

@@ -9,7 +9,7 @@ SQLAlchemy Numeric 列读出来本就是 Decimal，原代码用 float() 转换�
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -69,10 +69,15 @@ def recompute_all(session: Session, from_year: int, reason: str = "manual") -> l
 
 
 def register_job(session: Session, start_year: int, reason: str, files: Optional[list] = None) -> int:
-    """写入 recompute_job（DESIGN §9.3）并返回 job id。"""
+    """写入 recompute_job（DESIGN §9.3）并返回 job id。
+
+    issue #72：created_at/finished_at 用 datetime.now()（列是 timestamptz，
+    原 date.today() 依赖驱动隐式转换）。
+    """
     from app.model import RecomputeJob
+    now = datetime.now()
     job = RecomputeJob(start_year=start_year, reason=reason, files=files or [],
-                       status="done", created_at=date.today(), finished_at=date.today())
+                       status="done", created_at=now, finished_at=now)
     session.add(job)
     session.flush()
     return int(job.id)
