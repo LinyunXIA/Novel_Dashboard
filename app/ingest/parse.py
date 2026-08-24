@@ -10,6 +10,8 @@ from pathlib import Path
 from app.ingest import parsers
 from app.ingest.detect import detect, scan_dir
 from app.ingest.parsers import ParseError
+from app.ingest.parsers.event_movie import parse_event_movie
+from app.ingest.parsers.event_stock import parse_event_stock
 
 
 @dataclass
@@ -72,6 +74,9 @@ _PARSERS = {
     "income_shop": parsers.parse_income_shop,
     "salary": parsers.parse_salary,
     "household_expense": parsers.parse_household_expense,
+    # Phase2 占位（DESIGN §6.1 / §19.6）：当前 Phase1 跳过，Parser 已就绪供 Phase2 启用
+    "event_movie": parse_event_movie,
+    "event_stock": parse_event_stock,
 }
 
 
