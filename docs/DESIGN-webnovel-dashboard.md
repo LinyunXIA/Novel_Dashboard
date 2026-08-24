@@ -860,7 +860,7 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | F-P1-02 | **投资** | 专款池（分币种）走账 + 服务层校验（as-of/R起始年/年度幂等/覆盖连锁拒绝）｜§19.3 校验 422/409 + 划出(kind=investment)/赎回(pool+investment_income) 走账 | §19.3 | ✅ |
 | F-P1-03 | **划拨/换汇** | 划拨(同币)/换汇(按年汇率) + 转出向后全链不破负拒绝 + 编年史同步｜core/transfer.py，同币两笔净0、跨币缺该年汇率 422；破负预检为年末 as-of 口径（issue #93 §19.5 注记） | §19.5 | ✅ |
 | F-P1-04 | **人物图谱** | 人—人/人—公司关系可视化（ECharts graph）｜core/graph.py + SVG 环形静态布局（非 ECharts，交互留待）；issue #84 补 `/graph/all` 全量图谱（节点按 entity_type 形状/颜色区分，跨类型边虚线标出）覆盖 PRD P1-1 | §1/§14 | ✅ |
-| F-P1-05 | **公司图谱** | 公司—公司关系 + 外部 API①② 导入（只增不减 + status）｜**外部 API① 已实现**（`POST /graph/companies/import`，公司图谱页按钮触发，§13.3）；API②（用工成本）仍待文档 | §13 | 🟨 |
+| F-P1-05 | **公司图谱** | 公司—公司关系 + 外部 API①② 导入（只增不减 + status）｜**外部 API① 已实现**（`POST /graph/companies/import`，公司图谱页按钮触发，§13.3）+ **API② 用工成本已实现**（F-P1-10，`labor_cost.py` + `positions.py`，公司图谱/用工成本一体化） | §13 | ✅ |
 | F-P1-06 | **各国收益曲线** | return_curve（R1–R5）对比渲染 + 地区起始年下限｜GET /returns/regions + SVG 五线对比 | §14 | ✅ |
 | F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜API + 屏已上线；生产写入链路已接通（UI 派生 invest/redeem + ingest 镜像 source=file，issue #80），真实库 ingest 验收后再 ✅；编年史同步口径见 §19 决策备注（issue #86） | §5 | 🟨 |
 | F-P1-08 | **统一搜索** | LLM+embedding RAG（omlx 本地）条目检索装配 + serve 后处理｜已实现：`search_index` pgvector + 提取器 + `search-index` CLI 索引 + `GET /api/v1/search`（embed→余弦 top-k→LLM 装配→serve 后处理；omxl 未起 503 降级）。EMBED_MODEL 实测 4096 维（ivfflat>2000 不可用→精确扫描） | §18 | ✅ |
