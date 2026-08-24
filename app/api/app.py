@@ -21,13 +21,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
+from app.core.graph import company_graph, person_graph
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
-from app.model import (Account, Entity, ExchangeRate, IncomeStream, LedgerEntry,
-                       Notification, ReturnCurve, Snapshot, TimelineEvent)
+from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream,
+                       LedgerEntry, Notification, ReturnCurve, Snapshot, TimelineEvent)
 
 app = FastAPI(title="Novel Dashboard API", version="0.1")
+app.include_router(ui_ops_router)
 
 # issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
 # 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。
@@ -276,6 +279,85 @@ def get_timeline_event(event_id: int, db: Session = Depends(get_db)):
             "title": t.title, "note": t.note, "decade": t.decade,
             "overlay": t.overlay,
             "source_file": t.source_file, "source_line": t.source_line}
+
+
+# ---------------- 财务收支（F-P1-07 · DESIGN §5 finance_entry） ----------------
+@app.get(API_PREFIX + "/finance-entries")
+def list_finance_entries(
+    entity_id: Optional[int] = None,
+    entity_kind: Optional[str] = None,
+    kind: Optional[str] = None,
+    year: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """财务收支列表（实体必填语义：所有行都挂 entity；过滤 entity/entity_kind/kind/year）。
+
+    entity_kind 缺省时按 entity.entity_type 推导填充（asset/family 亦展示，来源仍合法）。
+    """
+    q = select(FinanceEntry)
+    if entity_id:
+        q = q.where(FinanceEntry.entity_id == entity_id)
+    if entity_kind:
+        q = q.where(FinanceEntry.entity_kind == entity_kind)
+    if kind:
+        q = q.where(FinanceEntry.kind == kind)
+    if year:
+        q = q.where(FinanceEntry.year == year)
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(FinanceEntry.year, FinanceEntry.id)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [_fin2dict(r, db) for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+@app.get(API_PREFIX + "/entities/{entity_id}/finance-entries")
+def entity_finance_entries(
+    entity_id: int,
+    kind: Optional[str] = None,
+    year: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """以实体为中心的财务收支浏览（DESIGN §14 finance-entries; §5 实体必填）。"""
+    e = db.get(Entity, entity_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="entity not found")
+    return list_finance_entries(entity_id=entity_id, kind=kind, year=year,
+                                page=page, page_size=page_size, db=db)
+
+
+def _fin2dict(f: FinanceEntry, db: Session) -> dict:
+    # 用 relationship 惰性加载（同 session 内绑定），避免 db.get 遇 detached 实体报错
+    ent = f.entity
+    kind = f.entity_kind or (ent.entity_type if ent else None)
+    return {
+        "id": f.id, "entity_id": f.entity_id,
+        "entity_name": (ent.display_name or ent.name) if ent else None,
+        "entity_kind": kind, "year": f.year, "kind": f.kind,
+        "amount": float(f.amount) if f.amount is not None else None,
+        "currency": f.currency, "label": f.label, "source": f.source,
+    }
+
+
+# ---------------- 图谱（F-P1-04/05 只读 · DESIGN §14 graph） ----------------
+@app.get(API_PREFIX + "/graph/persons")
+def graph_persons(db: Session = Depends(get_db)):
+    """人物图谱只读视图（人—人关系）。"""
+    return person_graph(db)
+
+
+@app.get(API_PREFIX + "/graph/companies")
+def graph_companies(db: Session = Depends(get_db)):
+    """公司图谱只读视图（公司—公司关系）。
+
+    注：外部 API①② 对接（importers）留待外部系统文档后实现（F-P1-05 未完成部分）。
+    """
+    return company_graph(db)
 
 
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
