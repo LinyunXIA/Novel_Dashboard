@@ -57,6 +57,23 @@ def test_region_start_year_lower_bound(session):
                           start_date=date(1988, 5, 1), allocs=[{"entity_id": h.id, "currency": "BEF", "amount": 100}])
 
 
+def test_start_date_cross_year_rejected_issue_93(session):
+    """issue #93：start_date 必须落在 year 年内且不晚于 12-30 结算日，否则 422。"""
+    h, a = _seed(session)
+    base = dict(year=1980, region="欧洲", risk_lvl="R3",
+                allocs=[{"entity_id": h.id, "currency": "BEF", "amount": 100}])
+    with pytest.raises(ValidationError):
+        create_investment(session, start_date=date(1981, 6, 1), **base)  # 跨年到 1981
+    with pytest.raises(ValidationError):
+        create_investment(session, start_date=date(1979, 12, 1), **base)  # 跨年前年
+    with pytest.raises(ValidationError):
+        create_investment(session, start_date=date(1980, 12, 31), **base)  # 结算日(12-30)之后
+    # 边界合法：1-01 与 12-30 结算日本身均可
+    inv = create_investment(session, start_date=date(1980, 12, 30), **base)
+    session.flush()
+    assert inv.start_date == date(1980, 12, 30)
+
+
 def test_year_region_idempotency_conflict(session):
     h, a = _seed(session)
     kw = dict(year=1980, region="欧洲", risk_lvl="R3",

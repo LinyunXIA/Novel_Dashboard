@@ -312,6 +312,12 @@ def create_investment(session: Session, *, year: int, region: str, risk_lvl: str
             f"地区 {region} 起始年不早于 {REGION_START_YEAR[region]}（当前 {year}）")
     if risk_lvl not in ("R1", "R2", "R3", "R4", "R5"):
         raise ValidationError(f"risk_lvl 必须为 R1–R5，得到 {risk_lvl!r}")
+    # issue #93：投资发生日必须落在该投资年份 `year` 内且不晚于该年结算日 12-30，
+    # 否则计息年份（days 按 date(year,12,30)−start_date）与 Investment.year 字段错位、
+    # ledger 划出也与年份不一致。
+    if start_date.year != year or start_date > date(year, 12, 30):
+        raise ValidationError(
+            f"投资发生日 {start_date} 必须落在 {year} 年内且不晚于 {year}-12-30 结算日")
 
     # 2) 年度幂等（issue #81：覆盖须整笔抹除旧写入，避免重输双扣）
     existing = session.execute(
