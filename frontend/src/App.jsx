@@ -8,6 +8,7 @@ import Graph from './screens/Graph'
 import { ErrorBox } from './screens/ui'
 import { useDataOp } from './screens/useDataOp'
 import LaborCost from './screens/LaborCost'
+import Search from './screens/Search'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -66,7 +67,8 @@ export default function App() {
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
-        {(active === 'timeline' || active === 'search' || active === 'health') && (
+        {active === 'search' && <Search />}
+        {(active === 'timeline' || active === 'health') && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
         )}
       </main>

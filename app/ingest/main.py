@@ -427,5 +427,24 @@ def labor_baseline(env: str = typer.Option("dev", "--env"),
             typer.echo(f"[{env}] {k}: {v}")
 
 
+@app.command()
+def search_index(env: str = typer.Option("dev", "--env"),
+                 source: str = typer.Option("", "--source", help="仅索引指定 source（缺省全部）")):
+    """统一搜索索引构建（F-P1-08 · DESIGN §18）：条目→embedding 落 pgvector。
+
+    omlx 未启动时抛错（LlmUnavailable）并提示，不落脏索引。后台/增量慢跑。
+    """
+    from app.search.indexer import build_index
+    from app.core.llm import LlmUnavailable
+    with _session_for(env) as s:
+        try:
+            r = build_index(s, source or None, log=typer.echo)
+            s.commit()
+        except LlmUnavailable as e:
+            typer.secho(f"✗ {e}（请先启动本地 omlx:8000）", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        typer.echo(f"[{env}] 索引完成：{r}")
+
+
 if __name__ == "__main__":
     app()
