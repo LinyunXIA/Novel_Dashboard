@@ -89,6 +89,61 @@ def test_coverage_chain_negative_rejected(session):
                           allocs=[{"entity_id": h.id, "currency": "BEF", "amount": 50}])
 
 
+def test_batch_same_pool_accumulated_over_pool_rejected(session):
+    """审计修复：批内同主体同币种多笔 alloc 按累计占用校验，两笔各自合法、合计超额须拦。"""
+    h, a = _seed(session, cash=1000)
+    allocs = [{"entity_id": h.id, "currency": "BEF", "amount": 600},
+              {"entity_id": h.id, "currency": "BEF", "amount": 600}]  # 合计 1200 > 1000
+    with pytest.raises(ValidationError) as e:
+        create_investment(session, year=1980, region="欧洲", risk_lvl="R3",
+                          start_date=date(1980, 5, 1), allocs=allocs)
+    assert "批内累计" in e.value.detail
+
+
+def test_batch_same_pool_cumulative_negative_simulation(session):
+    """审计修复：破负模拟也按批内累计口径——单笔各自不破负、合计中途拐负须拦。
+
+    1300 初始；1981-06-01 支出 500。各投 600：单独模拟均不破负（700−500=200），
+    累计 1200 则 100−500 = −400 → 必须整体拒绝。
+    """
+    h, a = _seed(session, cash=1300)
+    session.add(LedgerEntry(account_id=a.id, date=date(1981, 6, 1),
+                            outflow=500, kind="expense", reason="年中支出"))
+    session.flush()
+    allocs = [{"entity_id": h.id, "currency": "BEF", "amount": 600},
+              {"entity_id": h.id, "currency": "BEF", "amount": 600}]
+    with pytest.raises(ValidationError):
+        create_investment(session, year=1980, region="欧洲", risk_lvl="R3",
+                          start_date=date(1980, 6, 1), allocs=allocs)
+
+
+def test_batch_is_all_twice_second_rejected(session):
+    """重复「全部」：第二笔剩余 ≤ 0 → 422（批内已占口径）。"""
+    h, a = _seed(session, cash=800)
+    allocs = [{"entity_id": h.id, "currency": "BEF", "is_all": True},
+              {"entity_id": h.id, "currency": "BEF", "is_all": True}]
+    with pytest.raises(ValidationError) as e:
+        create_investment(session, year=1980, region="欧洲", risk_lvl="R3",
+                          start_date=date(1980, 5, 1), allocs=allocs)
+    assert "必须 > 0" in e.value.detail
+
+
+def test_redeem_before_settlement_409(session):
+    """审计修复：未到年末结算日（当年 12-30）不可赎回（409）。"""
+    h, a = _seed(session, cash=1000)
+    future = date.today().year + 10
+    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=future, rate=10.0))
+    session.flush()
+    inv = create_investment(session, year=future, region="欧洲", risk_lvl="R3",
+                            start_date=date(future, 6, 1),
+                            allocs=[{"entity_id": h.id, "currency": "BEF", "amount": 100}])
+    session.flush()
+    with pytest.raises(ConflictError) as e:
+        redeem_investment(session, inv)
+    assert e.value.status == 409
+    assert "结算日" in e.value.detail
+
+
 def _create(session, *, start="1980-05-01", amount=100, is_all=False):
     h, a = _seed(session)
     inv = create_investment(session, year=1980, region="欧洲", risk_lvl="R3",

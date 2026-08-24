@@ -235,12 +235,18 @@ def redeem_investment(session: Session, investment: Investment) -> dict:
     并落 finance_entry（source='ui'，issue #80）。余额 None 交由 recompute 回填。
 
     防重（issue #82）：按本笔 redeemed_at 判重，非空 → 409；不再按年扫全库，同年多地区互不阻塞。
+    审计修复：年末结算 gate——未到当年 12-30 拒绝赎回（409），防误触提前锁定全年收益
+    （历史年份结算日已过，不受影响）。
     """
     if investment.redeemed_at is not None:
         raise ConflictError(f"该投资 {investment.region} {investment.year} 已赎回，勿重复")
+    settlement = date(investment.year, 12, 30)
+    if date.today() < settlement:
+        raise ConflictError(
+            f"该投资 {investment.region} {investment.year} 未到年末结算日 {settlement}，"
+            f"不可提前赎回")
     interests = compute_interest(session, investment)
     tag = _inv_tag(investment)
-    settlement = date(investment.year, 12, 30)
     made = 0
     for it in interests:
         acc = _primary_account(session, it["entity_id"], it["currency"])
@@ -331,29 +337,39 @@ def create_investment(session: Session, *, year: int, region: str, risk_lvl: str
             f"该年 {year} 地区 {region}({REGION_COUNTRY[region]}) 无 R{risk_lvl} 收益值")
 
     # 4) 每 alloc：余额校验 + 落账
+    # 审计修复：批内同主体同币种多笔 alloc 按「累计占用」校验——as-of 上限、破负模拟
+    # 都以 committed 累计额为准，杜绝两笔各自合法、合计超额/中途拐负漏拦。
     inv = Investment(year=year, region=region, risk_lvl=risk_lvl,
                      start_date=start_date, locked=True)
     session.add(inv)
     session.flush()
+    committed: dict[tuple[int, str], Decimal] = {}
     for a in allocs:
         eid = int(a["entity_id"])
         cur = a["currency"]
+        key = (eid, cur)
         is_all = bool(a.get("is_all", False))
+        already = committed.get(key, _ZERO)
+        pool = _pool_balance(session, eid, cur, start_date)
         if is_all:
-            amount = _pool_balance(session, eid, cur, start_date)
+            # 「全部」= 扣除批内已占后的剩余全投；重复「全部」→ 剩余 ≤ 0 被下方拦截
+            amount = pool - already
         else:
             amount = Decimal(str(a["amount"]))
         if amount <= _ZERO:
-            raise ValidationError(f"主体 #{eid} 币种 {cur} 投资额必须 > 0（as-of {amount}）")
-        pool = _pool_balance(session, eid, cur, start_date)
-        if amount > pool:
             raise ValidationError(
-                f"主体 #{eid} 币种 {cur} 投入 {amount} 超过 as-of 余额 {pool}（{start_date}）")
-        # 5) 覆盖连锁拒绝：向后全链不破负
+                f"主体 #{eid} 币种 {cur} 投资额必须 > 0（as-of {pool}，批内已占 {already}）")
+        if amount + already > pool:
+            raise ValidationError(
+                f"主体 #{eid} 币种 {cur} 批内累计投入 {amount + already} "
+                f"超过 as-of 余额 {pool}（{start_date}）")
+        # 5) 覆盖连锁拒绝：向后全链不破负（按批内累计口径模拟）
         acc = _primary_account(session, eid, cur)
-        if acc is not None and not _simulate_outflow_nonneg(session, acc.id, start_date, amount):
+        if acc is not None and not _simulate_outflow_nonneg(session, acc.id, start_date,
+                                                            amount + already):
             raise ValidationError(
                 f"主体 #{eid} 币种 {cur} 该划出致账户 {start_date} 起走向负值，整体拒绝")
+        committed[key] = amount + already
         session.add(InvestmentAlloc(investment_id=inv.id, entity_id=eid,
                                     currency=cur, amount=amount, is_all=is_all))
 

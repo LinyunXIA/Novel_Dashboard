@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.demand import accrue_demand_interest
 from app.core.invest import (
     create_investment, redeem_investment, region_start_years, unlock_investment,
 )
@@ -144,18 +145,24 @@ def patch_investment(investment_id: int, body: InvestmentPatch,
     """§19.1 解锁重输（issue #81）：抹除本投资全部派生写入 + 置 locked=False。
 
     已赎回 → 409；解锁后重输走 POST /investments（unlocked 覆盖分支）。
+    审计修复：请求重新锁定（locked=true）→ 422 明确拒绝（此前静默 no-op）——
+    锁定只能由成功创建投资产生，不支持直接置回。
     """
     inv = db.get(Investment, investment_id)
     if not inv:
         raise HTTPException(status_code=404, detail="investment not found")
-    if not body.locked:
-        # 解锁（locked=false）：抹除旧写入，恢复 as-of
-        try:
-            inv = unlock_investment(db, inv)
-        except Exception as e:  # noqa: BLE001
-            db.rollback()
-            _apply_error(e)
-        _after_ui_write(db, inv.year, f"解锁投资 {inv.region} {inv.year}")
+    if body.locked:
+        raise HTTPException(
+            status_code=422,
+            detail="不支持重新锁定：如需改动请先解锁（locked=false）后整笔覆盖重输",
+        )
+    # 解锁（locked=false）：抹除旧写入，恢复 as-of
+    try:
+        inv = unlock_investment(db, inv)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _apply_error(e)
+    _after_ui_write(db, inv.year, f"解锁投资 {inv.region} {inv.year}")
     return _inv_dict(inv, db.execute(
         select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
     ).scalars().all())
@@ -180,3 +187,23 @@ def post_transfer(body: TransferIn, db: Session = Depends(get_db)):
 def returns_regions():
     """地区起始年下限 + 收益国家映射（§19.1/§19.3，供前端下拉下限）。"""
     return region_start_years()
+
+
+class DemandInterestIn(BaseModel):
+    year: int = Field(ge=1947, le=2026)
+
+
+@router.post("/demand-interest")
+def post_demand_interest(body: DemandInterestIn, db: Session = Depends(get_db)):
+    """活期结息（§19.2 · 审计补齐）：未划拨资金 2% 年化按日折，12-30 入账。
+
+    全部 active 账户逐日余额加权计息；同年重跑幂等覆盖（`demand#{year}` 标签）；
+    未到结算日 → 422。成功后同请求内后传重算 + 快照 + recompute-done 通知。
+    """
+    try:
+        out = accrue_demand_interest(db, body.year)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _apply_error(e)
+    _after_ui_write(db, body.year, f"活期结息 {body.year}")
+    return {"status": "ok", **out}

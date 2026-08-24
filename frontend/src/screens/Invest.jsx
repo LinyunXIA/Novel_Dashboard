@@ -34,6 +34,15 @@ export default function Invest() {
   const redeem = useDataOp(() => inv.refresh())
   const unlock = useDataOp(() => inv.refresh())
 
+  // 审计修复：年份变更时发生日联动（默认当年 06-30），避免跨年发生日算出 0 天/异常天数
+  const setYear = (v) => setForm(f => ({
+    ...f, year: v,
+    start_date: (f.start_date || '').startsWith(String(v)) ? f.start_date : `${v}-06-30`,
+  }))
+  // 活期结息（§19.2 · 审计补齐）：2% 年化按日折，12-30 入账，同年幂等重跑
+  const [demandYear, setDemandYear] = useState(2001)
+  const demand = useDataOp()
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const setAlloc = (i, k, v) => setForm(f => ({
     ...f, allocs: f.allocs.map((a, idx) => idx === i ? { ...a, [k]: v } : a),
@@ -71,7 +80,7 @@ export default function Invest() {
         <div className="form">
           <div className="row">
             <Field label="年份"><input type="number" min={1947} max={2026} value={form.year}
-              onChange={e => set('year', Number(e.target.value))} /></Field>
+              onChange={e => setYear(Number(e.target.value))} /></Field>
             <Field label="风险级">
               <select value={form.risk_lvl} onChange={e => set('risk_lvl', e.target.value)}>
                 {RISK.map(r => <option key={r}>{r}</option>)}
@@ -115,6 +124,25 @@ export default function Invest() {
           </div>
           {regionDisabled && <div className="warn">年份低于 {form.region} 起始年下限 {regionMap[form.region].start_year}</div>}
           <ErrorBox error={localErr || submit.error} />
+
+          <h3 style={{ marginTop: 22 }}>活期结息（§19.2 · 2% 年化按日折）</h3>
+          <p className="note">对全部 active 账户按台账逐日余额加权计息，当年 12-30 入账；同年重跑幂等覆盖</p>
+          <div className="row">
+            <Field label="结息年份"><input type="number" min={1947} max={2026} value={demandYear}
+              onChange={e => setDemandYear(Number(e.target.value))} /></Field>
+            <button className="primary" disabled={demand.busy} style={{ alignSelf: 'flex-end' }}
+              onClick={() => demand.submit('/api/v1/demand-interest', { year: Number(demandYear) })}>
+              {demand.busy ? '结息中…' : '活期结息'}
+            </button>
+          </div>
+          {demand.last && (
+            <div className="note">
+              已入账 {demand.last.accounts} 个账户
+              {Object.entries(demand.last.total_by_currency || {})
+                .map(([c, v]) => ` · ${c} ${v}`).join('')}
+            </div>
+          )}
+          <ErrorBox error={demand.error} />
         </div>
       </div>
 
