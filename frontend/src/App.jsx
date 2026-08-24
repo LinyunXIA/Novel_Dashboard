@@ -8,6 +8,7 @@ import Graph from './screens/Graph'
 import { ErrorBox } from './screens/ui'
 import { useDataOp } from './screens/useDataOp'
 import LaborCost from './screens/LaborCost'
+import Movies from './screens/Movies'
 import Search from './screens/Search'
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { key: 'returns', label: '收益曲线' },
   { key: 'finance', label: '财务收支' },
   { key: 'labor', label: '加薪规则/用工成本' },
+  { key: 'movies', label: '电影事件' },
   { key: 'persons', label: '人物图谱' },
   { key: 'companies', label: '公司图谱' },
   { key: 'graphall', label: '全图谱' },
@@ -67,6 +69,7 @@ export default function App() {
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
+        {active === 'movies' && <Movies />}
         {active === 'search' && <Search />}
         {(active === 'timeline' || active === 'health') && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />

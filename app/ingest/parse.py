@@ -83,10 +83,7 @@ _PARSERS = {
 def parse_one(rel: str, path: Path) -> ParseResult:
     det = detect(rel)
     pr = ParseResult(file=rel, category=det.category)
-    if det.phase2:
-        pr.ok = False
-        pr.error = "Phase 2 事件，Phase 1 跳过"
-        return pr
+    # Phase 2 事件交给对应 parser（event_movie / event_stock）；桩实现返 []，对 F-P2-02 留位。
     # issue #26：SKIP_* 类别（P1 范围/创作约束）显式跳过，不算 unknown 报错
     if det.category.startswith("SKIP_"):
         pr.ok = True

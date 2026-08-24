@@ -11,6 +11,7 @@ from app.model.derived import (
     Relationship, ReturnCurve, Snapshot, SourceFileVersion, TimelineEvent, UserDataOverlay,
 )
 from app.model.labor import LaborCpiGrowth, LaborTaxBenchmark, LaborWageBenchmark
+from app.model.movie_event import MovieEvent
 from app.model.search import SearchIndex
 
 __all__ = [
@@ -21,5 +22,5 @@ __all__ = [
     "UserDataOverlay", "Snapshot", "SourceFileVersion", "RecomputeJob", "Notification",
     "Investment", "InvestmentAlloc",
     "LaborWageBenchmark", "LaborCpiGrowth", "LaborTaxBenchmark",
-    "SearchIndex",
+    "MovieEvent", "SearchIndex",
 ]
