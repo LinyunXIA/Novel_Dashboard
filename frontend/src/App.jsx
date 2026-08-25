@@ -11,6 +11,7 @@ import LaborCost from './screens/LaborCost'
 import Movies from './screens/Movies'
 import Stock from './screens/Stock'
 import Search from './screens/Search'
+import Timeline from './screens/Timeline'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -74,7 +75,8 @@ export default function App() {
         {active === 'movies' && <Movies />}
         {active === 'stock' && <Stock />}
         {active === 'search' && <Search />}
-        {(active === 'timeline' || active === 'health') && (
+        {active === 'timeline' && <Timeline />}
+        {active === 'health' && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
         )}
       </main>
