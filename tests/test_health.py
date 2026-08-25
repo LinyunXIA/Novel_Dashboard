@@ -18,10 +18,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.health import (
     check_fx_coverage, check_h3_fx_closure, check_h4_balance_chain,
-    check_negative_balance, run_report,
+    check_negative_balance, check_stock_h2, run_report, summarize,
 )
 from app.db import Base
-from app.model import Account, Entity, ExchangeRate, LedgerEntry
+from app.model import Account, Entity, ExchangeRate, HoldingEvent, LedgerEntry
 
 
 @pytest.fixture
@@ -183,3 +183,47 @@ class TestRunReportIntegration:
         report = run_report(session)
         # 期望：H3 覆盖率无 warn、H4 无 crit、负余额无、其余规则无匹配
         assert report == [], f"干净数据应零发现；got {report}"
+
+
+# ---------- F-P2-04：check_stock_h2（H2 金额一致·股票） ----------
+def _seed_holding(session, eid, *, company, date_, event_type, shares, unit_price):
+    session.add(HoldingEvent(entity_id=eid, company=company, date=date_,
+                             event_type=event_type, shares=shares, unit_price=unit_price))
+    session.flush()
+
+
+def test_stock_h2_reports_price_outlier(session):
+    e = _seed_entity(session)
+    _seed_holding(session, e.id, company="AAPL", date_=date(2018, 1, 1),
+                  event_type="buy", shares=100.0, unit_price=5.0)
+    _seed_holding(session, e.id, company="AAPL", date_=date(2019, 1, 1),
+                  event_type="buy", shares=100.0, unit_price=20.0)   # >3×
+    finds = check_stock_h2(session)
+    assert any(f.rule == "H2" and f.level == "warn" for f in finds)
+
+
+def test_stock_h2_ignores_merger_multi_source(session):
+    e = _seed_entity(session)
+    # 同一公司同日两笔 split（合并双源成本系不同，unit 差 >3×）→ 不报（只看 buy 源）
+    _seed_holding(session, e.id, company="DXC", date_=date(2017, 4, 1),
+                  event_type="split", shares=4758186.0, unit_price=4.32)
+    _seed_holding(session, e.id, company="DXC", date_=date(2017, 4, 1),
+                  event_type="split", shares=10578800.0, unit_price=25.68)
+    assert check_stock_h2(session) == []
+
+
+def test_stock_h2_ok_when_consistent(session):
+    e = _seed_entity(session)
+    _seed_holding(session, e.id, company="AAPL", date_=date(2018, 1, 1),
+                  event_type="buy", shares=100.0, unit_price=10.0)
+    assert check_stock_h2(session) == []
+
+
+def test_summarize_counts_h2_stock(session):
+    e = _seed_entity(session)
+    _seed_holding(session, e.id, company="AAPL", date_=date(2018, 1, 1),
+                  event_type="buy", shares=100.0, unit_price=5.0)
+    _seed_holding(session, e.id, company="AAPL", date_=date(2019, 1, 1),
+                  event_type="buy", shares=100.0, unit_price=20.0)
+    sm = summarize(session)
+    assert sm["H2"]["warn"] >= 1

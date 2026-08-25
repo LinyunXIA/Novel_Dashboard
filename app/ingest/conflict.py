@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.model import Account, IncomeStream, LedgerEntry
+from app.model import Account, HoldingEvent, IncomeStream, LedgerEntry, StockEvent
 
 
 class ConflictError(Exception):
@@ -270,6 +270,48 @@ def check_fx_authority_conflict(session: Session, file: str, records: list[dict]
         ).scalar_one_or_none()
         if auth is not None and abs(float(auth) - float(rec["rate"])) > 0.005:
             rep.add("H2-汇率权威", y, f"{f}→{t} {y} 权威 {auth} ≠ 本文件 {rec['rate']}")
+    return rep
+
+
+def check_stock_event_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
+    """§11.4 股票事件导入前冲突（F-P2-04）：同 (company, date, event_type) 同键值打架 → hard-block。
+
+    新文件的记录 vs DB 既有 StockEvent / HoldingEvent（同一键但 amount/shares 不同）→ 挡。
+    （events_stock 的批内去重由 import_stock_events 的 (company,date,event_type,source_file) 幂等键负责，
+    这里只拦**跨文件**/与已实体化链的金额不一致。）
+    """
+    from datetime import date as _date
+    rep = ConflictReport(file)
+
+    def _val(v):
+        return float(v) if v is not None else None
+
+    for rec in records:
+        comp = rec.get("company")
+        et = rec.get("event_type")
+        if not comp or not et:
+            continue
+        rd = rec.get("date")
+        d = _date.fromisoformat(rd) if isinstance(rd, str) else rd
+        ramt, rsh = _val(rec.get("amount")), _val(rec.get("shares"))
+        # 既有 StockEvent（**其他**文件；同一 source_file 的重导入由 import_stock_events 幂等 upsert 处理，不算冲突）
+        for se in session.execute(select(StockEvent).where(
+                StockEvent.company == comp, StockEvent.date == d,
+                StockEvent.event_type == et, StockEvent.source_file != file)).scalars().all():
+            if (ramt is not None and se.amount is not None and abs(ramt - float(se.amount)) > 1e-3) or \
+               (rsh is not None and se.shares is not None and abs(rsh - float(se.shares)) > 1e-3):
+                rep.add("H2-股票", d, f"{comp} {et} {d} 既有 StockEvent(金额 {se.amount}/股 {se.shares}) "
+                                     f"≠ 本文件(金额 {ramt}/股 {rsh})")
+        # 已实体化的 HoldingEvent（链/手动已建）——仅当记录指定了 entity_id 才可比对
+        eid = rec.get("entity_id")
+        if eid is not None:
+            for h in session.execute(select(HoldingEvent).where(
+                    HoldingEvent.entity_id == eid, HoldingEvent.company == comp,
+                    HoldingEvent.date == d, HoldingEvent.event_type == et)).scalars().all():
+                if (ramt is not None and h.amount is not None and abs(ramt - float(h.amount)) > 1e-3) or \
+                   (rsh is not None and h.shares is not None and abs(rsh - float(h.shares)) > 1e-3):
+                    rep.add("H2-股票", d, f"{comp} {et} {d} 既有 HoldingEvent(金额 {h.amount}/股 {h.shares}) "
+                                         f"≠ 本文件(金额 {ramt}/股 {rsh})")
     return rep
 
 

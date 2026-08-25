@@ -13,11 +13,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.model import Account, Entity, IncomeStream, LedgerEntry
+from app.model import Account, Entity, HoldingEvent, IncomeStream, LedgerEntry, StockEvent
 from app.ingest.conflict import (
     check_account_balance_conflict,
     check_bank_import_conflict,
     check_income_stream_conflict,
+    check_stock_event_conflict,
 )
 from app.ingest.main import _normalize_conflict_recs
 
@@ -171,3 +172,75 @@ class TestBankImportConflict:
         rep = check_account_balance_conflict(session, "x.md", acc.id,
                                              [{"date": "1981-01-01", "balance": 999}])
         assert rep.blocked is True
+
+
+# ---------- F-P2-04：§11.4 stock 事件冲突 ----------
+def _seed_stock(session, *, company, date_, event_type, amount, shares=None):
+    session.add(StockEvent(company=company, date=date_, event_type=event_type,
+                           amount=amount, shares=shares, source_file="seed.md"))
+    session.flush()
+
+
+def test_stock_event_conflict_block_duplicate_amount(session):
+    _seed_stock(session, company="AAPL", date_=date(2018, 6, 1), event_type="buy",
+                amount=1000.0, shares=100.0)
+    # 新文件同键但金额不同 → hard-block
+    rep = check_stock_event_conflict(session, "new.md",
+                                     [{"company": "AAPL", "date": "2018-06-01",
+                                       "event_type": "buy", "amount": 9999.0, "shares": 100.0}])
+    assert rep.blocked is True
+    assert any(p["rule"] == "H2-股票" for p in rep.problems)
+
+
+def test_stock_event_conflict_pass_same_amount(session):
+    _seed_stock(session, company="AAPL", date_=date(2018, 6, 1), event_type="buy",
+                amount=1000.0, shares=100.0)
+    rep = check_stock_event_conflict(session, "new.md",
+                                     [{"company": "AAPL", "date": "2018-06-01",
+                                       "event_type": "buy", "amount": 1000.0, "shares": 100.0}])
+    assert rep.blocked is False
+
+
+def test_stock_event_conflict_vs_holding_event(session):
+    e = Entity(entity_type="person", name="Stijn")
+    session.add(e)
+    session.flush()
+    session.add(HoldingEvent(entity_id=e.id, company="AAPL", date=date(2018, 6, 1),
+                             event_type="buy", shares=100.0, unit_price=10.0,
+                             amount=0.1, source_file="chain.md"))
+    session.flush()
+    rep = check_stock_event_conflict(session, "new.md",
+                                     [{"entity_id": e.id, "company": "AAPL",
+                                       "date": "2018-06-01", "event_type": "buy",
+                                       "amount": 0.5, "shares": 100.0}])
+    assert rep.blocked is True
+
+
+def test_stock_event_conflict_same_file_ignored(session):
+    """同一 source_file 重导入不算冲突（幂等 upsert 交给 import_stock_events）。"""
+    session.add(StockEvent(company="AAPL", date=date(2018, 6, 1), event_type="buy",
+                           amount=1000.0, shares=100.0, source_file="快手.md"))
+    session.flush()
+    rep = check_stock_event_conflict(session, "快手.md",   # 与库中同 source_file
+                                     [{"company": "AAPL", "date": "2018-06-01",
+                                       "event_type": "buy", "amount": 5000.0, "shares": 200.0}])
+    assert rep.blocked is False
+
+
+def test_stock_event_conflict_gate_uses_blocked(session):
+    """events_stock 的 gate 凭 rep.blocked 判：冲突文件记录不应导入。"""
+    _seed_stock(session, company="AAPL", date_=date(2018, 6, 1), event_type="buy",
+                amount=1000.0, shares=100.0)
+    recs = [{"company": "AAPL", "date": "2018-06-01", "event_type": "buy",
+             "amount": 2000.0, "shares": 100.0, "source_file": "new.md"}]
+    by_file = {}
+    for rec in recs:
+        by_file.setdefault(rec.get("source_file"), []).append(rec)
+    ok, blocked = [], 0
+    for src, group in by_file.items():
+        crep = check_stock_event_conflict(session, src, group)
+        if crep.blocked:
+            blocked += 1
+        else:
+            ok.extend(group)
+    assert blocked == 1 and not ok

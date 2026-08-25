@@ -496,10 +496,26 @@ def events_stock(env: str = typer.Option("dev", "--env")):
     all_records = []
     for f in sorted(base.glob("*.md")):   # 仅顶层否（收购/英国/香港 子目录本轮跳过）
         all_records.extend(parse_event_stock(f))
+    # §11.4 冲突检测：按 source_file 分组，逐文件跑 stock 冲突，blocked 文件不入库（F-P2-04）
+    from app.ingest import conflict
+    by_file: dict[str, list[dict]] = {}
+    for rec in all_records:
+        by_file.setdefault(rec.get("source_file") or "?" , []).append(rec)
+    ok_records: list[dict] = []
+    blocked = 0
     with _session_for(env) as s:
-        r = import_stock_events(s, all_records)
+        for src, recs in by_file.items():
+            crep = conflict.check_stock_event_conflict(s, src, recs)
+            if crep.blocked:
+                blocked += 1
+                for p in crep.problems:
+                    typer.echo(f"  ❌ [{p['rule']}] {src}: {p['detail']}")
+                continue
+            ok_records.extend(recs)
+        r = import_stock_events(s, ok_records)
         s.commit()
-    typer.echo(f"[{env}] 股票事件解析 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
+    typer.echo(f"[{env}] 股票事件解析 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}"
+               f"；阻塞文件 {blocked}")
 
 
 if __name__ == "__main__":

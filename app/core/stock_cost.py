@@ -93,15 +93,24 @@ def _next_batch_ids(db: Session, n: int) -> Iterator[int]:
     return iter(range(start, start + n))
 
 
-def _already_applied(db: Session, spec: dict) -> bool:
+def _already_applied(db: Session, spec: dict, source: str | None = None) -> bool:
+    """并购事件是否已应用。幂等键 = legs[0].company + date（+ source，若提供了）。
+
+    若无 source（F-P2-03 直接调 apply_merger 的场景），沿用 company+date 判定。
+    若提供了 source（F-P2-04 链驱动，source=event_id），则额外要求 source_file 匹配——
+    避免「同一天多源都产出同一公司」（如 2017-04-01 HPE→DXC 与 CSC→DXC）互相误挡。
+    """
     if not spec.get("legs"):
         return False
     first_company = spec["legs"][0]["company"]
-    return db.execute(select(HoldingEvent.id).where(
+    q = select(HoldingEvent.id).where(
         HoldingEvent.entity_id == spec["entity_id"],
         HoldingEvent.company == first_company,
         HoldingEvent.date == spec["date"],
-    ).limit(1)).scalar_one_or_none() is not None
+    )
+    if source:
+        q = q.where(HoldingEvent.source_file == source)
+    return db.execute(q.limit(1)).scalar_one_or_none() is not None
 
 
 def apply_merger(db: Session, spec: dict, source: str | None = None) -> dict:
@@ -111,10 +120,17 @@ def apply_merger(db: Session, spec: dict, source: str | None = None) -> dict:
     old_company = spec["old_company"]
     event_date = _date.fromisoformat(spec["date"])   # spec 日期字符串 → date 对象
 
-    if _already_applied(db, spec):
+    if _already_applied(db, spec, source):
         return {"new_batches": [], "cash": 0.0, "closed": 0, "skipped": True}
 
     batches = _open_batches(db, entity_id, old_company)
+    # 捕获事件前已存在的旧 open 行 id——结清只关这些（保住同名腿：如 HPQ→{HPQ,1},{HPE,1}
+    # 中 HPQ 同名腿不应被关，否则父头寸丢失）。
+    old_ids = [rid for rid, in db.execute(select(HoldingEvent.id).where(
+        HoldingEvent.entity_id == entity_id,
+        HoldingEvent.company == old_company,
+        HoldingEvent.shares > 0,
+        HoldingEvent.closed_on.is_(None))).all()]
     new: list[dict] = []
     cash = 0.0
     closed = 0
@@ -145,12 +161,11 @@ def apply_merger(db: Session, spec: dict, source: str | None = None) -> dict:
                 source_file=source))
         # 结清旧行：标记 closed_on（保留 shares/unit_price 历史供重构前年份 as-of 估值），
         # 而非销毁 shares=0（否则分拆/并购前年份市值漏记）。估值按 closed_on 时间窗求值。
-        for r in db.execute(select(HoldingEvent).where(
-                HoldingEvent.entity_id == entity_id,
-                HoldingEvent.company == old_company,
-                HoldingEvent.shares > 0,
-                HoldingEvent.closed_on.is_(None))).scalars().all():
-            r.closed_on = event_date
+        # 只关事件前已存在的旧行（old_ids），不关刚生成的同名腿。
+        for oid in old_ids:
+            r = db.get(HoldingEvent, oid)
+            if r is not None:
+                r.closed_on = event_date
 
         # 现金腿 → ledger
         if cash and spec.get("cash_account_id"):

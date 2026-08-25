@@ -5,6 +5,36 @@
 
 ---
 
+## [Phase 2 · F-P2-04] — 2026-08-25
+
+**HP_CSC 重组链数值导入 → 依 §11.4 + H2 逐行验证**（DESIGN §19.6 / §11.4 / §10）
+
+- **链编排器** `app/core/stock_chain.py`：
+  - `apply_chain`：把一段重组链（建仓 → 并购/分拆 → 减持 → 现金退出）编码为事件序列，按 `(date, 写入序)`
+    稳定排序驱动 `apply_buy / apply_merger / apply_sell / apply_dividend / apply_passive_uplift`，
+    自动 `event_id`(source_file) 幂等可重放，标 `calibrated` 的步聚合到 `calibrated_steps`。
+  - `verify_chain`：逐行对账（F-P2-04「依 H2 逐行验证」执行体），持股断言（open 求和比对，容差 1 股）、
+    现金断言（kind + reason/note LIKE 求和）；只读不改库；unasserted 标 informational。
+- **HP_CSC 链 spec** `app/core/hp_csc_chain.py`：`HP_CSC_DXC` 主链 14 步（CPQ→HPQ 0.6325、HPQ→HPInc+HPE 1:1、
+  HPE→DXC 0.086/MFGP 0.137、CSC→CSC+CSRA 1:1、CSRA 现金 41.25、CSC→DXC 1:1、DXC 减持 6,554,586、
+  DXC→PRSP 2:1、PRSP 现金 29.05、MFGP→OTEX 0.162+现金 8.45）——as_of=2025 闭合到 DXC 8,782,400 / OTEX 1,227,944
+  / 三笔现金（CSRA 454,900,875 / PRSP 127,564,360 / MFGP 64,050,163.45）；`HP_CSC_HPINC`/`HP_CSC_HPE_MFGP_OTEX`
+  只读子链复验 HPQ / OTEX（不重复建仓）。
+- **H2 stock 分支** `health.check_stock_h2`：R1 同公司 >1 个 buy 源成本极差 >3× → warn（只看 buy，
+  排除 split/acquire-* cost-chaining 双源，如 DXC 合并日不误报）；R2 同日同公司 buy/sell 多源单价不一 → crit。
+- **§11.4 stock 冲突** `conflict.check_stock_event_conflict`：跨文件同 (company,date,event_type) 金额/股数
+  不符 → hard-block；**同 source_file 重导入不算冲突**（幂等 upsert 处理）；接入 `events-stock` 按文件 gate。
+- **模型局限（明示）**：`apply_merger form=split` 无法「父保留+子另计」——用 legs 同名腿近似（如
+  `HPQ→{HPQ,1},{HPE,1}`）在数值上保持父头寸+生成子头寸，但子成本按占比分摊（非史实「免费 spin-off 子
+  成本≈0」）→ 只断言股数+现金，不断言子成本绝对值。链内部分数值（DXC 减持 6,554,586、CSC 减持）为
+  回测校准非史实，标 `calibrated`。
+- 顺带修复 `apply_merger`：结清旧行改为只关**事件前已存在**的旧行 id（保住同名腿），并让 `_already_applied`
+  在提供 `source` 时并入 source_file 判定（避免同天多源都产同公司互相误挡）。
+- 21 新单测（chain 7 / hp_csc 5 / health 4 / conflict 5）；全量 **346 passed**；dev 库 `events-stock` 重导
+  26 条全部幂等跳过、0 阻塞；health H2 无新增误报。
+
+---
+
 ## [Phase 2 · F-P2-02/03 follow-up] — 2026-08-25
 
 **分拆/并购市值漏记修复：`holding_event` 结清窗口化（closed_on 列）**（DESIGN §19.6）
