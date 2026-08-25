@@ -479,5 +479,28 @@ def events_movie(env: str = typer.Option("dev", "--env")):
     typer.echo(f"[{env}] 电影事件导入 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
 
 
+@app.command()
+def events_stock(env: str = typer.Option("dev", "--env")):
+    """F-P2-02 事件·股票导入：扫 基准/事件/股票/ 顶层 USD Style A → 解析 → 落库 stock_event（幂等）。
+
+    阶段一只接受 USD 流水表（虎牙/哔哩等根级 *.md）；快手/香港/英国（万港元/万英镑）与
+    收购/ 子目录（分拆并购链，F-P2-03/04）本轮跳过。导入不关联账户，UI 同币种手动关联补 ledger。
+    """
+    from app.ingest.parsers.event_stock import parse_event_stock
+    from app.ingest.writer import import_stock_events
+    cfg = get_config(env)
+    base = cfg.source_dir / "基准" / "事件" / "股票"
+    if not base.exists():
+        typer.echo(f"[{env}] 无股票事件目录: {base}")
+        return
+    all_records = []
+    for f in sorted(base.glob("*.md")):   # 仅顶层否（收购/英国/香港 子目录本轮跳过）
+        all_records.extend(parse_event_stock(f))
+    with _session_for(env) as s:
+        r = import_stock_events(s, all_records)
+        s.commit()
+    typer.echo(f"[{env}] 股票事件解析 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
+
+
 if __name__ == "__main__":
     app()

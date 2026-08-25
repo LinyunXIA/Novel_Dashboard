@@ -11,8 +11,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.model import (
-    Account, Entity, ExchangeRate, IncomeStream, LedgerEntry, Relationship, ReturnCurve, TimelineEvent,
+    Account, Entity, ExchangeRate, HoldingEvent, IncomeStream, LedgerEntry, Relationship, ReturnCurve, TimelineEvent,
 )
+
+from app.core.stock_wealth import portfolio_breakdown
 
 
 @dataclass
@@ -181,8 +183,31 @@ def check_h5_dangling(session: Session) -> list[Finding]:
     return finds
 
 
+def check_holding_value(session: Session) -> list[Finding]:
+    """H-STOCK 持仓估值一致性（F-P2-02 §19.6；不改 H1–H5 语义）。
+
+    ① shares>0（未结清）的 holding_event 行必须有 unit_price，否则无法估值 → warn；
+    ② shares>0 的 holding 须落在已存在 entity 上（被引用实体缺失 → crit，与 H5 同源防漏）。
+    """
+    finds: list[Finding] = []
+    rows = session.execute(
+        select(HoldingEvent.id, HoldingEvent.company, HoldingEvent.date,
+               HoldingEvent.entity_id, HoldingEvent.shares, HoldingEvent.unit_price)
+        .where(HoldingEvent.shares > 0)
+    ).all()
+    for hid, company, hdate, eid, shares, up in rows:
+        if up is None or float(up) == 0:
+            finds.append(Finding("H-STOCK", "warn", f"holding_event#{hid} {company} {hdate}",
+                                 f"shares>0 但 unit_price 缺失（无法估值）"))
+        if session.get(Entity, eid) is None:
+            finds.append(Finding("H-STOCK", "crit", f"holding_event#{hid} entity#{eid}",
+                                 "持仓引用不存在的实体"))
+    # ②弱一致：有未结清持仓时，全家族持仓市值应 > 0（除非 unit_price 全缺失——已被①标出）。
+    return finds
+
+
 def run_report(session: Session) -> list[dict]:
-    """全库健康校验汇总：H1..H5。"""
+    """全库健康校验汇总：H1..H5 + H-STOCK。"""
     all_finds: list[Finding] = []
     all_finds += check_h1_timeline_alignment(session)
     all_finds += check_h2_amount_consistency(session)
@@ -191,6 +216,7 @@ def run_report(session: Session) -> list[dict]:
     all_finds += check_negative_balance(session)
     all_finds += check_h4_balance_chain(session)
     all_finds += check_h5_dangling(session)
+    all_finds += check_holding_value(session)
     return [f.as_dict() for f in all_finds]
 
 
@@ -199,7 +225,7 @@ def summarize(session: Session) -> dict:
     report = run_report(session)
     # issue #23 / API 健康视图：预填 H1..H5 即使 0 也有键，前端可稳定读 summary['H1']
     summary: dict[str, dict] = {rule: {"total": 0, "warn": 0, "crit": 0}
-                                for rule in ("H1", "H2", "H3", "H4", "H5")}
+                                for rule in ("H1", "H2", "H3", "H4", "H5", "H-STOCK")}
     for r in report:
         s = summary.setdefault(r["rule"], {"total": 0, "warn": 0, "crit": 0})
         s["total"] += 1

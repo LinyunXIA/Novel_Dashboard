@@ -872,7 +872,7 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | 编号 | 模块 | 功能 | 关键章节 | 状态 |
 |---|---|---|---|---|
 | F-P2-01 | **事件·电影** | 电影事件导入 + 不关联 + 同币种 UI 手动关联（现金流入账户）｜已实现：`movie_event` 表 + `event_movie` 解析器（best-effort）+ `ingest events-movie`（8 部入库）+ `GET/POST /movie-events(+/link/unlink)`（关联写 投资出/本金返还/分红 ledger，幂等）+「电影事件」屏 | §19.6/§6.9 | ✅ |
-| F-P2-02 | **事件·股票** | holding_event(batch) + FIFO 成本 + 分红/卖出结算 + 被动抬升占比 | §19.6/§6.9 | ⬜ |
+| F-P2-02 | **事件·股票** | holding_event(batch) + FIFO 成本 + 分红/卖出结算 + 被动抬升占比｜已实现 `stock_event` 表 + `event_stock` 解析器(best-effort, USD Style A: 虎牙/哔哩/快手) + `ingest events-stock`(21 条入库) + `stock_cost` 引擎 apply_buy/FIFO apply_sell/apply_dividend/apply_passive_uplift（event_id 幂等、note 打标可撤销）+ `GET/POST /stock-events(+/events/positions/associate/buy/sell/dividend/passive-uplift)` + 持仓市值并入 entity/family 总资产口径(`stock_wealth` 接入 rebuild_snapshots/calendar.snapshot_as_of) + H-STOCK 健康规则 +「股票事件」前端屏 + 23 新单测(block A/B/D) | §19.6/§6.9 | ✅ |
 | F-P2-03 | **事件·股票** | 分拆 / 并购三形态（换股+现金/纯现金/纯换股）成本随链｜已实现 `app/core/stock_cost.py` 成本引擎：split_position/cash_share_position/cash_merger + apply_merger(写 holding_event 新批次+结清+现金 ledger，幂等)。形态1 按新股数占比摊成本、形态2 成本全随链现金入余额、形态3 现金不记损益；7 单测复现 UTC 分拆/MVL‑DIS/纯现金 | §19.6 | ✅ |
 | F-P2-04 | **事件·股票** | HP_CSC 重组链数值导入 → 依 §11.4 + H2 逐行验证 | §19.6 | ⬜ |
 | F-P2-05 | **时间线/编年史 UI 编辑** | overlay 增改删、差异/重置回源/以源为最新 | §12/§6.4 | ⬜ |

@@ -156,6 +156,16 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
             continue
         pool_by_year[y] = pool_in_transit(session, date(y, 12, 30))
 
+    # 0b) 股票持仓市值（F-P2-02 §19.6）：逐年 12-30 口径 → {year: {entity_id: Decimal(USD元)}}。
+    #     只进 entity/family 两域，绝不进 account 域（持仓不在银行账户）。
+    from app.core.stock_wealth import portfolio_breakdown
+    holding_by_year: dict[int, dict[int, Decimal]] = {}
+    for y in years_list:
+        if y < start:
+            continue
+        holding_by_year[y] = {eid: Decimal(str(v))
+                              for eid, v in portfolio_breakdown(session, date(y, 12, 30)).items()}
+
     # 1) 清旧：仅清 from_year 起（含）的 account/entity/family 三种 scope 行
     scope_prefixes = ("account:", "entity:", "family:")
     session.execute(
@@ -209,6 +219,9 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
                 continue
             # §19.4：净值 = 银行 + 专款池在途；entity 口径把该年 12-30 在途本金加回（issue #85）
             v = ymap.get(y, _ZERO) + pool_by_year[y].get((eid, cur), _ZERO)
+            # F-P2-02 §19.6：仅当该币种是 USD 时追加股票持仓市值（第一阶段全 USD；FX 后续）
+            if cur == "USD":
+                v = v + holding_by_year[y].get(eid, _ZERO)
             if v == 0:
                 continue
             session.add(Snapshot(
@@ -245,6 +258,11 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
                 continue                                 # 汇率缺失 → 不计入
             family_usd = family_usd + amt * rate
             any_contribution = True
+        # F-P2-02 §19.6：股票持仓市值（USD，无需折率）计入 family:total
+        for usd_val in holding_by_year[y].values():
+            if usd_val:
+                family_usd = family_usd + usd_val
+                any_contribution = True
         # issue #28：family_usd=0 跳过（避免家族层面多年 0 值行膨胀）
         if not any_contribution or family_usd == 0:
             continue
