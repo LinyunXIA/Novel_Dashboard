@@ -101,9 +101,9 @@ def test_apply_split_writes_batches_and_closes(db):
     for n in new:
         tot[n.company] += float(n.shares)
     assert tot["CARR"] == 48053700 and tot["OTIS"] == 24026850
-    # 旧 UTX 结清
+    # 旧 UTX 结清（标记 closed_on 而非销毁 shares，保留重构前年份市值历史）
     old = db.execute(select(HoldingEvent).where(HoldingEvent.company == "UTX")).scalars().all()
-    assert all(o.shares == 0 for o in old)
+    assert all(o.closed_on is not None for o in old)
     # 幂等：再 apply → skipped
     r2 = apply_merger(db, spec); db.commit()
     assert r2["skipped"] is True

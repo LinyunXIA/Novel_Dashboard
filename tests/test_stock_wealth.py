@@ -11,7 +11,7 @@ from app.core.calendar import snapshot_as_of
 from app.core.health import check_holding_value, summarize
 from app.core.snapshot import rebuild_snapshots
 from app.core.stock_cost import apply_buy, apply_sell
-from app.core.stock_wealth import market_value_at
+from app.core.stock_wealth import market_value_at, portfolio_breakdown
 from app.db import Base
 from app.model import Account, Entity, HoldingEvent, LedgerEntry, Snapshot
 
@@ -124,3 +124,59 @@ def test_rebuild_incremental_from_year_recomputes_holding(session):
     rebuild_snapshots(session, years=range(2017, 2019), from_year=2018)
     assert _scope_value(session, f"entity:{e.id}:USD", 2018) == pytest.approx(20000.0)
     assert market_value_at(session, e.id, date(2018, 12, 30)) == pytest.approx(15000.0)
+
+
+# ---------- F-P2-03 follow-up：分拆/并购市值漏记修复（closed_on 结清窗口） ----------
+def _seed_utx(session, entity_id=None, shares=48053700.0, unit_price=5.0):
+    from app.core.stock_cost import _next_batch_ids
+    if entity_id is None:
+        e = Entity(entity_type="person", name="Stijn"); session.add(e); session.flush()
+        entity_id = e.id
+    b = next(_next_batch_ids(session, 1))
+    session.add(HoldingEvent(entity_id=entity_id, company="UTX", date=date(2000, 12, 31),
+                             event_type="buy", batch_id=b, shares=shares,
+                             unit_price=unit_price, amount=shares * unit_price / 10000.0))
+    session.flush()
+    return entity_id
+
+
+def _split_utx(session, eid):
+    from app.core.stock_cost import apply_merger
+    return apply_merger(session, {"entity_id": eid, "date": "2020-04-03", "old_company": "UTX",
+                                  "form": "split",
+                                  "legs": [{"company": "CARR", "per_old_share": 1.0},
+                                           {"company": "OTIS", "per_old_share": 0.5},
+                                           {"company": "RTX", "per_old_share": 1.0}]})
+
+
+def test_split_preserves_pre_merger_value(session):
+    utx_val = 48053700.0 * 5.0                      # 4805.37万股 × 5 成本 = 240M USD
+    eid = _seed_utx(session)
+    _split_utx(session, eid); session.flush()
+    # 重构前年份：旧 UTX 仍计入（修复前恒为 0 → 漏记）
+    assert market_value_at(session, eid, date(2010, 12, 30)) == pytest.approx(utx_val)
+    # 重构后年份：新三家计入、UTX 已结清不重复计数；成本随链 → 总额仍 = utx_val
+    assert market_value_at(session, eid, date(2021, 12, 30)) == pytest.approx(utx_val)
+    assert portfolio_breakdown(session, date(2021, 12, 30))[eid] == pytest.approx(utx_val)
+
+
+def test_merge_closed_hidden_from_open_batches(session):
+    from app.core.stock_cost import _open_batches
+    eid = _seed_utx(session)
+    _split_utx(session, eid); session.flush()
+    assert _open_batches(session, eid, "UTX") == []     # 结清后不再视为 open（FIFO/分红/后续并购）
+
+
+def test_rebuild_split_years_include_upstream_value(session):
+    e = Entity(entity_type="person", name="Stijn"); session.add(e); session.flush()
+    a = Account(entity_id=e.id, currency="USD"); session.add(a); session.flush()
+    session.add(LedgerEntry(account_id=a.id, date=date(2010, 1, 1), inflow=10000, balance=10000,
+                            kind="income", reason="cash"))
+    utx_val = 48053700.0 * 5.0
+    _seed_utx(session, entity_id=e.id)
+    _split_utx(session, e.id); session.flush()
+    rebuild_snapshots(session, years=range(2009, 2022), from_year=2010)
+    # 分拆前年（2015）：entity = 银行 10000 + UTX 市值（修复前漏记→只有 10000）
+    assert _scope_value(session, f"entity:{e.id}:USD", 2015) == pytest.approx(10000.0 + utx_val)
+    # 分拆后年（2021）：entity = 银行 10000 + 新三家市值（= 旧 UTX 市值，成本随链）
+    assert _scope_value(session, f"entity:{e.id}:USD", 2021) == pytest.approx(10000.0 + utx_val)

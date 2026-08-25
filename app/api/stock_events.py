@@ -81,7 +81,8 @@ def list_positions(entity_id: Optional[int] = None, db: Session = Depends(get_db
     """当前持仓：按 (entity_id, company) 聚合 open batches，列均价/市值/最新占比标记。"""
     q = select(HoldingEvent).where(HoldingEvent.shares > 0,
                                 HoldingEvent.event_type != "sell",
-                                HoldingEvent.event_type != "pseudo")
+                                HoldingEvent.event_type != "pseudo",
+                                HoldingEvent.closed_on.is_(None))
     if entity_id is not None:
         q = q.where(HoldingEvent.entity_id == entity_id)
     rows = db.execute(q.order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()

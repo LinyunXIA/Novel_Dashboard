@@ -5,6 +5,22 @@
 
 ---
 
+## [Phase 2 · F-P2-02/03 follow-up] — 2026-08-25
+
+**分拆/并购市值漏记修复：`holding_event` 结清窗口化（closed_on 列）**（DESIGN §19.6）
+
+- `holding_event` 加 `closed_on`（结清日，可空）——迁移 `d1e2f3a4b5ca`。
+- `stock_cost.apply_merger` 对旧公司由「破坏性 `shares=0`」改为「标 `closed_on=重构日`」：保留股数/成本历史，
+  使**分拆/并购前年份**市值正确计入旧公司（此前恒为 0，漏记），重构后年份计入新公司且不重复。
+- `stock_wealth.market_value_at` / `portfolio_breakdown` 改 `closed_on` 时间窗求值（`closed_on IS NULL OR closed_on > as_of`）；
+  `_open_batches` / `apply_sell` / API `positions` / 健康 `check_holding_value` 均追加 `closed_on IS NULL`（排除已结清行）。
+- 残余局限注明于 docstring：`apply_sell` 部分卖出仍递减原 buy 行（非全事件流重放），留待后续。
+- `tests/test_stock_cost.py` 结清断言改 `closed_on is not None`；`tests/test_stock_wealth.py` 新增 3 回归
+  （预重构年市值=旧 UTX、重构后新三家且排除 UTX、`_open_batches` 排除结清、rebuild 预/重构年 entity 含市值）。
+- 全量 **325 passed**；dev 库迁移应用、health 无新增异常。
+
+---
+
 ## [Phase 2 · F-P2-02] — 2026-08-25
 
 **事件·股票：holding_event(batch) + FIFO 成本 + 分红/卖出结算 + 被动抬升，持仓市值并入总资产**（DESIGN §19.6）

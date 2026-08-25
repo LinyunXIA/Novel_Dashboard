@@ -159,6 +159,7 @@ class HoldingEvent(Base):
     unit_price: Mapped[Optional[float]] = mapped_column(Numeric, comment="该批次成本价（FIFO）")
     amount: Mapped[Optional[float]] = mapped_column(Numeric, comment="单位：万美金")
     pct: Mapped[Optional[float]] = mapped_column(Numeric)
+    closed_on: Mapped[Optional[date]] = mapped_column(Date, comment="结清日；NULL=未结清(open)")
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)
