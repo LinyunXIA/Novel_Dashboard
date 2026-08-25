@@ -60,7 +60,10 @@ def _dsn(db_name: str) -> str:
     port = os.environ.get("PGPORT", "5432")
     user = os.environ.get("PGUSER", "postgres")
     password = os.environ.get("POSTGRES_PASSKEY")
-    auth = f"{user}:{password}@" if password else f"{user}@"
+    # issue #132：密码 URL 编码——含 @ : / # 等特殊字符时不再破坏 DSN 解析
+    from urllib.parse import quote_plus
+    auth = (f"{quote_plus(user)}:{quote_plus(password)}@" if password
+            else f"{quote_plus(user)}@")
     return f"postgresql+psycopg://{auth}{host}:{port}/{db_name}"
 
 
