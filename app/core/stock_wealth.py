@@ -1,18 +1,20 @@
-"""股票持仓市值估值（F-P2-02 · DESIGN §19.6）。
+"""股票持仓市值估值（F-P2-02 · DESIGN §19.6；F-P2-03 follow-up 结清窗口化）。
 
-持仓市值 = Σ 未结清 opens（batch，shares>0）的 shares × unit_price（成本基准）。
+持仓市值 = Σ 在 as_of 时刻**未结清**的批次（open，shares>0 且 closed_on 未到或未过 as_of）
+的 shares × unit_price（成本基准）。
 并入总资产口径：总资产 = 银行现金 + 投资专款池 + 股票持仓市值（§19.6）。
 
 口径纪律（与 ledger/快照对齐）：
 - 返回 **美元元**（与 account:* / entity:* / family:total 快照 value 一致），不做 /10000。
 - 只有写 `holding_event.amount`（万USD 列）时才除 10000 —— 见 stock_cost / apply_buy。
-- `shares > 0` 即自动排除被 split/merge/sell 结清(closed) 的行（写时被置 0）。
+- open 判定 = `shares > 0 AND closed_on IS NULL OR closed_on > as_of`：
+  - 分拆/并购用 `closed_on` 标记结清（`stock_cost.apply_merger`，保留 shares/unit_price 历史），
+    因此 **重构前年份正确计入旧公司市值、重构后计入新公司**，历史不丢失。
+  - `sell`/`pseudo` 行是历史/占比标记，恒排除（不构成 open）。
 
-已知局限（须明示）：`stock_cost.apply_merger` 破坏性把旧公司 shares 置 0（:142-146），
-故分拆/并购**之前**的年份该上游公司市值会归零（新批次 date=重构日，date<=as_of 过滤只
-在 >= 重构年生效）。净影响：>= 最后一次重构的年份完全正确，更早年份市值被漏。F-P2-02
-的 `apply_sell` 采用非破坏式双写（减原 buy 行 + 自留 sell 行），是后续做全事件流 as-of
-重放的最小支撑（完整修复 split 属 follow-up）。
+已知残余局限（须明示）：`apply_sell` 的**部分卖出**仍会递减原 buy 行 shares（非全事件流
+重放），故部分卖出之前的年份 as-of 为近似；完整按事件流重放（买卖/并购逐事件回滚）留待
+后续改造。全量卖出/分拆/并购已走 `closed_on`，历史不丢。
 """
 from __future__ import annotations
 
@@ -24,19 +26,24 @@ from sqlalchemy.orm import Session
 from app.model import HoldingEvent
 
 
+def _open_window(as_of: date):
+    """open 时间窗：closed_on IS NULL 或 晚于 as_of（分拆/并购前年份计入、之后排除）。"""
+    return HoldingEvent.closed_on.is_(None) | (HoldingEvent.closed_on > as_of)
+
+
 def market_value_at(session: Session, entity_id: int, as_of: date) -> float:
     """主体截至 as_of 的持仓成本市值（USD 元，非万）。
 
-    口径：Σ HoldingEvent.shares>0 且 date<=as_of 的 shares×unit_price。
+    口径：Σ open 批次（shares>0、date<=as_of、closed_on 窗口未过、排除 sell/pseudo）× unit_price。
     """
     rows = session.execute(
         select(HoldingEvent.shares, HoldingEvent.unit_price).where(
             HoldingEvent.entity_id == entity_id,
             HoldingEvent.shares > 0,
-            # sell/pseudo 是历史/占比标记，非 open 持仓（shares>0 只排除被减为 0 的）
             HoldingEvent.event_type != "sell",
             HoldingEvent.event_type != "pseudo",
             HoldingEvent.date <= as_of,
+            _open_window(as_of),
         )
     ).all()
     return float(sum(float(r.shares) * float(r.unit_price or 0.0) for r in rows))
@@ -55,6 +62,7 @@ def portfolio_breakdown(session: Session, as_of: date) -> dict[int, float]:
             HoldingEvent.event_type != "sell",
             HoldingEvent.event_type != "pseudo",
             HoldingEvent.date <= as_of,
+            _open_window(as_of),
         )
     ).all()
     out: dict[int, float] = {}

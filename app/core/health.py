@@ -193,7 +193,7 @@ def check_holding_value(session: Session) -> list[Finding]:
     rows = session.execute(
         select(HoldingEvent.id, HoldingEvent.company, HoldingEvent.date,
                HoldingEvent.entity_id, HoldingEvent.shares, HoldingEvent.unit_price)
-        .where(HoldingEvent.shares > 0)
+        .where(HoldingEvent.shares > 0, HoldingEvent.closed_on.is_(None))
     ).all()
     for hid, company, hdate, eid, shares, up in rows:
         if up is None or float(up) == 0:

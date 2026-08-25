@@ -71,7 +71,7 @@ def cash_merger(batches: list[dict], cash_per_share: float) -> float:
 #         "cash_per_share":float, "cash_account_id":int|None}
 
 def _open_batches(db: Session, entity_id: int, company: str) -> list[dict]:
-    """读未结清（shares>0）的旧公司批次，依日期归并为批次。"""
+    """读未结清（shares>0 且 closed_on IS NULL）的公司批次，依日期归并为批次。"""
     rows = db.execute(select(HoldingEvent).where(
         HoldingEvent.entity_id == entity_id,
         HoldingEvent.company == company,
@@ -79,6 +79,8 @@ def _open_batches(db: Session, entity_id: int, company: str) -> list[dict]:
         # sell/pseudo 是历史/占比标记，非 open 持仓（否则分红/抬升/估值会误计）
         HoldingEvent.event_type != "sell",
         HoldingEvent.event_type != "pseudo",
+        # 已结清（分拆/并购/全量卖出标记 closed_on）不再视为 open
+        HoldingEvent.closed_on.is_(None),
     ).order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()
     return [{"shares": float(r.shares), "unit_price": float(r.unit_price or 0.0),
              "batch_id": r.batch_id} for r in rows]
@@ -141,12 +143,14 @@ def apply_merger(db: Session, spec: dict, source: str | None = None) -> dict:
                 shares=nb["shares"], unit_price=nb["unit_price"],
                 amount=nb["shares"] * nb["unit_price"] / 10000.0,  # 万USD 口径
                 source_file=source))
-        # 结清旧行
+        # 结清旧行：标记 closed_on（保留 shares/unit_price 历史供重构前年份 as-of 估值），
+        # 而非销毁 shares=0（否则分拆/并购前年份市值漏记）。估值按 closed_on 时间窗求值。
         for r in db.execute(select(HoldingEvent).where(
                 HoldingEvent.entity_id == entity_id,
                 HoldingEvent.company == old_company,
-                HoldingEvent.shares > 0)).scalars().all():
-            r.shares = 0
+                HoldingEvent.shares > 0,
+                HoldingEvent.closed_on.is_(None))).scalars().all():
+            r.closed_on = event_date
 
         # 现金腿 → ledger
         if cash and spec.get("cash_account_id"):
@@ -222,6 +226,7 @@ def apply_sell(db: Session, *, entity_id: int, company: str, date, shares: float
         HoldingEvent.shares > 0,
         HoldingEvent.event_type != "sell",
         HoldingEvent.event_type != "pseudo",
+        HoldingEvent.closed_on.is_(None),
     ).order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()
     available = sum(float(r.shares) for r in rows)
     if shares > available:
