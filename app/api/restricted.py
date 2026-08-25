@@ -15,8 +15,9 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_importer
@@ -41,7 +42,8 @@ class EntityPatch(BaseModel):
 
 
 @router.post("/entities", status_code=201, dependencies=[Depends(require_importer)])
-def create_entity(body: EntityCreate, db: Session = Depends(get_db)):
+def create_entity(body: EntityCreate, response: Response,
+                  db: Session = Depends(get_db)):
     if body.entity_type not in ("person", "company", "asset", "family"):
         raise HTTPException(status_code=422, detail="entity_type 非法")
     e = Entity(entity_type=body.entity_type, name=body.name, display_name=body.display_name,
@@ -50,9 +52,13 @@ def create_entity(body: EntityCreate, db: Session = Depends(get_db)):
     try:
         db.commit()
         db.refresh(e)
-    except Exception as ex:  # 唯一键冲突等
+    except IntegrityError:  # issue #112：只把唯一键冲突映射为 409，其余 DB 错误交全局 500 兜底
         db.rollback()
-        raise HTTPException(status_code=409, detail=str(ex))
+        raise HTTPException(
+            status_code=409,
+            detail=f"entity 创建冲突：(entity_type={body.entity_type}, name={body.name}) 已存在",
+        )
+    response.headers["Location"] = f"/api/v1/entities/{e.id}"   # §14.1（issue #127）
     return {"id": e.id, "type": e.entity_type, "name": e.name}
 
 
@@ -109,7 +115,8 @@ class RelCreate(BaseModel):
 
 
 @router.post("/entities/{entity_id}/relationships", status_code=201, dependencies=[Depends(require_importer)])
-def create_relationship(entity_id: int, body: RelCreate, db: Session = Depends(get_db)):
+def create_relationship(entity_id: int, body: RelCreate, response: Response,
+                        db: Session = Depends(get_db)):
     if not db.get(Entity, entity_id) or not db.get(Entity, body.to_entity_id):
         raise HTTPException(status_code=404, detail="entity not found")
     r = Relationship(from_entity_id=entity_id, to_entity_id=body.to_entity_id,
@@ -117,6 +124,7 @@ def create_relationship(entity_id: int, body: RelCreate, db: Session = Depends(g
     db.add(r)
     db.commit()
     db.refresh(r)
+    response.headers["Location"] = f"/api/v1/relationships/{r.id}"
     return {"id": r.id}
 
 
@@ -143,7 +151,7 @@ class LedgerCreate(BaseModel):
 
 
 @router.post("/ledger-entries", status_code=201, dependencies=[Depends(require_importer)])
-def create_ledger(body: LedgerCreate, db: Session = Depends(get_db)):
+def create_ledger(body: LedgerCreate, response: Response, db: Session = Depends(get_db)):
     from datetime import date as _date
     try:
         d = _date.fromisoformat(body.date)
@@ -155,6 +163,7 @@ def create_ledger(body: LedgerCreate, db: Session = Depends(get_db)):
     db.add(e)
     db.commit()
     db.refresh(e)
+    response.headers["Location"] = f"/api/v1/ledger-entries/{e.id}"
     return {"id": e.id}
 
 
@@ -170,7 +179,7 @@ class FinanceCreate(BaseModel):
 
 
 @router.post("/finance-entries", status_code=201, dependencies=[Depends(require_importer)])
-def create_finance(body: FinanceCreate, db: Session = Depends(get_db)):
+def create_finance(body: FinanceCreate, response: Response, db: Session = Depends(get_db)):
     if body.entity_kind not in ("person", "company"):
         raise HTTPException(status_code=422, detail="entity_kind 仅 person/company")
     if body.kind not in ("income", "expense", "investment", "investment_income", "pool"):
@@ -182,4 +191,5 @@ def create_finance(body: FinanceCreate, db: Session = Depends(get_db)):
     db.add(e)
     db.commit()
     db.refresh(e)
+    response.headers["Location"] = f"/api/v1/finance-entries/{e.id}"
     return {"id": e.id}
