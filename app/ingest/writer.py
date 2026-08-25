@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.ingest.normalize import resolve_date
 from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream,
-                       InitialAsset, LedgerEntry, Relationship)
+                       InitialAsset, LedgerEntry, Relationship, StockEvent)
 
 
 def upsert_entity(session: Session, entity_type: str, name: str,
@@ -650,5 +650,35 @@ def import_movie_events(session: Session, records: list[dict]) -> dict:
             stats["skipped"] += 1
             continue
         session.add(MovieEvent(**{k: v for k, v in r.items()}))
+        stats["inserted"] += 1
+    return stats
+
+
+def import_stock_events(session: Session, records: list[dict]) -> dict:
+    """F-P2-02：股票事件落库（幂等 upsert by company+date+event_type+source_file）。
+
+    只落**待关联**记录（StockEvent），不写 holding_event/ledger——account/entity 由 UI 同币种
+    手动关联时解析（block D associate → apply_buy 等）。currency 默认 USD（阶段一仅 USD）。
+    """
+    stats = {"inserted": 0, "skipped": 0}
+    seen: set[tuple] = set()   # 批内去重（best-effort 解析同一文件可能产出多条 (company,date,event_type) 相同的杂行）
+    for r in records:
+        d = r["date"] if isinstance(r["date"], date) else date.fromisoformat(str(r["date"]))
+        key = (r["company"], d, r["event_type"], r["source_file"])
+        if key in seen:
+            stats["skipped"] += 1
+            continue
+        seen.add(key)
+        dup = session.execute(select(StockEvent.id).where(
+            StockEvent.company == key[0], StockEvent.date == key[1],
+            StockEvent.event_type == key[2], StockEvent.source_file == key[3],
+        ).limit(1)).scalar_one_or_none()
+        if dup is not None:
+            stats["skipped"] += 1
+            continue
+        payload = {k: v for k, v in r.items()}
+        payload.setdefault("currency", "USD")
+        payload["date"] = d
+        session.add(StockEvent(**payload))
         stats["inserted"] += 1
     return stats

@@ -76,6 +76,9 @@ def _open_batches(db: Session, entity_id: int, company: str) -> list[dict]:
         HoldingEvent.entity_id == entity_id,
         HoldingEvent.company == company,
         HoldingEvent.shares > 0,
+        # sell/pseudo 是历史/占比标记，非 open 持仓（否则分红/抬升/估值会误计）
+        HoldingEvent.event_type != "sell",
+        HoldingEvent.event_type != "pseudo",
     ).order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()
     return [{"shares": float(r.shares), "unit_price": float(r.unit_price or 0.0),
              "batch_id": r.batch_id} for r in rows]
@@ -153,3 +156,144 @@ def apply_merger(db: Session, spec: dict, source: str | None = None) -> dict:
                 inflow=cash, balance=None, kind="investment_income", note=f"股权事件·{form}"))
 
     return {"new_batches": new, "cash": cash, "closed": closed, "skipped": False}
+
+
+# ---------------------------------------------------------------------------
+# F-P2-02：买入 / FIFO 卖出 / 分红 / 被动抬升（§19.6）
+# ---------------------------------------------------------------------------
+# 通用幂等：每个动作接受 event_id（幂等 nonce），写入 HoldingEvent.source_file；
+# 闸门按 (entity_id, source_file) 判：已存在 → skipped。ledger note 统一打
+# `股票事件·{event_id}`（参照 invest._delete_investment_writes 的 tag 约定，可撤销）：
+#   撤销 = 按 note LIKE '%股票事件·{event_id}%' 删 ledger + source_file==event_id 删 holding_event。
+# ledger kind 复用约束内类型（income/expense/investment/investment_income/pool），不加 DDL。
+# 买入/卖出/分红/抬升与块 A (stock_wealth.market_value_at) 都用 shares×unit_price 口径，
+# 保证「总资产 = 现金 + 专款池 + 持仓市值」不重不漏。
+
+
+def _event_nonce_applied(db: Session, entity_id: int, event_id: str) -> bool:
+    """是否已应用该事件（按 (entity_id, source_file=event_id) 判重）。"""
+    return db.execute(select(HoldingEvent.id).where(
+        HoldingEvent.entity_id == entity_id,
+        HoldingEvent.source_file == event_id).limit(1)).scalar_one_or_none() is not None
+
+
+def apply_buy(db: Session, *, entity_id: int, company: str, ticker: str | None = None,
+              date, unit_price: float, shares: float, event_id: str, account_id: int) -> dict:
+    """买入建仓：写 holding_event(batch) + ledger(现金移出，kind=investment)。
+
+    买入瞬间总资产 = 现金 − 买价 + 持仓(+买价) = 净零，不重不漏。
+    """
+    if _event_nonce_applied(db, entity_id, event_id):
+        return {"event_id": event_id, "entity_id": entity_id, "company": company,
+                "batch_id": None, "shares": shares, "cost_basis": 0.0, "skipped": True}
+    if not (account_id and unit_price and shares > 0):
+        raise ValueError("apply_buy 需 account_id / unit_price>0 / shares>0")
+    batch_id = next(_next_batch_ids(db, 1))
+    db.add(HoldingEvent(entity_id=entity_id, company=company, ticker=ticker, date=date,
+                        event_type="buy", batch_id=batch_id, shares=shares,
+                        unit_price=unit_price, amount=shares * unit_price / 10000.0,
+                        source_file=event_id))
+    # kind='expense'（非 investment）：避免被 pool_in_transit（Σ kind in {investment,pool}）当作
+    # 投资池在途，与持仓市值重复计数；净值由 stock_wealth（holding_event 市值）承载。
+    db.add(LedgerEntry(account_id=account_id, date=date, reason=f"股票买入·{company}",
+                       outflow=shares * unit_price, balance=None, kind="expense",
+                       note=f"股票事件·{event_id}"))
+    return {"event_id": event_id, "entity_id": entity_id, "company": company,
+            "batch_id": batch_id, "shares": shares, "cost_basis": shares * unit_price,
+            "skipped": False}
+
+
+def apply_sell(db: Session, *, entity_id: int, company: str, date, shares: float,
+               sell_price: float, event_id: str, account_id: int) -> dict:
+    """FIFO 卖出：从最早 open batch 扣成本；写 sell 行 + ledger(本金 investment + 盈亏 investment_income)。
+
+    超卖在写入前校验（422），避免中途改库后报错需回滚。非破坏式双写：减原 buy 行 shares（置 0 即结清）
+    + 自留一条 sell 历史行，供日后全事件流 as-of 重放。
+    """
+    if _event_nonce_applied(db, entity_id, event_id):
+        return {"event_id": event_id, "company": company, "sold_shares": shares,
+                "cost_basis": 0.0, "proceeds": 0.0, "realized_pnl": 0.0,
+                "accepted": [], "skipped": True}
+    if not account_id or shares <= 0:
+        raise ValueError("apply_sell 需 account_id / shares>0")
+    rows = db.execute(select(HoldingEvent).where(
+        HoldingEvent.entity_id == entity_id,
+        HoldingEvent.company == company,
+        HoldingEvent.shares > 0,
+        HoldingEvent.event_type != "sell",
+        HoldingEvent.event_type != "pseudo",
+    ).order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()
+    available = sum(float(r.shares) for r in rows)
+    if shares > available:
+        raise ValueError(f"卖出 {shares} 股超持仓，可卖 {available} 股")
+    remaining = float(shares)
+    cost_sold = 0.0
+    accepted: list[tuple] = []
+    for r in rows:
+        if remaining <= 0:
+            break
+        take = min(float(r.shares), remaining)
+        cost_sold += take * float(r.unit_price or 0.0)
+        r.shares = float(r.shares) - take      # 置 0 = 结清，保留历史行
+        accepted.append((r.batch_id, take))
+        remaining -= take
+    cost_sold = round(cost_sold, 6)
+    proceeds = round(float(shares) * float(sell_price), 6)
+    realized_pnl = round(proceeds - cost_sold, 6)
+    ticker = rows[0].ticker if rows else None
+    db.add(HoldingEvent(entity_id=entity_id, company=company, ticker=ticker, date=date,
+                        event_type="sell", shares=float(shares), unit_price=cost_sold / shares,
+                        amount=proceeds / 10000.0, source_file=event_id))
+    # 本金归还现金（kind='income'，非 investment → pool_in_transit 不误判、不与市值重复计数）
+    db.add(LedgerEntry(account_id=account_id, date=date, reason=f"股票卖出·{company}",
+                       inflow=cost_sold, balance=None, kind="income",
+                       note=f"股票事件·{event_id}"))
+    # 盈亏（可负）→ investment_income；两笔合计 = 套现现金 proceeds
+    if realized_pnl:
+        db.add(LedgerEntry(account_id=account_id, date=date, reason=f"股票卖出盈亏·{company}",
+                           inflow=realized_pnl if realized_pnl >= 0 else None,
+                           outflow=-realized_pnl if realized_pnl < 0 else None,
+                           balance=None, kind="investment_income", note=f"股票事件·{event_id}"))
+    return {"event_id": event_id, "company": company, "sold_shares": float(shares),
+            "cost_basis": cost_sold, "proceeds": proceeds, "realized_pnl": realized_pnl,
+            "accepted": accepted, "skipped": False}
+
+
+def apply_dividend(db: Session, *, entity_id: int, company: str, date, per_share: float,
+                   event_id: str, account_id: int) -> dict:
+    """分红结算：每股 × 加权现持仓 → ledger(income)，不写 holding_event（股数/成本不变）。"""
+    existing = db.execute(select(LedgerEntry.id).where(
+        LedgerEntry.note.like(f"%{event_id}%")).limit(1)).scalar_one_or_none()
+    if existing is not None:
+        return {"event_id": event_id, "company": company, "holding_shares": 0.0,
+                "dividend": 0.0, "skipped": True}
+    holding = sum(b["shares"] for b in _open_batches(db, entity_id, company))
+    amount = round(holding * per_share, 6)
+    db.add(LedgerEntry(account_id=account_id, date=date, reason=f"股票分红·{company}",
+                       inflow=amount, balance=None, kind="investment_income",
+                       note=f"股票事件·{event_id}"))
+    return {"event_id": event_id, "company": company, "holding_shares": holding,
+            "dividend": amount, "skipped": False}
+
+
+def apply_passive_uplift(db: Session, *, entity_id: int, company: str, date, to_pct: float | None,
+                         event_id: str, ticker: str | None = None) -> dict:
+    """被动抬升（回购缩股本）：持股不变、无现金动作 → 仅写 pseudo 行更新 pct，不写 ledger。
+
+    本轮实现语义 a（仅更新 pct，持股市值不变）；语义 b（回购缩股本按 to_shares 下调）
+    涉及 unit_price 再平衡 + H-STOCK 联动，留后续（见函数 docstring）。
+    """
+    if _event_nonce_applied(db, entity_id, event_id):
+        return {"event_id": event_id, "company": company, "event_type": "pseudo",
+                "pct": to_pct, "skipped": True}
+    if not _open_batches(db, entity_id, company):
+        return {"event_id": event_id, "company": company, "event_type": "pseudo",
+                "pct": to_pct, "skipped": True}   # 无持仓则无抬升对象
+    # shares=0：该行仅作占比/历史标记，不构成 open 头寸（market_value_at 按 shares>0 排除，
+    # 避免与原 buy 批次重复计数——被动抬升持股不变、市值不变）。
+    db.add(HoldingEvent(entity_id=entity_id, company=company, ticker=ticker, date=date,
+                        event_type="pseudo", batch_id=next(_next_batch_ids(db, 1)),
+                        shares=0.0, unit_price=None, amount=None, pct=to_pct,
+                        source_file=event_id))
+    return {"event_id": event_id, "company": company, "event_type": "pseudo",
+            "pct": to_pct, "skipped": False}

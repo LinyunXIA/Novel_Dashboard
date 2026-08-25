@@ -24,6 +24,7 @@ from app.api.deps import get_db
 from app.api.labor_cost import router as labor_cost_router
 from app.api.movie_events import router as movie_events_router
 from app.api.restricted import router as restricted_router
+from app.api.stock_events import router as stock_events_router
 from app.api.search import router as search_router
 from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
@@ -37,6 +38,7 @@ app = FastAPI(title="Novel Dashboard API", version="0.1")
 app.include_router(ui_ops_router)
 app.include_router(labor_cost_router)
 app.include_router(movie_events_router)
+app.include_router(stock_events_router)
 app.include_router(search_router)
 app.include_router(restricted_router)
 

@@ -58,6 +58,12 @@ def snapshot_as_of(session: Session, as_of_date: date) -> list[dict]:
         rate = usd_rate(session, cur, year)
         if rate is not None:
             family_usd += float(amt) * float(rate)
+    # F-P2-02 §19.6：总资产 = 现金 + 专款池 + 股票持仓市值；持仓市值（USD）进 entity/family 域，
+    # 不进 account 域（持仓不在银行账户）。
+    from app.core.stock_wealth import portfolio_breakdown
+    for eid, usd in portfolio_breakdown(session, as_of_date).items():
+        entity_agg[(eid, "USD")] = entity_agg.get((eid, "USD"), 0.0) + usd
+        family_usd += usd
     for (eid, cur), bal in entity_agg.items():
         out.append({"scope": f"entity:{eid}:{cur}",
                     "value": round(bal, 2), "currency": cur, "year": year})

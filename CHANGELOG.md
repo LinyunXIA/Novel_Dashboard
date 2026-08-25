@@ -3,12 +3,34 @@
 本项目为网文创作数据 Dashboard（Postgres + FastAPI + ingest + React）。  
 开发进度跟踪以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单为准。
 
+---
+
+## [Phase 2 · F-P2-02] — 2026-08-25
+
+**事件·股票：holding_event(batch) + FIFO 成本 + 分红/卖出结算 + 被动抬升，持仓市值并入总资产**（DESIGN §19.6）
+
+- **解析/导入**：`stock_event` 表（镜像 movie_event，`ingest events-stock` 幂等 upsert）+ `event_stock` 解析器实装（best-effort，USD Style A 流水表：虎牙/哔哩/快手，金额即万美金；快手/香港/英国 万港元/万英镑 与 收购/ 子目录留二期/ F-P2-03-04）。dev 库入库 21 条。
+- **成本结算引擎** `app/core/stock_cost.py` 追加：
+  - `apply_buy`：买批次(holding_event batch) + ledger `kind='expense'` 现金移出（非 investment，避免与投资池 `pool_in_transit` 重复计数）。
+  - `apply_sell`（FIFO）：从最早 open batch 扣成本，超卖 422；写 sell 行 + ledger `income`(本金)+`investment_income`(盈亏) 两笔共=套现现金；非破坏双写。
+  - `apply_dividend`：每股×现持仓 → ledger `investment_income`，不落 holding（不污染 open batch）。
+  - `apply_passive_uplift`：仅写 `pseudo` 行(占比标记, shares=0 不构成 open)更新 pct，不写 ledger。
+  - 统一 `event_id`(source_file) 幂等 + ledger note `股票事件·{id}` 打标（可撤销）。
+- **持仓市值入总资产**：新 `app/core/stock_wealth.py`（market_value_at / portfolio_breakdown，Σ open batch shares×unit_price，只进 entity/family 域不进 account 域）接入 `rebuild_snapshots` 与 `calendar.snapshot_as_of`；DESIGN §19.6「总资产=现金+专款池+股票市值」第 3 项首次落地。
+- **API + 前端**：`GET/POST /stock-events(+/events/positions/associate/buy/sell/dividend/passive-uplift)`（写操作 `rebuild_snapshots` 刷新）+「股票事件」屏（持仓表/待关联 buy 关联/手动动作）。
+- **健康校验**：新增 **H-STOCK** 规则（shares>0 但 unit_price 缺失 → warn；持仓引用缺失实体 → crit）。
+- `tests/test_stock_position_fifo.py`(10) + `tests/test_stock_wealth.py`(6) + `tests/test_stock_api.py`(7) + 复跑既有；全量 **322 passed**。
+
+---
+
+## [Phase 2 · F-P2-01] — 2026-08-24
+
 ## [Phase 2 · F-P2-01] — 2026-08-24
 
 **事件·电影：导入 + 不关联 + 同币种 UI 手动关联**（DESIGN §19.6）
 
 - `movie_event` 表 + `event_movie` 解析器（best-effort 正则，8 部：泰坦尼克投资90M/本金90M@1998-09/分红376.74M 全中）+ `ingest events-movie` 导入。
-- 移除解析 Phase 2 早 return：事件类别真正进到 parser（event_stock 仍为桩，留 F-P2-02）。
+- 移除解析 Phase 2 早 return：事件类别真正进到 parser（event_stock 后由 F-P2-02 实装）。
 - API `GET/POST /movie-events(+/link/unlink)`：关联写 投资出/本金返还/分红 ledger（幂等），解关联只清标记不动历史账。
 - 前端「电影事件」屏（未关联列表 + 同币种账户关联 + 已关联/解关联）。
 - `tests/test_movie_event.py`（解析/upsert/phase2 放行/link 幂等）；全量 299 passed。
