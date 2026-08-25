@@ -206,6 +206,46 @@ def check_holding_value(session: Session) -> list[Finding]:
     return finds
 
 
+def check_stock_h2(session: Session) -> list[Finding]:
+    """H2 金额一致·股票（F-P2-04 · DESIGN §10/§19.6）：open 持仓的成本批次自洽。
+
+    R1（warn）：同一 (entity, company) 有 >1 个 **buy 源** open 批次且 unit_price 极差 >3× → 疑混成本系/口径错
+      （只看 buy；split/acquire-* 的成本随链行不参与，避免 DXC 合并日双源成本系误报）。
+    R2（crit）：同一 (entity, company, date) 有 >1 笔 buy/sell 源且 unit_price 不一致 → 同日同公司
+      多来源单价打架。**显式只查 buy/sell 源**（排除 split/acquire-* 行），避免 DXC 合并日多源
+      （2017-04-01 HPE 源与 CSC 源成本系不同）被误判为冲突。
+    """
+    finds: list[Finding] = []
+    r1 = session.execute(
+        select(HoldingEvent.entity_id, HoldingEvent.company,
+               func.count(), func.min(HoldingEvent.unit_price), func.max(HoldingEvent.unit_price))
+        # 只看 buy 源（手动建仓成本）；split/acquire-* 的 unit_price 由成本随链产生，
+        # 同公司多源（如 DXC 合并日 HPE 源 vs CSC 源）成本系差异属正常，不参与离群检测
+        .where(HoldingEvent.shares > 0, HoldingEvent.closed_on.is_(None),
+               HoldingEvent.event_type == "buy")
+        .group_by(HoldingEvent.entity_id, HoldingEvent.company)
+        .having(func.count() > 1)
+    ).all()
+    for eid, comp, cnt, mn, mx in r1:
+        if mn and mx and float(mx) / float(mn) > 3.0:
+            ent = session.get(Entity, eid)
+            finds.append(Finding("H2", "warn", f"{comp} [{ent.name if ent else '?'}]",
+                                 f"{cnt}个 open 批次 unit_price {mn}..{mx}（>3×，疑混成本系）"))
+    r2 = session.execute(
+        select(HoldingEvent.entity_id, HoldingEvent.company, HoldingEvent.date,
+               func.count(), func.min(HoldingEvent.unit_price), func.max(HoldingEvent.unit_price))
+        .where(HoldingEvent.event_type.in_(("buy", "sell")),
+               HoldingEvent.unit_price.isnot(None))
+        .group_by(HoldingEvent.entity_id, HoldingEvent.company, HoldingEvent.date)
+        .having(func.count() > 1,
+                func.min(HoldingEvent.unit_price) != func.max(HoldingEvent.unit_price))
+    ).all()
+    for eid, comp, d, cnt, mn, mx in r2:
+        finds.append(Finding("H2", "crit", f"{comp} {d}",
+                             f"{cnt}笔 buy/sell 源 unit_price {mn} ≠ {mx}"))
+    return finds
+
+
 def run_report(session: Session) -> list[dict]:
     """全库健康校验汇总：H1..H5 + H-STOCK。"""
     all_finds: list[Finding] = []
@@ -217,6 +257,7 @@ def run_report(session: Session) -> list[dict]:
     all_finds += check_h4_balance_chain(session)
     all_finds += check_h5_dangling(session)
     all_finds += check_holding_value(session)
+    all_finds += check_stock_h2(session)
     return [f.as_dict() for f in all_finds]
 
 
