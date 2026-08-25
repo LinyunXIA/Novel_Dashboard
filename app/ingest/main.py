@@ -76,13 +76,14 @@ def ingest(
     typer.echo(f"[{cfg.env}] {stats['summary']}")
 
 
-def import_all(session, source_dir, log=None) -> dict:
+def import_all(session, source_dir, log=None, force_files=None) -> dict:
     """扫描 source_dir → 解析 → 冲突检测 → 落库 → 重算快照（F-P0-02..06 主链路）。
 
     issue #68 抽取自原 ingest 命令体以便测试；幂等语义：
     - 所有文件类目经 _file_import_state 判定 new/unchanged/changed，
       unchanged 静默跳过、changed 提示待 P2 版本决策并跳过；
     - writer 层另有自然键去重兜底（初始现金 / 家庭支出），兼容无版本记录的存量库。
+    - force_files（F-P2-06）：`set[str]`，命中文件强制重导入（版本决策「采纳新版本」）。
     commit 前整批事务，失败回滚（由调用方管理 session/commit）。
     """
     log = log or (lambda msg: print(msg))
@@ -119,7 +120,7 @@ def import_all(session, source_dir, log=None) -> dict:
             tl_n += writer.import_timeline(session, r.records)["n"]
         if r.category == "bank" and r.records:
             src = r.file
-            if _skip_by_state(session, r, source_dir, log):
+            if _skip_by_state(session, r, source_dir, log, force_files):
                 continue
             crep = conflict.check_bank_import_conflict(session, src, r.records)
             if crep.blocked:
@@ -132,14 +133,14 @@ def import_all(session, source_dir, log=None) -> dict:
             bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
             _record_current_version(session, r, source_dir)
         if r.category == "initial_asset" and r.records:
-            if _skip_by_state(session, r, source_dir, log):
+            if _skip_by_state(session, r, source_dir, log, force_files):
                 continue
             st = writer.import_initial_assets(session, r.records)
             ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
             _record_current_version(session, r, source_dir)
         if r.category in ("income_security", "income_rent", "income_property",
                           "income_shop", "salary") and r.records:
-            if _skip_by_state(session, r, source_dir, log):
+            if _skip_by_state(session, r, source_dir, log, force_files):
                 continue
             crep = conflict.check_income_stream_conflict(
                 session, r.file, _normalize_conflict_recs(r.category, r.records))
@@ -161,7 +162,7 @@ def import_all(session, source_dir, log=None) -> dict:
             if r.category == "salary": sal += writer.import_salary(session, r.records)["stream"]
             _record_current_version(session, r, source_dir)
         if r.category == "household_expense" and r.records:
-            if _skip_by_state(session, r, source_dir, log):
+            if _skip_by_state(session, r, source_dir, log, force_files):
                 continue
             he += writer.import_household_expense(session, r.records)["n"]
             _record_current_version(session, r, source_dir)
@@ -266,8 +267,14 @@ def _file_import_state(session, r, source_dir) -> dict:
     return {"status": "unchanged"}
 
 
-def _skip_by_state(session, r, source_dir, log) -> bool:
-    """按文件状态决定是否跳过导入：changed 提示并跳过、unchanged 静默跳过。"""
+def _skip_by_state(session, r, source_dir, log, force_files=None) -> bool:
+    """按文件状态决定是否跳过导入：changed 提示并跳过、unchanged 静默跳过。
+
+    force_files（F-P2-06）：被强制重导入的文件即便 unchanged/changed 也不跳过
+    （版本决策「采纳新版本」时复用整条 import_all 管道重导入该文件）。
+    """
+    if force_files and r.file in force_files:
+        return False
     st = _file_import_state(session, r, source_dir)
     if st["status"] == "changed":
         log(f"   ⚠ {r.file}: 检测到内容变更，待版本决策流程处理（P2）；本次跳过")
