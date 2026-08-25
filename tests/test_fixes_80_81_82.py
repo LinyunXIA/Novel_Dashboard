@@ -42,7 +42,7 @@ def _seed(session):
     session.add(LedgerEntry(account_id=a.id, date=date(1974, 1, 1),
                             inflow=1000, balance=1000, kind="income", reason="初始现金"))
     # 同一主体同一年不同地区（欧洲→比利时、英国→英国），验证同年多地区互不阻塞
-    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1985, rate=10.0))
+    session.add(ReturnCurve(country="欧洲", risk_lvl="R3", year=1985, rate=10.0))
     session.add(ReturnCurve(country="英国", risk_lvl="R3", year=1985, rate=12.0))
     session.flush()
     return h.id, a.id

@@ -57,7 +57,7 @@ def _year_for_line(s: str, fallback: int | None) -> int | None:
     return int(fm.group(0)) if fm else fallback
 
 
-def parse_fx(path: Path) -> list[dict]:
+def parse_fx(path: Path) -> tuple[list[dict], list[str]]:
     """支持两种格式（DESIGN §3）：
 
     - `1EUR=40.3399BEF` / `1 美元 = 8.2789 元人民币`（格式二）
@@ -66,6 +66,9 @@ def parse_fx(path: Path) -> list[dict]:
     行内年份优先于文件头（issue #25）：跨年文件（如 `1999-2002.md`）每行独立定年；
     行内无 token 时回退到文件级（首个 4 位 token 或文件名年份）；
     全无则 year=NULL（基准常量折算）。
+
+    返回 (records, warnings)：文件含 markdown 表格却解析出 0 条时告警
+    （issue #115 连锁：新表头曾静默产出 0 条，数据调整员无从察觉）。
     """
     recs: list[dict] = []
     lines = _lines(path)
@@ -98,7 +101,9 @@ def parse_fx(path: Path) -> list[dict]:
             code = _cur(t.group(1)) or t.group(2).upper()
             recs.append({"fx_from": "USD", "rate": parse_number(t.group(3)),
                          "fx_to": code, "year": line_year})
-    return recs
+    if not recs and any(l.strip().startswith("|") for l in lines):
+        return [], [f"汇率文件含 markdown 表格但解析出 0 条记录（表头格式不识别？）"]
+    return recs, []
 
 
 _CN_CURRENCY = {
@@ -115,6 +120,13 @@ def _cn_cur(name: str) -> str | None:
     name = name.strip()
     if not name:
         return None
+    # 括号内 ISO 码兜底（issue：新表头形如「瑞典克朗(SEK)」「丹麦克朗(DKK)」）
+    m = re.search(r"\(\s*([A-Za-z]{3})\s*\)", name)
+    if m:
+        up = m.group(1).upper()
+        if up in ("USD", "EUR", "BEF", "LUF", "NLG", "DKK", "SEK", "HKD",
+                  "CNY", "NOK", "JPY", "GBP"):
+            return up
     for k, v in _CN_CURRENCY.items():
         if k in name:
             return v
@@ -122,18 +134,21 @@ def _cn_cur(name: str) -> str | None:
 
 
 def _parse_fx_wide_table(lines: list[str]) -> list[dict]:
-    """格式三：宽表，表头含「年份」+中文币种名，数据行 = 年份 + 各币种兑USD汇率。
+    """格式三：宽表，表头含「年份」(或 Year) + 币种列，数据行 = 年份 + 各币种兑USD汇率。
 
-    语义：rate = 1 USD 兑换该币 → fx_from='USD', fx_to=<ver币种>，year=该行年份。
-    值 `-` 表示该年无数据（不产出记录）。
+    列名支持中文币种名与「名称(CODE)」括号码两种写法；值 `-` 表示该年无数据。
     """
     header: list[str] = []
     for i, line in enumerate(lines):
         s = line.strip()
-        if not s.startswith("|") or "年份" not in s:
+        if not s.startswith("|"):
+            continue
+        # 表头识别：中文「年份」或英文「Year」（issue：新版权威汇率表表头）
+        is_header = "年份" in s or bool(re.search(r"\|\s*year\s*\|", s, re.I))
+        if not is_header:
             continue
         hl = [c.strip() for c in s.strip("|").split("|")] or ["年份"]
-        if any(h in _FX_WIDE_HEADERS for h in hl):
+        if any(h in _FX_WIDE_HEADERS or _cn_cur(h) for h in hl):
             header = hl
             # 从 i+1 起扫数据行
             cur_year = None
@@ -289,7 +304,7 @@ def parse_timeline(path: Path) -> tuple[list[dict], list[str]]:
                 if d is None:
                     d = resolve_date(int(y.group(0)))  # 超规则 → 当年默认(12-30)
                     warnings.append(
-                        f"时间线日期无法按 §6.2 解析「{ds}」，回退 {d.isoformat()}；建议补 date_rule")
+                        f"时间线日期无法按 §6.2 解析「{ds}」，回退 {d.isoformat()}；补 date_rule：POST /api/v1/date-rules（pattern=正则, resolve='MM-DD'）后重导")
                 recs.append({
                     "event_year": d.year,
                     "event_date": d,
@@ -734,7 +749,7 @@ def parse_bank(path: Path) -> tuple[list[dict], list[str]]:
                 d, rule = parse_date_cell(cells[0])
                 if d is None:
                     warnings.append(
-                        f"银行流水日期无法按 §6.2 解析「{cells[0].strip()}」，该行跳过；建议补 date_rule")
+                        f"银行流水日期无法按 §6.2 解析「{cells[0].strip()}」，该行跳过；补 date_rule：POST /api/v1/date-rules（pattern=正则, resolve='MM-DD'）后重导")
                     i += 1
                     continue
                 cur_seg["rows"].append({

@@ -34,7 +34,7 @@ class TestParseFxLineYear:
             "1EUR=40.3399LUF\n"
             "1EUR=2.20371NLG\n"
         ))
-        recs = parse_fx(p)
+        recs, _w = parse_fx(p)
         assert len(recs) == 3
         # 文件级 fallback 应归到 1999（从首个 4 位 token 或文件名）
         years = {r["year"] for r in recs}
@@ -52,7 +52,7 @@ class TestParseFxLineYear:
             "2002\n"
             "1EUR=40.3399BEF\n"
         ))
-        recs = parse_fx(p)
+        recs, _w = parse_fx(p)
         assert len(recs) == 4
         # 每行应取其节标题年份，不再全部归到 1999
         assert [r["year"] for r in recs] == [1999, 2000, 2001, 2002], \
@@ -64,7 +64,7 @@ class TestParseFxLineYear:
             "# 基准汇率（无年份）\n"
             "1EUR=40.3399BEF\n"
         ))
-        recs = parse_fx(p)
+        recs, _w = parse_fx(p)
         assert len(recs) == 1
         assert recs[0]["year"] is None, \
             f"全无年份必须落 NULL，实际 {recs[0]['year']}"
@@ -75,7 +75,7 @@ class TestParseFxLineYear:
             "Belgian Franc  BEF  32.14\n"
             "Dutch Guilder  NLG  1.61\n"
         ))
-        recs = parse_fx(p)
+        recs, _w = parse_fx(p)
         assert len(recs) == 2
         assert all(r["year"] == 1995 for r in recs)
         assert {r["fx_to"] for r in recs} == {"BEF", "NLG"}
@@ -86,7 +86,7 @@ class TestParseFxLineYear:
             "2000\n"
             "Belgian Franc  BEF  32.14\n"
         ))
-        recs = parse_fx(p)
+        recs, _w = parse_fx(p)
         assert len(recs) == 1
         # 行内 2000 优先于文件名 1995
         assert recs[0]["year"] == 2000

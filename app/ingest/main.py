@@ -31,8 +31,14 @@ def _session_for(env: str):
     return make_sessionmaker(env)()
 
 
+def _resolved_env(env: str | None) -> str:
+    """解析 --env/APP_ENV 回退链的实际环境名（issue #107：缺省不再硬编码 dev，
+    未传 --env 时回落 APP_ENV；回显一律用本函数结果，防打印 None）。"""
+    return get_config(env).env
+
+
 @app.command()
-def ping(env: str = typer.Option("dev", "--env")):
+def ping(env: str = typer.Option(None, "--env")):
     """数据库连通自检（按 `--env` 真正打到对应 DSN）。"""
     cfg = get_config(env)
     ok = check_connection_for(env)
@@ -42,7 +48,7 @@ def ping(env: str = typer.Option("dev", "--env")):
 
 @app.command()
 def run(
-    env: str = typer.Option("dev", "--env"),
+    env: str = typer.Option(None, "--env"),
     full: bool = typer.Option(False, "--full", help="全量重建"),
 ):
     """扫描输入目录 → detect → parse → 输出报告（F-P0-02；不落库）。"""
@@ -63,7 +69,11 @@ def run(
 
 @app.command()
 def ingest(
-    env: str = typer.Option("dev", "--env"),
+    env: str = typer.Option(None, "--env"),
+    force: bool = typer.Option(False, "--force",
+                               help="跳过文件指纹 gate 重导四类收益文件"
+                                    "（先清该文件旧 income_stream/finance 镜像行）；"
+                                    "用于展开因子等代码口径变更后的重浇灌"),
 ):
     """F-P0-04..06 落库：从 Design_Folder（source_dir）读取基础数据并入库。
 
@@ -71,25 +81,68 @@ def ingest(
     """
     cfg = get_config(env)
     with _session_for(env) as s:
-        stats = import_all(s, cfg.source_dir, log=typer.echo)
+        stats = import_all(s, cfg.source_dir, log=typer.echo, force=force)
         s.commit()          # issue #68：import_all 只 flush；commit 由命令层负责（勿丢）
     typer.echo(f"[{cfg.env}] {stats['summary']}")
 
 
-def import_all(session, source_dir, log=None) -> dict:
+def _reload_date_rules(session) -> int:
+    """把 DB 中的用户 date_rule 装载进 normalize 进程内缓存（issue #119 消费侧）。"""
+    from sqlalchemy import select as _sel
+    from app.model import DateRule
+    from app.ingest.normalize import load_date_rules
+    rows = session.execute(_sel(DateRule.id, DateRule.pattern, DateRule.resolve)).all()
+    return load_date_rules(rows)
+
+
+def _earliest_affected_year(r) -> int | None:
+    """§9.1 受影响起点（issue #120）：从已解析记录推导最早影响年。
+
+    返回 None = 全局性内容（人物/收益曲线/汇率/初始资产/祖产债券自 1947 展开）
+    → 调用方按 1947 全量处理；否则返回记录中的最小年份，重算只向后传播。
+    """
+    cat = r.category
+    if cat in ("character", "return_table", "fx", "initial_asset", "income_security"):
+        return None
+    if cat == "timeline":
+        ys = [int(x["event_year"]) for x in r.records if x.get("event_year")]
+        return min(ys) if ys else None
+    if cat == "income_shop":
+        ys = [int(x["y0"]) for x in r.records if x.get("y0")]
+        return min(ys) if ys else None
+    if cat == "income_property":
+        return 1974  # 展开窗口固定起点
+    if cat == "income_rent":
+        ys = [int(x.get("start") or 1974) for x in r.records]
+        return min(ys) if ys else None
+    if cat == "bank":
+        ys = [row["date"].year for seg in r.records for row in (seg.get("rows") or [])
+              if getattr(row.get("date"), "year", None)]
+        return min(ys) if ys else None
+    return None  # salary/household 等结构未逐年暴露 → 保守全量
+
+
+def import_all(session, source_dir, log=None, force: bool = False) -> dict:
     """扫描 source_dir → 解析 → 冲突检测 → 落库 → 重算快照（F-P0-02..06 主链路）。
 
     issue #68 抽取自原 ingest 命令体以便测试；幂等语义：
     - 所有文件类目经 _file_import_state 判定 new/unchanged/changed，
       unchanged 静默跳过、changed 提示待 P2 版本决策并跳过；
     - writer 层另有自然键去重兜底（初始现金 / 家庭支出），兼容无版本记录的存量库。
+    - force=True（issue #114）：仅四类收益文件跳过指纹 gate，且先清除该文件
+      旧 income_stream + finance 镜像行再重导（展开因子等代码口径变更后的重浇灌）；
+      salary 涉及 ledger 行、不支持 force。
     commit 前整批事务，失败回滚（由调用方管理 session/commit）。
     """
     log = log or (lambda msg: print(msg))
+    n_rules = _reload_date_rules(session)
+    if n_rules:
+        log(f"   ✓ 已装载用户 date_rule {n_rules} 条（超规则日期将按其解析）")
     ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0
     sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; bank_n = 0; bank_seg_skip = 0
     blocked_files = 0
     soft_warnings = 0
+    imported_rs: list = []   # issue #120：本批实际落库的文件，用于推导最小传播起点
     job: dict = {}
     fx_files = []
     rep = run_ingest(source_dir)
@@ -102,6 +155,11 @@ def import_all(session, source_dir, log=None) -> dict:
         rep.ok,
         key=lambda r: (_ORDER.index(r.category) if r.category in _ORDER else 99, r.file),
     )
+    # issue #118：解析失败也落库（level='error'），不再只留在 run 报告里
+    for r in rep.failed:
+        _record_parse_error(session, r.file, r.category, r.error)
+    if rep.failed:
+        log(f"   ⚠ {len(rep.failed)} 个文件解析失败，已记入 ingest_report")
     for r in ordered:
         if r.category == "stock_tx" and r.records:
             # issue #70：股票台账解析成功但持仓/事件落库属 Phase 2（DESIGN §19.6），显式说明而非静默
@@ -110,12 +168,15 @@ def import_all(session, source_dir, log=None) -> dict:
                 f"持仓/事件落库属 Phase 2（§19.6），本次跳过")
             continue
         if r.category == "character" and r.records:
+            imported_rs.append(r)
             ck += writer.import_characters(session, r.records, r.file)["imported"]
         if r.category == "return_table" and r.records:
+            imported_rs.append(r)
             rcur += writer.import_return_curves(session, r.records)["n"]
         if r.category == "fx" and r.records:
             fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
         if r.category == "timeline" and r.records:
+            imported_rs.append(r)
             tl_n += writer.import_timeline(session, r.records)["n"]
         if r.category == "bank" and r.records:
             src = r.file
@@ -126,21 +187,33 @@ def import_all(session, source_dir, log=None) -> dict:
                 blocked_files += 1
                 for p in crep.problems:
                     log(f"   ❌ {src}: [{p['rule']}] {p['line']}: {p['detail']}")
+                _record_findings(session, src, crep)
                 continue
+            _record_findings(session, src, crep)
             soft_warnings += _log_soft(log, src, crep)
             st = writer.import_bank(session, r.records, source_file=src)
             bank_n += st["ledger"]; bank_seg_skip += st["skipped"]
             _record_current_version(session, r, source_dir)
+            imported_rs.append(r)
         if r.category == "initial_asset" and r.records:
             if _skip_by_state(session, r, source_dir, log):
                 continue
             st = writer.import_initial_assets(session, r.records)
             ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
             _record_current_version(session, r, source_dir)
+            imported_rs.append(r)
         if r.category in ("income_security", "income_rent", "income_property",
                           "income_shop", "salary") and r.records:
-            if _skip_by_state(session, r, source_dir, log):
+            if not force and _skip_by_state(session, r, source_dir, log):
                 continue
+            if force:
+                # issue #114：force 仅支持四类收益文件（只落 income_stream+finance 镜像，
+                # 可按 source_file 安全清除）；salary 涉及 ledger 行，维持跳过。
+                if r.category == "salary":
+                    log(f"   ⏭ {r.file}: --force 不支持薪资文件（涉及 ledger 行），跳过")
+                    continue
+                purged = _purge_income_derived(session, r.file)
+                log(f"   ♻ {r.file}: 清除旧派生行 {purged} 条后重导")
             crep = conflict.check_income_stream_conflict(
                 session, r.file, _normalize_conflict_recs(r.category, r.records))
             # issue #72：H1 增量瘦版（收益年份 vs 编年史覆盖）随 H2 一并预检
@@ -150,7 +223,9 @@ def import_all(session, source_dir, log=None) -> dict:
                 blocked_files += 1
                 for p in crep.problems:
                     log(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
+                _record_findings(session, r.file, crep)
                 continue
+            _record_findings(session, r.file, crep)
             soft_warnings += _log_soft(log, r.file, crep)
             for rec in r.records:
                 rec.setdefault("source_file", r.file)
@@ -160,35 +235,59 @@ def import_all(session, source_dir, log=None) -> dict:
             if r.category == "income_shop": shop += writer.import_income_shop(session, r.records)["stream"]
             if r.category == "salary": sal += writer.import_salary(session, r.records)["stream"]
             _record_current_version(session, r, source_dir)
+            imported_rs.append(r)
         if r.category == "household_expense" and r.records:
             if _skip_by_state(session, r, source_dir, log):
                 continue
             he += writer.import_household_expense(session, r.records)["n"]
             _record_current_version(session, r, source_dir)
-    # —— 汇率两轮：权威文件(W全量)先入库为基准；其它 fx 文件检测与权威冲突，冲突则拦 ——
+            imported_rs.append(r)
+    # —— 汇率两轮（issue #116：接入文件指纹 gate；权威表变更 → upsert 更新）——
     authority = [r for r in fx_files if conflict.is_authority_fx(r.file)]
     others = [r for r in fx_files if not conflict.is_authority_fx(r.file)]
     for r in authority:
-        fx_total += writer.import_fx(session, r.records)["n"]
+        st = _file_import_state(session, r, source_dir)
+        if st["status"] == "unchanged":
+            continue
+        # new → insert-only 即可；changed → 权威表为基准，同键不同值 upsert 覆盖
+        res = writer.import_fx(session, r.records, update=(st["status"] == "changed"))
+        fx_total += res["n"]
+        imported_rs.append(r)
+        if st["status"] == "changed":
+            log(f"   ♻ {r.file}: 权威汇率表重导，更新 {res['updated']} / 新增 {res['n']} 条")
+        _record_current_version(session, r, source_dir)
     for r in others:
+        if _skip_by_state(session, r, source_dir, log):
+            continue
         crep = conflict.check_fx_authority_conflict(session, r.file, r.records)
         # issue #72：H3 链式闭合增量预检（新汇率 ∪ DB 视图，两跳 vs 直接 >0.5% → 挡）
         crep.merge(conflict.check_fx_chain_closure(session, r.file, r.records))
         if crep.blocked:
             log(f"   ⚠ fx冲突拦截 {r.file}: {len(crep.problems)} 处（以权威表为准）")
             blocked_files += 1
+            _record_findings(session, r.file, crep)
             continue
+        _record_findings(session, r.file, crep)
         soft_warnings += _log_soft(log, r.file, crep)
         fx_total += writer.import_fx(session, r.records)["n"]
+        _record_current_version(session, r, source_dir)
+        imported_rs.append(r)
     cc = writer.close_2002_currency(session)
     closed = cc["closed"]
-    # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）——
-    if not blocked_files:
-        from app.core.recompute import recompute_all, record_recompute_done
-        from app.core.snapshot import rebuild_snapshots as _rebuild
-        recompute_all(session, 1947)
-        _rebuild(session, range(1947, 2026), from_year=1947)
-        job = record_recompute_done(session, 1947, reason="ingest")
+    # —— DESIGN §9 摄入因果链尾巴：增量重算 + 重建快照 + recompute-done 通知（issue #13）
+    # issue #117：重算不再被同批 hard-block 文件连坐搁置——被拦文件本就不入库，
+    # 已成功入库文件的余额/快照必须及时收敛到一致状态。
+    from app.core.recompute import recompute_all, record_recompute_done
+    from app.core.snapshot import rebuild_snapshots as _rebuild
+    # issue #120：最小传播起点——本批成功导入文件的最早影响年；全局性内容 → 1947
+    affected = [_earliest_affected_year(r) for r in imported_rs]
+    start_year = 1947 if any(y is None for y in affected) else min(
+        (y for y in affected if y is not None), default=1947)
+    recompute_all(session, start_year)
+    _rebuild(session, range(1947, 2026), from_year=start_year)
+    job = record_recompute_done(
+        session, start_year,
+        reason="ingest" if not blocked_files else f"ingest(部分：{blocked_files} 文件被拦)")
     session.flush()
     summary = (
         f"落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、"
@@ -207,6 +306,55 @@ def import_all(session, source_dir, log=None) -> dict:
 
 
 # ---- 收益/银行文件的幂等 + 内容变更提示（issue #14；issue #68 通用化） ----
+
+def _purge_income_derived(session, source_file: str) -> int:
+    """清除某收益文件的历史派生行（income_stream + finance_entry 镜像）。
+
+    issue #114：--force 重导前的清场步骤；两类行都带 source_file 标记，
+    不触碰 ledger/entity 等其他数据。
+    """
+    from app.model import FinanceEntry, IncomeStream
+    n = 0
+    for model in (IncomeStream, FinanceEntry):
+        rows = session.execute(
+            _select_model_by_source(model, source_file)).scalars().all()
+        for row in rows:
+            session.delete(row)
+            n += 1
+    session.flush()
+    return n
+
+
+def _select_model_by_source(model, source_file: str):
+    from sqlalchemy import select
+    return select(model).where(model.source_file == source_file)
+
+
+def _record_findings(session, file_path: str, crep) -> None:
+    """冲突报告落库（issue #118 · §11.4）：problems→block、warnings→warn。
+
+    此前仅 stdout，进程结束即失；现与 echo 并行写入 ingest_report 表，
+    供数据调整员事后回看与「导入状态」屏展示。
+    """
+    from app.model import IngestReport
+    for p in crep.problems:
+        session.add(IngestReport(
+            file_path=file_path, rule=p.get("rule"), level="block",
+            line=p.get("line") if isinstance(p.get("line"), int) else None,
+            detail=str(p.get("detail", ""))))
+    for w in crep.warnings:
+        session.add(IngestReport(
+            file_path=file_path, rule=w.get("rule"), level="warn",
+            line=w.get("line") if isinstance(w.get("line"), int) else None,
+            detail=str(w.get("detail", ""))))
+
+
+def _record_parse_error(session, file_path: str, category: str, error: str | None) -> None:
+    """解析失败落库（issue #118：level='error'，需人工处理）。"""
+    from app.model import IngestReport
+    session.add(IngestReport(
+        file_path=file_path, rule=None, level="error", line=None,
+        detail=f"[{category}] {error or '解析失败'}"))
 
 def _log_soft(log, file: str, crep) -> int:
     """输出软警告（§11.4「标」：入库但高亮），返回条数（issue #72）。"""
@@ -324,12 +472,12 @@ _CAT_STREAM = {"income_security": "security", "income_rent": "rent",
 
 
 @app.command()
-def health(env: str = typer.Option("dev", "--env")):
+def health(env: str = typer.Option(None, "--env")):
     """运行全库健康校验（H1-H5）并输出问题清单。"""
     from app.core.health import run_report, summarize
     with _session_for(env) as s:
         summ = summarize(s)
-        typer.echo(f"[{env}] 健康校验汇总（H1-H5）：")
+        typer.echo(f"[{_resolved_env(env)}] 健康校验汇总（H1-H5）：")
         for rule in ("H1", "H2", "H3", "H4", "H5"):
             x = summ.get(rule, {"total": 0})
             typer.echo(f"  {rule}: {x['total']} 项"
@@ -339,7 +487,7 @@ def health(env: str = typer.Option("dev", "--env")):
 
 
 @app.command()
-def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Option(1947, "--from")):
+def recompute(env: str = typer.Option(None, "--env"), from_year: int = typer.Option(1947, "--from")):
     """全库增量重算：从受影响起点年向后滚动账户余额（F-P0-12）。
 
     完成后写 recompute_job + recompute-done 通知（DESIGN §9.2 步骤3-4；issue #13）。
@@ -354,25 +502,25 @@ def recompute(env: str = typer.Option("dev", "--env"), from_year: int = typer.Op
         job = record_recompute_done(s, from_year, reason="recompute")
         s.commit()
         total_updated = sum(r["updated"] for r in res)
-        typer.echo(f"[{env}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起)"
+        typer.echo(f"[{_resolved_env(env)}] 重算 {len(res)} 个账户，更新 {total_updated} 行余额（自 {from_year} 起)"
                    f"；job#{job['job_id']} 通知#{job['notification_id']}")
 
 
 @app.command()
-def calendar(env: str = typer.Option("dev", "--env"), as_of: str = typer.Option("2001-12-30", "--as-of")):
+def calendar(env: str = typer.Option(None, "--env"), as_of: str = typer.Option("2001-12-30", "--as-of")):
     """全局日历游标：按截至日期读取快照。"""
     from datetime import date
     from app.core.calendar import snapshot_as_of
     d = date.fromisoformat(as_of)
     with _session_for(env) as s:
         snaps = snapshot_as_of(s, d)
-        typer.echo(f"[{env}] 截至 {d} 快照 {len(snaps)} 条：")
+        typer.echo(f"[{_resolved_env(env)}] 截至 {d} 快照 {len(snaps)} 条：")
         for x in snaps:
             typer.echo(f"  {x['scope']}: {x['value']:,.0f} ({x['currency']})")
 
 
 @app.command()
-def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(2001, "--year")):
+def wealth(env: str = typer.Option(None, "--env"), year: int = typer.Option(2001, "--year")):
     """财富曲线视图：某年家族合计(USD) + 各币种分项。
 
     汇率缺失币种不计入合计，并在底部显式告警（issue #2 修复：杜绝 1.0 静默 fallback）。
@@ -381,7 +529,7 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
     with _session_for(env) as s:
         w = wealth_series(s, year, year)
         d = w.get(year, {})
-        typer.echo(f"[{env}] {year} 家族合计(展示USD) = {d.get('family_total_usd', 0):,.0f}")
+        typer.echo(f"[{_resolved_env(env)}] {year} 家族合计(展示USD) = {d.get('family_total_usd', 0):,.0f}")
         for cur, val in d.get("currencies", {}).items():
             typer.echo(f"   {cur}: {val:,.0f}")
         missing = d.get("missing_rates", [])
@@ -393,7 +541,7 @@ def wealth(env: str = typer.Option("dev", "--env"), year: int = typer.Option(200
 
 
 @app.command()
-def snapshot(env: str = typer.Option("dev", "--env"),
+def snapshot(env: str = typer.Option(None, "--env"),
              from_year: int = typer.Option(1947, "--from",
                                             help="仅重建 from_year 起的快照（旧段保留）")):
     """重建逐年 as-of 快照（account/entity/family 三层；F-P0-08 + issue #12）。"""
@@ -401,11 +549,11 @@ def snapshot(env: str = typer.Option("dev", "--env"),
     with _session_for(env) as s:
         r = rebuild_snapshots(s, range(from_year, 2026))
         s.commit()
-        typer.echo(f"[{env}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
+        typer.echo(f"[{_resolved_env(env)}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
 
 
 @app.command()
-def labor_baseline(env: str = typer.Option("dev", "--env"),
+def labor_baseline(env: str = typer.Option(None, "--env"),
                    office: str = typer.Option("", "--office", help="仅采集指定税率 office（缺省全部）")):
     """用工成本基准落库（API② · F-P1-10）：工资(10区)+CPI(10区)+税率(12 office)。
 
@@ -422,13 +570,13 @@ def labor_baseline(env: str = typer.Option("dev", "--env"),
         s.commit()
     for k, v in r.items():
         if isinstance(v, dict):
-            typer.echo(f"[{env}] {k}: {v}")
+            typer.echo(f"[{_resolved_env(env)}] {k}: {v}")
         else:
-            typer.echo(f"[{env}] {k}: {v}")
+            typer.echo(f"[{_resolved_env(env)}] {k}: {v}")
 
 
 @app.command()
-def search_index(env: str = typer.Option("dev", "--env"),
+def search_index(env: str = typer.Option(None, "--env"),
                  source: str = typer.Option("", "--source", help="仅索引指定 source（缺省全部）")):
     """统一搜索索引构建（F-P1-08 · DESIGN §18）：条目→embedding 落 pgvector。
 
@@ -443,11 +591,11 @@ def search_index(env: str = typer.Option("dev", "--env"),
         except LlmUnavailable as e:
             typer.secho(f"✗ {e}（请先启动本地 omlx:8000）", fg=typer.colors.RED)
             raise typer.Exit(1)
-        typer.echo(f"[{env}] 索引完成：{r}")
+        typer.echo(f"[{_resolved_env(env)}] 索引完成：{r}")
 
 
 @app.command()
-def finance_backfill(env: str = typer.Option("dev", "--env")):
+def finance_backfill(env: str = typer.Option(None, "--env")):
     """F-P1-07 财务收支回填：把 issue #80 前已导入的 income_stream/家庭支出 镜像到 finance_entry。
 
     现有真实库数据早于 _mirror_to_finance，重浇灌幂等跳过 → 财务收支屏无数据；此命令补上。
@@ -456,19 +604,19 @@ def finance_backfill(env: str = typer.Option("dev", "--env")):
     with _session_for(env) as s:
         r = backfill_finance_entries(s)
         s.commit()
-        typer.echo(f"[{env}] 财务收支回填：收入 {r['income']}、支出 {r['expense']}"
+        typer.echo(f"[{_resolved_env(env)}] 财务收支回填：收入 {r['income']}、支出 {r['expense']}"
                    f"（跳过 收入{r['skipped_income']}/支出{r['skipped_expense']}）")
 
 
 @app.command()
-def events_movie(env: str = typer.Option("dev", "--env")):
+def events_movie(env: str = typer.Option(None, "--env")):
     """F-P2-01 事件·电影导入：扫 基准/事件/电影/ → 解析 → 落库 movie_event（幂等 upsert）。"""
     from app.ingest.parsers.event_movie import parse_event_movie
     from app.ingest.writer import import_movie_events
     cfg = get_config(env)
     base = cfg.source_dir / "基准" / "事件" / "电影"
     if not base.exists():
-        typer.echo(f"[{env}] 无电影事件目录: {base}")
+        typer.echo(f"[{_resolved_env(env)}] 无电影事件目录: {base}")
         return
     all_records = []
     for f in sorted(base.glob("*.md")):
@@ -476,11 +624,11 @@ def events_movie(env: str = typer.Option("dev", "--env")):
     with _session_for(env) as s:
         r = import_movie_events(s, all_records)
         s.commit()
-    typer.echo(f"[{env}] 电影事件导入 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
+    typer.echo(f"[{_resolved_env(env)}] 电影事件导入 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}")
 
 
 @app.command()
-def events_stock(env: str = typer.Option("dev", "--env")):
+def events_stock(env: str = typer.Option(None, "--env")):
     """F-P2-02 事件·股票导入：扫 基准/事件/股票/ 顶层 USD Style A → 解析 → 落库 stock_event（幂等）。
 
     阶段一只接受 USD 流水表（虎牙/哔哩等根级 *.md）；快手/香港/英国（万港元/万英镑）与
@@ -491,7 +639,7 @@ def events_stock(env: str = typer.Option("dev", "--env")):
     cfg = get_config(env)
     base = cfg.source_dir / "基准" / "事件" / "股票"
     if not base.exists():
-        typer.echo(f"[{env}] 无股票事件目录: {base}")
+        typer.echo(f"[{_resolved_env(env)}] 无股票事件目录: {base}")
         return
     all_records = []
     for f in sorted(base.glob("*.md")):   # 仅顶层否（收购/英国/香港 子目录本轮跳过）
@@ -510,11 +658,13 @@ def events_stock(env: str = typer.Option("dev", "--env")):
                 blocked += 1
                 for p in crep.problems:
                     typer.echo(f"  ❌ [{p['rule']}] {src}: {p['detail']}")
+                _record_findings(s, src, crep)   # issue #118
                 continue
+            _record_findings(s, src, crep)
             ok_records.extend(recs)
         r = import_stock_events(s, ok_records)
         s.commit()
-    typer.echo(f"[{env}] 股票事件解析 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}"
+    typer.echo(f"[{_resolved_env(env)}] 股票事件解析 {len(all_records)} 条；新增 {r['inserted']} 跳过 {r['skipped']}"
                f"；阻塞文件 {blocked}")
 
 
