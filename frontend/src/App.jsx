@@ -11,6 +11,7 @@ import LaborCost from './screens/LaborCost'
 import Movies from './screens/Movies'
 import Stock from './screens/Stock'
 import Search from './screens/Search'
+import SourceDiff from './screens/SourceDiff'
 import Timeline from './screens/Timeline'
 
 const TABS = [
@@ -26,6 +27,7 @@ const TABS = [
   { key: 'companies', label: '公司图谱' },
   { key: 'graphall', label: '全图谱' },
   { key: 'timeline', label: '编年史' },
+  { key: 'diff', label: '版本/diff' },
   { key: 'search', label: '搜索' },
   { key: 'health', label: '健康校验' },
 ]
@@ -76,6 +78,7 @@ export default function App() {
         {active === 'stock' && <Stock />}
         {active === 'search' && <Search />}
         {active === 'timeline' && <Timeline />}
+        {active === 'diff' && <SourceDiff />}
         {active === 'health' && (
           <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
         )}
