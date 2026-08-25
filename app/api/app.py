@@ -26,6 +26,7 @@ from app.api.movie_events import router as movie_events_router
 from app.api.restricted import router as restricted_router
 from app.api.stock_events import router as stock_events_router
 from app.api.search import router as search_router
+from app.api.timeline import router as timeline_router
 from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
 from app.core.graph import all_graph, company_graph, person_graph
@@ -39,6 +40,7 @@ app.include_router(ui_ops_router)
 app.include_router(labor_cost_router)
 app.include_router(movie_events_router)
 app.include_router(stock_events_router)
+app.include_router(timeline_router)
 app.include_router(search_router)
 app.include_router(restricted_router)
 
@@ -264,44 +266,6 @@ def fx(
                    "rate": float(r.rate) if r.rate else None} for r in rows],
         "total": total, "page": page, "page_size": page_size,
     }
-
-
-# ---------------- 时间线（issue #23：编年史屏数据来源） ----------------
-@app.get(API_PREFIX + "/timeline-events")
-def list_timeline_events(
-    year: Optional[int] = None,
-    decade: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-):
-    q = select(TimelineEvent)
-    if year is not None:
-        q = q.where(TimelineEvent.event_year == year)
-    if decade:
-        q = q.where(TimelineEvent.decade == decade)
-    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
-    rows = db.execute(q.order_by(TimelineEvent.event_year, TimelineEvent.id)
-                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
-    return {
-        "items": [{"id": t.id, "event_year": t.event_year,
-                   "event_date": t.event_date.isoformat() if t.event_date else None,
-                   "title": t.title, "note": t.note, "decade": t.decade,
-                   "overlay": t.overlay} for t in rows],
-        "total": total, "page": page, "page_size": page_size,
-    }
-
-
-@app.get(API_PREFIX + "/timeline-events/{event_id}")
-def get_timeline_event(event_id: int, db: Session = Depends(get_db)):
-    t = db.get(TimelineEvent, event_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="timeline event not found")
-    return {"id": t.id, "event_year": t.event_year,
-            "event_date": t.event_date.isoformat() if t.event_date else None,
-            "title": t.title, "note": t.note, "decade": t.decade,
-            "overlay": t.overlay,
-            "source_file": t.source_file, "source_line": t.source_line}
 
 
 # ---------------- 财务收支（F-P1-07 · DESIGN §5 finance_entry） ----------------

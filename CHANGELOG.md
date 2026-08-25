@@ -5,6 +5,26 @@
 
 ---
 
+## [Phase 2 · F-P2-05] — 2026-08-25
+
+**时间线/编年史 UI 编辑：overlay 增改删 + 差异/重置回源/以源为最新**（DESIGN §12/§6.4）
+
+- **覆盖层服务层** `app/core/overlay.py`：DB-backed 覆盖层（`user_data_overlay` 权威 + 合并到
+  `timeline_event(overlay=True)`）；`create/update/delete/merge/diff/restore/source_as_latest`。
+  - **隔离（issue #86）**：用户覆盖行 `source_file=f"overlay:timeline:{key}"`；系统 overlay 行
+    （投资/划拨/活期结息 `source_file=NULL`）结构只读，不纳入编辑/差异/重置。
+  - key=`{year}:{title}`；定位按 (event_year,title) 列。update 改 title/year → 迁移到新 key。
+  - diff 比 event_date/title/note/decade → new/modified(changed_fields)/unchanged。
+  - **JSONB 变更检测坑**：payload 须「先 copy 再整对象赋值」（`dict(payload)`），in-place 改不持久化。
+- **API** `app/api/timeline.py`：POST/PATCH/DELETE /timeline-events、/overlay/restore、/overlay/source-as-latest、
+  /overlay/diff；**合并 GET**（按 key 每行一行、覆盖行优先）；普通 UI 放行（importer 例外）。
+  移除 app.py 原只读 GET /timeline-events(+/id) 避免路由冲突。
+- **前端**「编年史」屏（Timeline.jsx）：新增/编辑/删除覆盖条目、差异表、重置回源/以源为最新；
+  系统行只读徽标、源行「覆盖编辑」、覆盖行 `unchanged` 显示「已同步源」。
+- 12 新单测（test_overlay 8 + test_timeline_api 4）；全量 **358 passed**；前端 build 通过。
+
+---
+
 ## [Phase 2 · F-P2-04] — 2026-08-25
 
 **HP_CSC 重组链数值导入 → 依 §11.4 + H2 逐行验证**（DESIGN §19.6 / §11.4 / §10）
