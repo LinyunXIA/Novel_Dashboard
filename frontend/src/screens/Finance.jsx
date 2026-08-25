@@ -6,11 +6,13 @@ const KINDS = ['income', 'expense', 'investment', 'investment_income', 'pool']
 const KIND_LABEL = { income: '收入', expense: '支出', investment: '投资', investment_income: '投资损益', pool: '专款池' }
 
 /** F-P1-07 财务收支屏：以实体为中心浏览 finance_entry（实体必填）。 */
-export default function Finance() {
+export default function Finance({ asOf }) {
   const ents = useFetch('/api/v1/entities?page_size=200')
   const [sel, setSel] = useState('')
   const [kind, setKind] = useState('')
   const [year, setYear] = useState('')
+  // issue #121：全局日历游标——展示行截至游标年（输入年份仍可自行过滤更早区间）
+  const asOfYear = asOf ? Number(asOf.split('-')[0]) : null
 
   const url = useMemo(() => {
     if (!sel) return ''
@@ -22,7 +24,7 @@ export default function Finance() {
 
   const fe = useFetch(url)
   const entOpts = (ents.data?.items || []).filter(e => e.type === 'person' || e.type === 'company')
-  const rows = fe.data?.items || []
+  const rows = (fe.data?.items || []).filter(r => !asOfYear || (r.year || 0) <= asOfYear)
 
   const totals = useMemo(() => {
     const t = {}
@@ -36,7 +38,7 @@ export default function Finance() {
     <div className="cols2">
       <div className="panel">
         <h3>财务收支（实体为中心）</h3>
-        <p className="note">DESIGN §14 finance-entries · 实体必填 · 来源 file / ui</p>
+        <p className="note">DESIGN §14 finance-entries · 实体必填 · 来源 file / ui · 截至 {asOf || '—'}</p>
         <div className="row">
           <Field label="实体">
             <select value={sel} onChange={e => setSel(e.target.value)}>

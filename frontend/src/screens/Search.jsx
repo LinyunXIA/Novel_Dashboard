@@ -5,10 +5,13 @@ import { useFetch } from './useDataOp'
  * 统一搜索屏（F-P1-08 · DESIGN §18）：输入问题 → GET /api/v1/search → 只渲染最终 answer。
  * §18.6：硬剪裁——不展示推理/步骤/hits，仅 answer 字段。
  */
-export default function Search() {
+export default function Search({ asOf }) {
   const [q, setQ] = useState('')
   const [asked, setAsked] = useState('')
-  const res = useFetch(asked ? `/api/v1/search?q=${encodeURIComponent(asked)}` : null)
+  // §18.4：as_of 游标随问题透传（issue #121）
+  const res = useFetch(asked
+    ? `/api/v1/search?q=${encodeURIComponent(asked)}${asOf ? `&as_of=${asOf}` : ''}`
+    : null)
   const answer = res.data?.answer
 
   const ask = () => { if (q.trim()) setAsked(q.trim()) }

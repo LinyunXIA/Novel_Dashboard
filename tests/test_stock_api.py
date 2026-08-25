@@ -36,7 +36,8 @@ def db():
         engine.dispose()
 
 
-TEST_RES = Path(__file__).resolve().parent.parent / "Design_Folder/基准/事件/股票/虎牙.md"
+# issue #128：fixture 入库副本（源文件在 Design_Folder，不入 git）
+TEST_RES = Path(__file__).resolve().parent / "fixtures/事件/股票/虎牙.md"
 
 
 def _seed(db):
