@@ -136,7 +136,8 @@ class FinanceEntry(Base):
     amount: Mapped[Optional[float]] = mapped_column(Numeric)
     currency: Mapped[Optional[str]] = mapped_column(String)
     label: Mapped[Optional[str]] = mapped_column(String)
-    source: Mapped[str] = mapped_column(String, default=SourceKind.FILE.value)
+    source: Mapped[str] = mapped_column(String, default=SourceKind.FILE.value,
+                                        server_default="file")   # issue #156：ORM↔DB 对齐（e3 已落 DB）
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)

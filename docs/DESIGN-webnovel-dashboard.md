@@ -630,6 +630,10 @@ class Importer(Protocol):
 - **HTTP 方法**：`GET` 读取 / `POST` 创建 / `PUT` 全量替换 / `PATCH` 局部更新 / `DELETE` 删除；幂等性按 HTTP 语义。
 - **状态码**：`200 OK` / `201 Created` (+ `Location`) / `204 No Content` / `400` 参数错 / `404` 资源不存在 / `409` 冲突（如幂等键冲突）/ `422` 校验失败 / `500` 服务器错。
 - **集合**：支持 `?filter=`、`?sort=`、`?page=`、`?page_size=`、`?as_of=YYYY-MM-DD` 查询参数；分页默认 `page_size=50`。
+  > 实现注记（issue #156 备案）：本地单机低频场景下，部分列表以具名过滤替代通用
+  > `?filter=`/`?sort=`；jobs 用 `limit+offset`（默认 50）、notifications 用 `unread_only+limit`
+  > （默认 20），movie-events / stock-events / labor-cost results / source-files 暂不分页。
+  > 核心大集合（entities/accounts/ledger/timeline/finance/returns/fx 等）均按 `page/page_size` 默认 50。
 - **子资源**：父子关系用嵌套 URL（`/api/v1/source-files/{id}/versions`），不暴露动词。
 - **异步动作**（import / recompute / export）建模为 **job 资源**：发起即创建 job，子操作变成对该 job 的状态查询（避免 RPC 风格 `/run`、`/accept`）。
 - **视图资源**（多资源聚合）以 `/api/v1/overview`、`/api/v1/graph/{kind}`、`/api/v1/wealth`、`/api/v1/returns`、`/api/v1/finance` 提供，只读 GET。
@@ -650,11 +654,11 @@ class Importer(Protocol):
 | POST | `/api/v1/entities` | 创建实体（受限通道） |
 | PUT | `/api/v1/entities/{id}` | 全量替换（受限通道） |
 | PATCH | `/api/v1/entities/{id}` | 局部更新（含 `status`；受限通道） |
-| DELETE | `/api/v1/entities/{id}` | 仅 `--admin-clean` 通道，普通流程 409 |
+| DELETE | `/api/v1/entities/{id}` | 仅 `ALLOW_ADMIN_CLEAN=1` 环境变量通道放行（§13.1）；普通流程 409。注：无 `X-Importer: 1` 时先 403（守卫先于门禁） |
 | GET | `/api/v1/entities/{id}/relationships` | 实体的关系列表 |
 | POST | `/api/v1/entities/{id}/relationships` | 建立新关系 |
 | DELETE | `/api/v1/relationships/{id}` | 删除关系 |
-| GET | `/api/v1/graph/persons` | 人物图谱视图（只读） |
+| GET | `/api/v1/graph/persons` | 人物图谱视图（只读；issue #156 记法更正：斜杠路径，非点号） |
 | GET | `/api/v1/graph/companies` | 公司图谱视图（只读） |
 
 #### 账户 / 流水 / 持仓 / 收益 / 汇率
@@ -719,6 +723,8 @@ class Importer(Protocol):
 
 > 实现注记：进程内单 worker 串行（threading.Lock）；每任务独立 session；
 > 状态机 `pending→running→done/failed`。既有 §21.3 同步 RPC 端点保留（秒级 UI 动作）。
+> 取消语义（issue #156 注记）：DELETE pending 任务返回 204 后，任务行落
+> `status='failed'` + `error='已取消…'`（无独立 cancelled 终态）。
 
 #### 日期规则 / 导出 / 搜索
 | 方法 | 路径 | 说明 |
@@ -730,6 +736,17 @@ class Importer(Protocol):
 | POST | `/api/v1/exports` | 创建导出任务（body：`{format:'markdown'\|'csv'\|'pdf', scope?}`）→ 201 + 下载 URL |
 | GET | `/api/v1/exports/{id}` | 获取导出产物 |
 | GET | `/api/v1/search` | 统一搜索（LLM+agentic RAG，见 §18；Phase 1/P1-5 实施） |
+
+> **实现超集路由（issue #156 收录）**：除上表外，实现另含以下已备案端点——
+> `investments`×5（GET 列表/{id}、POST、PATCH、POST {id}/redeem）、`POST /transfers`、
+> `POST /demand-interest`、`movie-events`×4（GET×2 + link/unlink）、`stock-events`×7
+> （events/positions GET ×2 + associate/buy/sell/dividend/passive-uplift POST ×5）、
+> `labor-cost`×3（compute/rules/results）、timeline overlay 扩展×3（diff/merge/source-as-latest）、
+> `GET /returns/countries|regions`、`GET /graph/all`（issue #84）、
+> `GET /entities/{id}/finance-entries`、`GET /source-files/{id}/meta` 别名与 `/{vid}/diff`、
+> `GET /ingest-reports`（issue #118/#123）、`GET /ping`。
+> 功能语义分别见 §13/§18/§19/§21.3；`snapshots/{date}` 与 `source-files 单版本内容`
+> 两端点已按 §14.2 原表补齐（issue #155）。
 
 ---
 
@@ -987,7 +1004,10 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - 列增补：`holding_event.closed_on`（F-P2-03 结清标记）、`investment.redeemed_at`（#82 防重）、
   `labor_cpi_growth.source_file`。
 - server_default 补齐：account.status / finance_entry.source / timeline_event.overlay /
-  investment.locked / investment_alloc.is_all（e3 迁移）/ **entity.source='file'**（#132/#145 补记第六项）。
+  investment.locked / investment_alloc.is_all（e3 迁移）+ **entity.source='file'**（#132/#145 第六项）；
+  **finance_entry.source ORM server_default 声明补齐**（#156：DB e3 已有、ORM 漏声明，
+  core.py 已对齐）；同批备案：**finance_entry.source 实现收紧为 NOT NULL**
+  （设计 DDL 可空 `source TEXT DEFAULT 'file'`，实现 nullable=False + default 'file'）。
 - movie_event/stock_event 的 `linked_at` 统一 TIMESTAMPTZ（f2 迁移，issue #145 承 #132 口径）。
 - snapshot scope 实现为三段式 `entity:{id}:{currency}`（issue #12），DDL 注释的单段示例作废
   （模型注释已同步更正，issue #145）。
@@ -1021,3 +1041,29 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   （be/lu/nl/dk/se/uk→中文键）；事件散文件兜底 SKIP_PHASE2_EVENT；主扫描链对 event_*
   显式 ⏭ 跳过；租房展开窗口 (1974,2007)=源文件明文测算周期（注记非遗漏）；
   ingest_report.line 尽力取整（_coerce_line）。
+
+### 21.7 三轮审计修复批回写（2026-08-26，issue #151–#156，跟踪索引 #157）
+
+> 本节为第三轮对照审计后的实现/口径回写；与前文冲突处以本节为准。
+
+- **Dashboard 渲染崩溃**（#151）：`seriesLabel` 引用未声明变量 `series`（#124/#143 多序列
+  改造残留死代码），组件每次渲染必抛 ReferenceError——已删除；JSX 实际使用 `seriesLabelFor`。
+- **CLI 快照动态上限收尾**（#152，承 #141）：`main.py` 四处 `rebuild_snapshots` 死区间
+  `range(…,2026)` 改为 years 缺省走 `config.calendar_years()`（ingest/recompute/snapshot/
+  merge-alias 四链路对齐）；前端日历上限改读 `/overview` 新增的 `calendar.{min_year,max_year}`
+  （API 未连接回落静态口径）。
+- **overlay 子动作触发重算**（#153）：`timeline-events/{id}/overlay/restore|source-as-latest`
+  与 `/overlay/merge` 三端点补 `_after_timeline_write`——起点=条目年份（merge 取覆盖层最小
+  event_year 兜底 CALENDAR_MIN_YEAR）；source_as_latest 无源(no_source)/merge 无变更时不产生
+  冗余 job。
+- **§14.2 两端点补齐**（#155）：`GET /snapshots/{date}`（snapshot_as_of 实时累加口径，
+  超日历区间 422）、`GET /source-files/{id}/versions/{vid}`（单版本完整 content）。
+- **英国学徒税补齐**（#154）：`labor_cost.apprenticeship_levy(salary, p)` 纯函数
+  （max(0, 年薪−免征额)×税率，缺省 £3m/0.5%，params `levy_allowance/levy_pct` 可覆盖）
+  并入 `uk_nic` 公式第四项；labor_baseline 英国 field_map 补 `学徒税(免征额)` 关键词映射；
+  口径注记：按岗位年薪代入同一公式（公司总盘聚合留待真实多岗位数据后增强）；
+  rules_payload 不含 levy 细节（§13.2 隐藏项原则不破）。
+- **模型/文档卫生**（#156）：finance_entry.source ORM server_default 声明补齐 + NOT NULL
+  收紧备案（§21.5 已注）；snapshot.scope DB 列注释更正三段式（迁移 a3b4c5d6e7f8）；
+  §14.1 分页例外备案、graph 点号记法更正、§14.2 超集路由收录、DELETE entities 门禁与
+  取消 job 终态口径注记。

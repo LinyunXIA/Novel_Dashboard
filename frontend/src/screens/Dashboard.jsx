@@ -78,10 +78,6 @@ export default function Dashboard({ asOf }) {
     return [...s]
   }, [wealth])
 
-  const seriesLabel = series === 'family' ? '家族合计（USD）'
-    : currencyKeys.includes(series) ? `币种 ${series}（本币合计）`
-      : `账户 ${series}（本币）`
-
   return (
     <div className="grid">
       <div className="grid stats">

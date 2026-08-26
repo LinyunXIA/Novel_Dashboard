@@ -191,3 +191,32 @@ def _fake_runner(s, year):
     c = L_.compute_position_cost(s, pos, year)
     agg = positions.aggregate_to_finance(s, [c], year)
     return {"year": year, "positions_fetched": 1, "companies_computed": agg}
+
+# ---- issue #154：英国学徒税 >£3m（隐藏公式补齐） ----
+def test_apprenticeship_levy_below_allowance_zero():
+    assert L.apprenticeship_levy(2_999_999.0) == 0.0
+    assert L.apprenticeship_levy(3_000_000.0) == 0.0
+
+
+def test_apprenticeship_levy_above_allowance():
+    # (4m − 3m) × 0.5% = 5,000
+    assert abs(L.apprenticeship_levy(4_000_000.0) - 5_000.0) < 1e-6
+
+
+def test_apprenticeship_levy_params_override():
+    p = {"levy_allowance": 1_000_000.0, "levy_pct": 1.0}
+    assert abs(L.apprenticeship_levy(2_000_000.0, p) - 10_000.0) < 1e-6
+
+
+def test_uk_nic_formula_includes_levy():
+    base = {"nic_threshold": 9_100.0, "nic_pct": 13.8, "pension_pct": 3.0, "wc_pct": 0.5}
+    salary = 4_000_000.0
+    without = (salary - 9_100.0) * 0.138 + salary * 0.03 + salary * 0.005
+    assert abs(L.employer_social_cost("uk_nic", salary, base)
+               - (without + 5_000.0)) < 1e-6
+
+
+def test_rules_payload_hides_levy_details():
+    payload = L.rules_payload()
+    blob = str(payload)
+    assert "学徒" not in blob and "levy" not in blob.lower()

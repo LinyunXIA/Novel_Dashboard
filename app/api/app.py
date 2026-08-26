@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.config import CALENDAR_MAX_YEAR, CALENDAR_MIN_YEAR
 from app.api.date_rules import router as date_rules_router
 from app.api.jobs import router as jobs_router
 from app.api.labor_cost import router as labor_cost_router
@@ -274,6 +275,27 @@ def snapshots(
     return [{"year": s.as_of_year, "scope": s.scope,
              "value": float(s.value) if s.value is not None else 0.0,
              "currency": s.currency} for s in rows]
+
+
+@app.get(API_PREFIX + "/snapshots/{snap_date}")
+def snapshot_at_date(
+    snap_date: date,
+    scope: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """§14.2 GET /snapshots/{date}（issue #155）：某日历日 as-of 快照。
+
+    与 ?as_of= 同走 snapshot_as_of 实时累加口径（§21.5 issue #17 A′）；
+    超出日历覆盖区间 → 422。
+    """
+    if snap_date.year < CALENDAR_MIN_YEAR or snap_date.year > CALENDAR_MAX_YEAR:
+        raise HTTPException(
+            status_code=422,
+            detail=f"日期超出日历覆盖区间 [{CALENDAR_MIN_YEAR}, {CALENDAR_MAX_YEAR}]")
+    snaps = snapshot_as_of(db, snap_date)
+    if scope:
+        snaps = [s for s in snaps if s["scope"] == scope]
+    return snaps
 
 
 # ---------------- 财富曲线 ----------------
@@ -536,4 +558,5 @@ def overview(db: Session = Depends(get_db)):
     n_tl = db.execute(select(func.count()).select_from(TimelineEvent)).scalar()
     health = summarize(db)
     return {"entities": n_ent, "accounts": n_acc, "snapshots": n_snap,
-            "income_streams": n_income, "timeline_events": n_tl, "health": health}
+            "income_streams": n_income, "timeline_events": n_tl, "health": health,
+            "calendar": {"min_year": CALENDAR_MIN_YEAR, "max_year": CALENDAR_MAX_YEAR}}

@@ -66,6 +66,20 @@ def file_versions(vid: int, db: Session = Depends(get_db)):
          "current": bool(v.is_current), "content_preview": (v.content or "")[:120]} for v in rows]}
 
 
+@router.get("/source-files/{vid}/versions/{vnum}")
+def file_version_content(vid: int, vnum: int, db: Session = Depends(get_db)):
+    """单版本完整内容（§14.2 GET /source-files/{id}/versions/{vid}，issue #155 补端点）。"""
+    rel = _rel(db, vid)
+    v = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.file_path == rel,
+        SourceFileVersion.version == vnum)).scalar_one_or_none()
+    if v is None:
+        raise HTTPException(status_code=404, detail=f"版本 v{vnum} 不存在")
+    return {"id": v.id, "file": rel, "version": v.version,
+            "captured_at": v.captured_at.isoformat() if v.captured_at else None,
+            "current": bool(v.is_current), "content": v.content or ""}
+
+
 @router.get("/source-files/{vid}/diff")
 def file_diff(vid: int, version_id: Optional[int] = None, db: Session = Depends(get_db)):
     rel = _rel(db, vid)
