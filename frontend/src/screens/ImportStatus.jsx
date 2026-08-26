@@ -14,6 +14,21 @@ export default function ImportStatus() {
   const rep = useFetch(`/api/v1/ingest-reports?${q.toString()}`)
   const rows = rep.data?.items || []
 
+  // F-P2-07：导出中心（§15 md/csv/pdf · 仅导出不回写）
+  const [expFmt, setExpFmt] = useState('markdown')
+  const [expScope, setExpScope] = useState('finance')
+  const expList = useFetch('/api/v1/exports')
+
+  const doExport = async () => {
+    const body = { format: expFmt }
+    if (expFmt === 'csv') body.scope = expScope
+    await fetch('/api/v1/exports', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json())
+    setTimeout(() => setTick(t => t + 1), 200)
+  }
+
   // issue #138：异步 job 资源——触发重算 + 轮询任务状态
   const [tick, setTick] = useState(0)
   const jobs = useFetch(`/api/v1/recompute-jobs?limit=10&offset=0&t=${tick}`)
@@ -82,6 +97,43 @@ export default function ImportStatus() {
           ))}
           {!(jobs.data?.items?.length) && !(imports.data?.items?.length) &&
             <tr><td colSpan={5} className="note">暂无任务记录</td></tr>}
+        </tbody>
+      </table>
+
+      {/* F-P2-07：导出中心（§15 md/csv/pdf · 仅导出不回写源） */}
+      <h4>导出中心（F-P2-07 · §15）</h4>
+      <div className="row" style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+        <span className="note">格式：</span>
+        {['markdown', 'csv', 'pdf'].map(f => (
+          <button key={f} className={`ghost ${expFmt === f ? 'primary' : ''}`}
+            onClick={() => setExpFmt(f)}>{f}</button>
+        ))}
+        {expFmt === 'csv' && (
+          <>
+            <span className="note">scope：</span>
+            <select value={expScope} onChange={e => setExpScope(e.target.value)}
+              style={{ fontSize: 13 }}>
+              {['finance', 'returns', 'holdings', 'timeline', 'ledger'].map(s2 => (
+                <option key={s2} value={s2}>{s2}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <button className="primary" onClick={doExport}>生成导出</button>
+      </div>
+      <table style={{ marginBottom: 16 }}>
+        <thead><tr><th>产物</th><th>格式</th><th>大小</th><th>下载</th></tr></thead>
+        <tbody>
+          {(expList.data?.items || []).slice(0, 10).map(x => (
+            <tr key={x.id}>
+              <td className="mono" style={{ fontSize: 12 }}>{x.filename}</td>
+              <td>{x.format}</td>
+              <td className="num">{(x.size_bytes / 1024).toFixed(1)} KB</td>
+              <td><a href={x.download_url} download={x.filename}>下载</a></td>
+            </tr>
+          ))}
+          {!(expList.data?.items?.length) &&
+            <tr><td colSpan={4} className="note">暂无导出产物</td></tr>}
         </tbody>
       </table>
 

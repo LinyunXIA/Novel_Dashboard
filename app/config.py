@@ -69,6 +69,9 @@ class EnvConfig:
     external_api_url: str = field(
         default_factory=lambda: _env_str("EXTERNAL_API_BASE_URL", "http://127.0.0.1:7273"))
 
+    # 导出产物目录（F-P2-07 §15：仅导出不回写；各环境独立，不入 git——data/ 已忽略）。
+    exports_dir: Path = Path("data/exports")
+
 
 def _dsn(db_name: str) -> str:
     host = os.environ.get("PGHOST", "127.0.0.1")
@@ -109,6 +112,12 @@ def get_config(env: str | None = None) -> EnvConfig:
     }
     external_api_url = os.environ.get("EXTERNAL_API_BASE_URL") or external_urls[env]
 
+    exports_dirs = {
+        "dev":  "data/exports-dev",
+        "test": "data/exports-test",
+        "prod": "data/exports",
+    }
+
     return EnvConfig(
         env=env,
         dsn=_dsn(f"novel_{env}"),
@@ -116,6 +125,7 @@ def get_config(env: str | None = None) -> EnvConfig:
         input_dir=PROJECT_ROOT / inputs[env],
         overlay_dir=PROJECT_ROOT / overlays[env],
         external_api_url=external_api_url,
+        exports_dir=PROJECT_ROOT / exports_dirs[env],
     )
 
 
