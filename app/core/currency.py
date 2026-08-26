@@ -15,38 +15,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.model import ExchangeRate
-
-
-def _direct_rate(session: Session, fx_from: str, fx_to: str, year: int) -> Decimal | None:
-    """fx_from→fx_to 该年汇率（具体年 > 基准常量）；缺失 None。"""
-    row = session.execute(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.fx_from == fx_from, ExchangeRate.fx_to == fx_to,
-            or_(ExchangeRate.year == year, ExchangeRate.year.is_(None)),
-        )
-        .order_by(ExchangeRate.year.is_(None), ExchangeRate.year.desc())
-        .limit(1)
-    ).first()
-    if row is not None and row[0] is not None:
-        return Decimal(str(row[0]))
-    return None
-
-
-def _pair_rate(session: Session, base: str, quote: str, year: int) -> Decimal | None:
-    """1 base 兑多少 quote：直取 base→quote，缺则取 quote→base 的倒数。"""
-    if base == quote:
-        return Decimal(1)
-    d = _direct_rate(session, base, quote, year)
-    if d is not None:
-        return d
-    inv = _direct_rate(session, quote, base, year)
-    if inv is not None:
-        return Decimal(1) / inv
-    return None
 
 
 def _load_pairs(session: Session) -> dict:

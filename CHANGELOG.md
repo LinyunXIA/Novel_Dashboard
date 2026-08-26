@@ -5,6 +5,18 @@
 
 ---
 
+## [Audit Round 7·8 · #182-#193] — 2026-08-26
+
+**七轮独立盲审 + 八轮复核 + 外部 API v2.6 适配**（跟踪索引 #187/#191；DESIGN §21.10–§21.11）
+
+- **七轮（PR #188，#182-#187）**：transfers 幂等 `nonce`、return_table 附录 `%` 过滤、movie link 分红-only 快照滞后修复、currency `rate_loader` 批量预载（N+1→单次全载）、fx 非正告警、PG smoke 真库冒烟、测试卫生（时间炸弹等）。
+- **八轮复核（PR #192，#189-#191）**：transfer nonce API 链路可达性修复（TransfersIn 透传 + 表单级幂等键）、skipped short-circuit、ci.yml 入库、styles 外观卫生。
+- **外部 API v2.6 适配（PR #194，#193）**：companies `tax_zone` 落库（条件写入保旧值，修复重导覆盖）、positions `unknown_levels` 统计防 0% 静默低估；`/public/levels` 暂不接入。
+
+最终验证：pytest **540 passed**；vite build 通过；PG smoke 真库 2 passed。
+
+---
+
 ## [Audit Round 3+4+5 · #151-#179] — 2026-08-26
 
 **三轮/四轮/五轮对照审计修复批**（跟踪索引 #157/#172/#179；DESIGN §21.7–§21.9）

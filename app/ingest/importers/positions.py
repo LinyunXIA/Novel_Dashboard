@@ -135,10 +135,12 @@ def run_labor_cost(db: Session, year: int, company_ids: list[int] | None = None,
         if not _in_post(p, year):
             continue
         lvl = p.get("level")
-        if lvl and lvl not in LC.LEVEL_PCT:
+        if lvl not in LC.LEVEL_PCT:
             # 外部 API v2.6 /public/levels 字典对齐提示：未知 level 会按 0% 费率计成本
             # （静默低估）——计入返回统计供调用方察觉，必要时以 public.levels 对齐编码
-            unknown_levels.append(str(lvl))
+            # 九轮审计 #189 附注：空串/None 岗位此前双重静默（既 0% 又不进统计），现显式记为 (empty)
+            display = str(lvl) if lvl not in (None, "") else "(empty)"
+            unknown_levels.append(display)
         c = LC.compute_position_cost(db, p, year)
         costs.append(c)
     agg = aggregate_to_finance(db, costs, year)

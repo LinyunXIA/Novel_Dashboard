@@ -54,8 +54,6 @@ export default function Transfer({ calMax = 2026 }) {
       setForm(f => ({ ...f, amount: '' }))
       newNonce()
     }
-    // skipped（幂等重放）也重置 nonce——用户需感知为一次新操作起点
-    else if (res.data?.status === 'skipped') { newNonce() }
   }
 
   return (

@@ -96,10 +96,13 @@ def import_external_companies(session: Session, companies: list[dict]) -> dict:
             "opening_date": rec.get("opening_date"),
             "closing_date": rec.get("closing_date"),
             "is_active": rec.get("is_active"),
-            # 外部 API v1.6/v2.6 R1：公司↔税区一对一（内部成本口径键，对外仅引用）
-            "tax_zone_id": rec.get("tax_zone_id"),
-            "tax_zone_label": rec.get("tax_zone_label"),
         }
+        # 外部 API v1.6/v2.6 R1：公司↔税区一对一（内部成本口径键）——仅当载荷显式携带该字段时
+        # 才写入/覆盖，避免旧版响应（无该字段）把已落库的税区值冲成 None（「只增不减」语义）。
+        if "tax_zone_id" in rec:
+            fields["tax_zone_id"] = rec.get("tax_zone_id")
+        if "tax_zone_label" in rec:
+            fields["tax_zone_label"] = rec.get("tax_zone_label")
         comp = writer.upsert_entity(
             session, "company", name, source="external-api", fields=fields)
         # created 判定：status 原来为空而本次落到非空（只增不减；新写才置 status）

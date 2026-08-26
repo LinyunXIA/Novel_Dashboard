@@ -1163,3 +1163,58 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   零值跳过语义下条数相等不成立）。
 - **docs**（#185）：PRD 屏数条款更正+差异备案、CHANGELOG 重复标题去重、DESIGN↔mockup
   互引补齐、CLAUDE.md 写作线措辞限定。
+
+### 21.11 八轮及九轮审计修复批回写（2026-08-26，issue #189-#193 及九轮 N1-N3，跟踪索引 #191）
+
+> 第八轮独立复核及外部 API v2.6 适配后的回写；与前文冲突处以本节为准。
+
+- **transfers 幂等 API 链路可达**（#189，七轮 #182 缺陷修复）：`TransferIn` 增可选 `nonce` 字段透传；`Transfer.jsx` 表单级幂等键（挂载生成、成功后重置——双击复用同 nonce 第二次 `skipped`）；`post_transfer` 中 `skipped` 时 short-circuit 跳过 `_after_ui_write`（无写入不重算/通知）；前端「重复提交已跳过」提示；`transfer` 正常路径响应补 `skipped:false` 保持契约一致。
+- **tax_zone 重导覆盖修复**（九轮 N1）：`company_info.fields` 改条件写入——仅当载荷显式携带 `tax_zone_id/_label` 键时才写入/覆盖，旧版响应缺字段时保旧值（对齐「只增不减」语义，与 `shareholders_pct` 守卫一致）。
+- **level 空串静默修复**（九轮 N3）：`positions` 中 `lvl` 为 `None/""` 的岗位此前双重静默（既按 0% 计成本又不进 `unknown_levels`），现显式记为 `(empty)` 入统计可见化。
+- **死代码清理**（九轮 N3）：`Transfer.jsx:57-58` 不可达 `else if (skipped)` 分支移除；`currency._direct_rate/_pair_rate` 旧 SQL 点查路径删除（已由 `_load_pairs` + `_direct_from/_pair_from` 批量路径完全替代）；相关 `or_` 导入清理。
+- **外部 API v2.6 适配**（#193，PR #194）：见 §13.3 注记；`tax_zone` 条件写入同上。
+
+---
+
+## 22. 永久备案清单（审计收敛后维持现状项）
+
+> 本节收录经 3–9 轮审计确认**无须修复、维持现状**的设计取舍 / 理论边界 / 本地单机低危项。如未来业务或数据规模变化，再评估升级。状态：✅ 维持备案 / ⚠️ 已变化（附说明）。
+
+| # | 备案项 | 位置 | 现状 | 维持理由 |
+|---|--------|------|------|----------|
+| B01 | calendar float 累加 vs snapshot Decimal 精度不对称 | `calendar.py:38-66` / `snapshot.py:117-259` | ✅ | 只读展示层，`round(2)` 后不可见，不进账本 |
+| B02 | H3 不审 EUR hub 回退链（`direct is None → skip`） | `health.py:92,98` / `currency.py:101-111` | ✅ | `direct` 缺失即无可比对闭合；hub 由「宁缺勿错」纪律兜底 |
+| B03 | `LLM_MODEL_CONTEXT` 定义零消费 | `config.py:62` | ✅ | 预留配置，omlx 服务端自管上下文 |
+| B04 | invest 计息分母固定 365（闰年不调整） | `invest.py:224` | ✅ | 公式即口径（docstring 明示），设定精度内 |
+| B05 | `_pool_balance` 跨账户求和 vs 划出仅落 primary | `invest.py:95-105` vs `:76-92,:410` | ✅ | 实测每主体每币种仅一账户 |
+| B06 | demand 结息 `balance=None` 仅 recompute 当年末条回填 | `demand.py:121-126` / `leverage.py:146-152` | ✅ | 计息本体按 `inflow/outflow` 重放，不依赖 balance 列 |
+| B07 | demand `ROUND_HALF_EVEN` 银行家舍入 | `demand.py:33,92` | ✅ | 对利息更公平，Decimal 默认 |
+| B08 | `closed_on=12-31` 年清零 vs 日清零口径差 | `snapshot.py:53-57,120` vs `calendar.py:43-44` | ✅ | 现网 `closed_on=2002-01-01` 不触发 |
+| B09 | `record_recompute_done` 健康异常仍 `done` | `recompute.py:90-102` | ✅ | 有意设计：错误入 `payload.health_error` 不静默 |
+| B10 | H4 float 滚动理论漂移 / H1 UI 年份 warn 噪声 | `health.py:138-183` / `:39-45` | ✅ | 79 年复利 ×1e9 才触界；warn 非 crit |
+| B11 | `overlay.create_overlay` 覆盖仍报 `idempotent=True` | `overlay.py:77-97` | ✅ | 幂等结果正确，仅返回标签宽泛 |
+| B12 | `family_total_usd limit(1)` 静默取单行 | `wealth.py:52-61` | ✅ | 现行单行；多行会被唯一索引阻止 |
+| B13 | `entity_merge` 同 session 读旧值风险 | `entity_merge.py:113-127` | ✅ | 低风险窗口，merge 后均 recompute |
+| B14 | llm 每次新建 `httpx.Client` 资源 churn | `llm.py:21-22,29,55` | ✅ | 本地毫秒级握手，可忽略 |
+| B15 | `verify_chain` 容差地板 `max(1.0,…)` / `as_of` 仅回显 | `stock_chain.py:159,188` | ✅ | 断言均为亿级金额；verify 为人工对账工具 |
+| B16 | `apply_merger` 空转统计 / `cash` 无持仓静默 | `stock_cost.py:123-124,138,177` | ✅ | 无损账，仅统计口径 |
+| B17 | `apply_buy unit_price=0` falsy 拒绝 / `batch_id max+1` 无约束 | `stock_cost.py:223,89-93` | ✅ | 单 worker 假设安全；0 成本股无场景 |
+| B18 | `compute_interest` 不复检 `start_date` 年份 | `invest.py:217-224` | ⚠️ 已变化 | 校验已前移 `create_investment`（#93），内部仍未复检但正常路径不可达 |
+| B19 | `currency_from` 裸词「克朗/法郎」回退首匹配 | `normalize.py:225-244` | ✅ | 真实标题均为复合词命中配对表 |
+| B20 | `return_table` 区间标题潜伏态（封盘+% 双护栏后） | `parsers/__init__.py:236-249` | ⚠️ 已变化 | 已加封盘 + `%` 特征过滤双护栏，当前语料零触发 |
+| B21 | bank 列位硬编码 / 点分日期丢行 / 节继承 | `parsers/__init__.py:786-810` | ✅ | 真实台账列序固定；源数据无点分日期 |
+| B22 | 列头「万」单位不读，绝对/万单位混存 | `parsers/__init__.py:593-605` | ✅ | 现网列单位一致，混存未发生 |
+| B23 | `TITLE_ENTITY` 不含 先祖/Maaike/Karel/三宝/管家 | `holders.py:24-37` | ✅ | 无银行账户，by design |
+| B24 | `income_security` 导入期 H2 结构性旁路 | `conflict.py:88-91` docstring | ✅ | 基桩展开不经增量比对，health 兜底 |
+| B25 | timeline 幂等键不含 `date/note` | `writer.py:344-354` | ✅ | insert-only 设计，编辑走 overlay |
+| B26 | `event_movie` 启发式 / `event_stock` 优先级 | `event_movie.py:41-65` / `event_stock.py:29-36` | ✅ | best-effort 解析器自声明 |
+| B27 | `writer.fields` 只增不减 | `writer.py:42-43` | ✅ | 人物档案删字段场景未发生 |
+| B28 | labor `zip` 截断 / 分隔正则 `{1,4}` / 无 update 通道 | `labor_baseline.py:118-122,85,141-147` | ✅ | 数字守卫兜底；基准变更极少 |
+| B29 | `title ilike` 未转义 / `file_diff` 未套闸门 / `autoflush` 双插盲区 | `movie_events.py:67` / `versioning.py:115` / `db.py:25` | ✅ | 通配符注入仅 `%`；`file_diff` 源自 DB 非直传；盲区仅 stock 已 fix |
+| B30 | stock `nonce` 客户端可换新绕过 | `stock_events.py:69` | ✅ | 本地单人语境，绕过自担 |
+| B31 | transfer `nonce` 前缀碰撞仅防数字后缀（定长 hex 实践不可达） | `transfer.py:164` | ✅ | 定长 12 hex，`(?!\d)` 边界与 invest 一致 |
+| B32 | `unknown_levels` 对 `None`/`""` 双重静默（此前） | `positions.py:138` | ✅ 已修复 | 现显式记 `(empty)`，见 §21.11 |
+| B33 | ci.yml `PR+push` 双跑无 concurrency | `.github/workflows/ci.yml` | ✅ | 冗余非故障 |
+| B34 | styles.css 注释 `":root 补"` 实为 `.viz` 作用域 | `styles.css:13` | ✅ | 措辞不符但闭环无损 |
+| B35 | 测试文件名 `issue160_165_p0` 批次漂移 | `tests/test_issue160_165_p0.py` | ✅ | 已容纳多批，历史沿用 |
+
