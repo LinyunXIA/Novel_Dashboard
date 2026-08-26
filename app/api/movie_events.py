@@ -16,13 +16,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.model import LedgerEntry, MovieEvent
+from app.model import Account, LedgerEntry, MovieEvent
 
 router = APIRouter(prefix="/api/v1", tags=["movie-events"])
 
 
 class LinkIn(BaseModel):
     account_id: int
+
+
+def _require_same_currency(db: Session, event_currency: str | None, account_id: int):
+    """PRD §6.8 第3类铁律（四轮审计 #164）：同币种才连、不换算；不符则不可关联。"""
+    acc = db.get(Account, account_id)
+    if not acc:
+        raise HTTPException(404, "account not found")
+    ev_cur = event_currency or "USD"
+    if acc.currency != ev_cur:
+        raise HTTPException(
+            422, f"同币种才可关联（不换算）：事件 {ev_cur} ≠ 账户 {acc.currency}")
+    return acc
 
 
 def _me(movie: MovieEvent) -> dict:
@@ -88,6 +100,7 @@ def link_movie(movie_id: int, body: LinkIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "movie event not found")
     if m.linked_account_id is not None:
         return {"linked": True, "skipped": True, "account_id": m.linked_account_id}
+    _require_same_currency(db, m.currency, body.account_id)   # issue #164
     written = _write_movie_ledger(m, body.account_id, db)
     m.linked_account_id = body.account_id
     m.linked_at = datetime.now()

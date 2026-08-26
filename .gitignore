@@ -12,10 +12,10 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 
-# 数据输入/覆盖层目录（仅保留目录占位 .gitkeep）
-data/
-!data/
-!data/*/
+# 数据输入/覆盖层/导出目录（仅保留目录占位 .gitkeep；四轮审计 #165：
+# 旧写法 `data/` + `!data/` 正负抵消致内容未被忽略，导出产物会被误提交）
+data/**
+!data/**/
 !data/**/.gitkeep
 
 # macOS

@@ -2,6 +2,9 @@
 
 reportlab 实现：家族总资产年度曲线（reportlab.graphics 内嵌折线图）
 + 实体/账户/财务计数摘要 + 编年史近段表。只读 DB，产物由调用方写 exports_dir。
+
+四轮审计 #160：reportlab 默认 Helvetica 不含 CJK 字形（中文全部渲染为 notdef
+方块）——统一注册 Adobe CID 字体 STSong-Light 并应用于全部样式/表格/图表标注。
 """
 from __future__ import annotations
 
@@ -15,6 +18,14 @@ from app.export.render import effective_timeline, family_total_series
 from app.model import Account, Entity, FinanceEntry
 
 _PAGE_W, _PAGE_H = 842, 595   # A4 landscape
+CJK_FONT = "STSong-Light"     # Adobe CID 内置字体，viewer 端渲染，无需字体文件
+
+
+def _register_cjk_font() -> None:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    if CJK_FONT not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(CJK_FONT))
 
 
 def render_pdf(db: Session) -> bytes:
@@ -26,9 +37,12 @@ def render_pdf(db: Session) -> bytes:
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import mm
 
+    _register_cjk_font()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=(_PAGE_W, _PAGE_H), title="家族财富报告")
     styles = getSampleStyleSheet()
+    for name in ("Title", "Heading2", "Normal"):
+        styles[name].fontName = CJK_FONT   # issue #160：全样式换 CJK 字体
     story: list = []
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -48,7 +62,8 @@ def render_pdf(db: Session) -> bytes:
         [str(n_ent), str(n_acc), str(n_fin), f"{total_now:,.2f}"],
     ], colWidths=[40 * mm] * 4)
     summary.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                                 ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke)]))
+                                 ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                                 ("FONTNAME", (0, 0), (-1, -1), CJK_FONT)]))
     story += [summary, Spacer(1, 8 * mm)]
 
     # ---- 家族总资产年度曲线（图表内嵌）----
@@ -59,7 +74,7 @@ def render_pdf(db: Session) -> bytes:
         chart.width, chart.height = 240 * mm, 70 * mm
         chart.data = [[v for _, v in series]]
         chart.categoryAxis.categoryNames = [str(y) for y, _ in series]
-        chart.categoryAxis.labels.fontName = "Helvetica"
+        chart.categoryAxis.labels.fontName = CJK_FONT
         chart.categoryAxis.labels.fontSize = 6
         chart.valueAxis.valueMin = min(v for _, v in series) or 0
         chart.lines[0].strokeColor = colors.HexColor("#2563eb")
@@ -67,7 +82,7 @@ def render_pdf(db: Session) -> bytes:
         drawing.add(chart)
         drawing.add(String(0, 80 * mm,
                            f"{series[0][0]}–{series[-1][0]} · 共 {len(series)} 年",
-                           fontSize=8))
+                           fontName=CJK_FONT, fontSize=8))
         story.append(drawing)
     else:
         story.append(Paragraph("（无 family:total 快照——先运行 snapshot 重建）",
@@ -85,6 +100,7 @@ def render_pdf(db: Session) -> bytes:
     tbl = Table(rows, colWidths=[18 * mm, 24 * mm, 90 * mm, 108 * mm], repeatRows=1)
     tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                              ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                             ("FONTNAME", (0, 0), (-1, -1), CJK_FONT),
                              ("FONTSIZE", (0, 0), (-1, -1), 7)]))
     story.append(tbl)
 

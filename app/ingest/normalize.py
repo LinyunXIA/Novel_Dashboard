@@ -208,10 +208,27 @@ def apply_user_date_rules(raw: str) -> tuple[date, str] | None:
     return None
 
 
+# 中文币种词 ↔ 缩写配对（issue #162：节标题常同时出现多个缩写，
+# 如 `五、欧元 EUR（2002年BEF+NLG结转）`——配对命中的缩写才可信）。
+_ZH_CURRENCY_PAIRS = (
+    ("欧元", "EUR"), ("美元", "USD"), ("丹麦克朗", "DKK"), ("瑞典克朗", "SEK"),
+    ("比利时法郎", "BEF"), ("卢森堡法郎", "LUF"), ("荷兰盾", "NLG"),
+    ("港币", "HKD"), ("港元", "HKD"), ("人民币", "CNY"),
+)
+
+
 def currency_from(seg_title: str) -> str | None:
-    """从分节标题（如 `## 一、BEF（祖父）`）抽币种。"""
+    """从分节标题（如 `## 一、BEF（祖父）`）抽币种。
+
+    「中文币种词 + 缩写」配对命中优先（issue #162）；无中文词时回退首个缩写扫描
+    （兼容 `## 一、BEF（祖父）` 旧式标题）。
+    """
+    t = seg_title or ""
+    for zh, abbr in _ZH_CURRENCY_PAIRS:
+        if zh in t and abbr in t.upper():
+            return abbr
     for c in _CURRENCIES:
-        if c in (seg_title or "").upper():
+        if c in t.upper():
             return c
     return None
 

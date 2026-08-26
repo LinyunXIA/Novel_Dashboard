@@ -211,11 +211,14 @@ def parse_return_table(path: Path) -> list[dict]:
     """支持两种格式（欧洲/美国/英国=逐行 `- R1：x%`；香港/中国=竖线分隔单行 `R1：x｜R2：y｜…`）。
 
     年份来自 `#### 1999（…）` / `## 1999年` 标题。
+    四轮审计 #163：每 (year) 集满 R1-R5 五档即封盘——文末「分阶段复合年化」附录
+    （阶段N/全周期行）与末年明细同 year 且重复，集满后一律忽略。
     """
     lines = _lines(path)
     recs: list[dict] = []
     year = None
     region = _region_from_file(path.name)
+    seen: dict[int, set[int]] = {}   # year -> 已入库 risk_lvl 集
     for line in lines:
         # 年份标题（多级 # 均可）
         ym = re.search(r"^#+\s*(?:\d{4}[-–]\d{4}\s+)?(19|20)\d{2}", line)
@@ -226,17 +229,22 @@ def parse_return_table(path: Path) -> list[dict]:
         # 格式A：竖线分隔 `R1：4.35｜R2：6.12｜R3：8.64｜R4：68.82｜R5：76.35`
         vm = re.finditer(r"R([1-5])\s*[:：]\s*([-+]?\d+(?:\.\d+)?)", line)
         pairs = [(int(m.group(1)), parse_number(m.group(2))) for m in vm]
-        if pairs and len(pairs) >= 3 and year:
-            for rl, rate in pairs:
-                recs.append({"country": region, "risk_lvl": f"R{rl}",
-                             "year": year, "rate": rate, "source_file": path.name})
+        done = seen.setdefault(year if year is not None else -1, set())
+        if pairs and len(pairs) >= 3 and year and len(done) < 5:
+            fresh = [(rl, rate) for rl, rate in pairs if rl not in done]
+            if fresh:
+                for rl, rate in fresh:
+                    recs.append({"country": region, "risk_lvl": f"R{rl}",
+                                 "year": year, "rate": rate, "source_file": path.name})
+                    done.add(rl)
             continue
         # 格式B：逐行 `- R1：x%`
         rm = re.match(r"^\s*[-–]\s*R([1-5])[:：]\s*([-+\d.]+)\s*%?", line)
-        if rm and year:
+        if rm and year and int(rm.group(1)) not in done:
             recs.append({"country": region, "risk_lvl": f"R{rm.group(1)}",
                          "year": year, "rate": parse_number(rm.group(2)),
                          "source_file": path.name})
+            done.add(int(rm.group(1)))
     return recs
 
 
