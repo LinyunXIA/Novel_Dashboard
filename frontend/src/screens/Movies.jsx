@@ -39,11 +39,11 @@ export default function Movies() {
             <select value={accSel} onChange={e => setAccSel(e.target.value)}>
               <option value="">— 选账户 —</option>
               {(accounts.data?.items || []).filter(a => a.currency === (linking.currency || 'USD') && a.status !== 'closed').map(a => (
-                <option key={a.id} value={a.id}>acct#{a.id} {a.currency}{a.status === 'closed' ? ' (已关)' : ''}</option>
+                <option key={a.id} value={a.id}>acct#{a.id} {a.currency}</option>
               ))}
             </select>
             {!(accounts.data?.items || []).some(a => a.currency === (linking.currency || 'USD') && a.status !== 'closed') &&
-              <span className="warn">无同币种 active/closed 账户可关联</span>}
+              <span className="warn">无同币种可用账户可关联</span>}
             <button className="primary" disabled={!accSel || op.busy} onClick={doLink}>确认关联</button>
             <button className="ghost" onClick={() => { setLinking(null); setAccSel('') }}>取消</button>
           </div>
