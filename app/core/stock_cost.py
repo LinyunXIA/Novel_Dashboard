@@ -198,10 +198,14 @@ def _event_nonce_applied(db: Session, entity_id: int, event_id: str) -> bool:
 
 def _require_open_account(db: Session, account_id: int) -> None:
     """五轮审计 #176：关池（closed）账户只读终态（§6.6），拒新流水——
-    手动 buy/sell/dividend 与事件关联共用同一防线（ValueError → API 层 422）。"""
+    手动 buy/sell/dividend 与事件关联共用同一防线（ValueError → API 层 422）。
+    六轮收敛 #179 附注：account_id 缺失/不存在同样在此拒绝（此前 dividend
+    缺校验会落到 ledger FK 约束裸 500）。"""
     from app.model import Account
     acc = db.get(Account, account_id) if account_id else None
-    if acc is not None and acc.status == "closed":
+    if acc is None:
+        raise ValueError(f"apply 需有效 account_id（收到 {account_id!r}）")
+    if acc.status == "closed":
         raise ValueError(f"账户 #{account_id}（{acc.currency}）已于 {acc.closed_on} "
                          f"关池，只读终态不可记新流水（§6.6）")
 
