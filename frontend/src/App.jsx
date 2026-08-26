@@ -72,7 +72,8 @@ export default function App() {
 
       <main className="screen">
         {active === 'dashboard' && <Dashboard asOf={asOf} />}
-        {/* issue #121：数据屏以 asOf 作 key——游标变动即重挂载重新拉取，全 App 联动 */}
+        {/* issue #121：数据屏以 asOf 作 key——游标变动即重挂载重新拉取，全 App 联动。
+            投资/划拨为写操作表单，有意不随游标联动（#143 备案，见各屏 docstring） */}
         {active === 'invest' && <Invest asOf={asOf} />}
         {active === 'transfer' && <Transfer asOf={asOf} />}
         {active === 'returns' && <Returns key={`r-${asOf}`} asOf={asOf} />}
@@ -83,8 +84,6 @@ export default function App() {
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
-        {active === 'movies' && <Movies />}
-        {active === 'stock' && <Stock />}
         {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} />}
         {active === 'search' && <Search asOf={asOf} />}
         {active === 'diff' && <SourceDiff />}
@@ -157,21 +156,44 @@ function NotificationsBanner({ onShowImpact }) {
 }
 
 /**
- * 公司图谱屏（F-P1-05 / F-U7）：公司图谱 + 右上「获取/导入公司」按钮，人工触发
- * POST /api/v1/graph/companies/import（外部系统 API① 公司基础信息）→ 成功后 bump key
- * 重挂载 Graph 重新拉取展示新节点/边（后端已在同一请求内 commit）。
+ * 公司图谱屏（F-P1-05 / F-U7 · issue #138）：「获取/导入公司」改走 import-jobs
+ * 异步资源——POST /api/v1/import-jobs{provider:'company-info'} 建任务 → 轮询
+ * GET /api/v1/import-jobs/{id} 至 done/failed → done 取 result.stats 刷新图谱。
  */
 function CompanyGraph() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [stats, setStats] = useState(null)
+  const [jobId, setJobId] = useState(null)
+  const [jobError, setJobError] = useState(null)
   const { submit, busy, error } = useDataOp(data => {
-    setStats(data?.stats || null)
-    setRefreshKey(k => k + 1)
+    setJobError(null)
+    if (data?.id) setJobId(data.id)
   })
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    let alive = true
+    const t = setInterval(() => {
+      fetch(`/api/v1/import-jobs/${jobId}`).then(r => r.json()).then(j => {
+        if (!alive) return
+        if (j.status === 'done') {
+          clearInterval(t)
+          setStats(j.result?.stats || null)
+          setJobId(null)
+          setRefreshKey(k => k + 1)
+        } else if (j.status === 'failed') {
+          clearInterval(t)
+          setJobError(j.error || '导入任务失败')
+          setJobId(null)
+        }
+      }).catch(() => {})
+    }, 1200)
+    return () => { alive = false; clearInterval(t) }
+  }, [jobId])
 
   const statsText = stats
     ? `已处理 ${stats.companies} 家公司 · 新增 ${stats.companies_created} 家 · 股权关系 ${stats.rels} 条`
-    : null
+    : (jobId ? `任务 #${jobId} 执行中…` : null)
 
   return (
     <Graph
@@ -179,23 +201,15 @@ function CompanyGraph() {
       url="/api/v1/graph/companies"
       action={
         <>
-          <button className="ghost" disabled={busy}
-            onClick={() => submit('/api/v1/graph/companies/import', {})}>
-            {busy ? '导入中…' : '获取/导入公司'}
+          <button className="ghost" disabled={busy || !!jobId}
+            onClick={() => submit('/api/v1/import-jobs',
+              { provider: 'company-info', payload: {} })}>
+            {jobId ? '导入中…' : '获取/导入公司'}
           </button>
           {statsText && <span className="note" style={{ marginLeft: 8 }}>{statsText}</span>}
-          <ErrorBox error={error} />
+          <ErrorBox error={error || jobError} />
         </>
       }
     />
-  )
-}
-
-function Placeholder({ label, asOf }) {
-  return (
-    <div className="panel">
-      <h3>{label}</h3>
-      <p className="note">「{label}」屏待后续：截至 {asOf}。</p>
-    </div>
   )
 }
