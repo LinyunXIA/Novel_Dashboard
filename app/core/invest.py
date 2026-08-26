@@ -20,6 +20,7 @@ issue #82：赎回按笔防重——redeemed_at 非空即 409（不再按年扫�
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
@@ -146,19 +147,42 @@ def _rate(session: Session, region: str, risk_lvl: str, year: int) -> Optional[D
     return Decimal(row[0]) if row and row[0] is not None else None
 
 
+def delete_derived_by_tag(session: Session, *, tag: str) -> None:
+    """按定位标签整笔抹除 UI 派生写入（ledger.note / finance.label / timeline.note）。
+
+    issue #137 词边界加固：LIKE 只做粗筛，再以正则 `tag(?!\\d)` 复核——
+    `inv#1` 不得命中 `inv#10~19`（解锁低 id 投资误删高 id 投资的派生行）。
+    不直接用 SQL REGEXP：SQLite 测试库无 regexp 函数，Python 侧过滤保证跨库一致。
+    demand.py 的 `demand#{year}` 幂等抹除复用本函数。
+    """
+    rx = re.compile(re.escape(tag) + r"(?!\d)")
+
+    def _hit(text: Optional[str]) -> bool:
+        return bool(text and rx.search(text))
+
+    for row in session.execute(
+            select(LedgerEntry).where(LedgerEntry.note.like(f"%{tag}%"))).scalars().all():
+        if _hit(row.note):
+            session.delete(row)
+    for row in session.execute(
+            select(FinanceEntry).where(FinanceEntry.label.like(f"%{tag}%"))).scalars().all():
+        if _hit(row.label):
+            session.delete(row)
+    for row in session.execute(
+            select(TimelineEvent).where(TimelineEvent.note.like(f"%{tag}%"),
+                                        TimelineEvent.overlay.is_(True))).scalars().all():
+        if _hit(row.note):
+            session.delete(row)
+    session.flush()
+
+
 def _delete_investment_writes(session: Session, inv: Investment) -> None:
     """整笔抹除该投资落下的全部派生写入（issue #81）：ledger 划出/赎回、finance_entry、
-    overlay 时间线条目——按 note/label 标签 `inv#{id}` 精确定位，避免误删他人数据。
+    overlay 时间线条目——按 note/label 标签 `inv#{id}` 定位（词边界精确，issue #137）。
 
     调用方（解锁/覆盖）须随后 recompute + rebuild_snapshots，恢复账户 to 投资前。
     """
-    tag = _inv_tag(inv)
-    session.execute(delete(LedgerEntry).where(LedgerEntry.note.like(f"%{tag}%")))
-    session.execute(delete(FinanceEntry).where(FinanceEntry.label.like(f"%{tag}%")))
-    session.execute(delete(TimelineEvent).where(
-        TimelineEvent.note.like(f"%{tag}%"),
-        TimelineEvent.overlay.is_(True),
-    ))
+    delete_derived_by_tag(session, tag=_inv_tag(inv))
 
 
 def unlock_investment(session: Session, investment: Investment) -> Investment:

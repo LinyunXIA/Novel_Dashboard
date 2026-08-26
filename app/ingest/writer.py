@@ -12,9 +12,20 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.ingest.holders import holder_entity_name
 from app.ingest.normalize import resolve_date
 from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream,
                        InitialAsset, LedgerEntry, Relationship, StockEvent)
+
+
+def _canonical_person(session: Session, holder: str) -> Entity:
+    """职称/登记名 → 规范 person entity（issue #136）。
+
+    与 conflict._resolve_entity_id 同源消费 holders.TITLE_ENTITY 归一，
+    杜绝「收益挂账锚（职称别名实体）≠ 银行账户锚（规范实体）」的账务分裂；
+    未知名字（不在映射表）原样落档，交由 conflict H2/H5 与 ingest_report 兜底。
+    """
+    return upsert_entity(session, "person", holder_entity_name(holder) or holder)
 
 
 def upsert_entity(session: Session, entity_type: str, name: str,
@@ -129,7 +140,7 @@ def import_initial_assets(session: Session, records: list[dict], cash_year: int 
     """
     stats = {"asset": 0, "cash": 0, "cash_skipped": 0, "asset_skipped": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["entity_name"])
+        ent = _canonical_person(session, rec["entity_name"])
         if rec["asset_type"] == "cash":
             # 现金 → 账户 + 首笔存款
             cur = rec["currency"]
@@ -202,7 +213,7 @@ def import_income_security(session: Session, records: list[dict],
         holder = rec.get("holder")
         if not holder:
             continue
-        ent = upsert_entity(session, "person", holder)
+        ent = _canonical_person(session, holder)
         rate = rec.get("rate_pct") or 0.0
         amount = (rec.get("face_value") or 0.0) * rate / 100.0
         if not amount:
@@ -232,7 +243,7 @@ def import_income_property(session: Session, records: list[dict],
     from app.core.factors import property_factor
     stats = {"stream": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["holder"])
+        ent = _canonical_person(session, rec["holder"])
         base = rec.get("base1974") or 0.0
         for y in range(years[0], years[1] + 1):
             if y < 1974:
@@ -255,7 +266,7 @@ def import_income_shop(session: Session, records: list[dict]) -> dict:
     """开店 → 逐年 income_stream（时段内取 合并税后落袋 均值，挂 Henri Peeters）。"""
     stats = {"stream": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["holder"])
+        ent = _canonical_person(session, rec["holder"])
         for y in range(rec["y0"], rec["y1"] + 1):
             label = "祖父开店 · 合并税后落袋"
             session.add(IncomeStream(
@@ -354,21 +365,25 @@ def import_timeline(session: Session, records: list[dict]) -> dict:
 
 
 def import_salary(session: Session, records: list[dict]) -> dict:
-    """薪资 → 逐年 income_stream(salary)，各归各（养父/养母），取文件税后值。"""
+    """薪资 → 逐年 income_stream(salary)，各归各（养父→Joren/养母→Johanna），取文件税后值。
+
+    issue #136：holder 经 TITLE_ENTITY 归一挂规范实体；group_key/label 同用规范名，
+    保证与账户锚同源。
+    """
     from app.model.types import StreamType
     stats = {"stream": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["holder"])
+        ent = _canonical_person(session, rec["holder"])
         if rec.get("after_tax") is None:
             continue
         session.add(IncomeStream(
-            entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=f"{rec['holder']}薪资",
+            entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=f"{ent.name}薪资",
             currency=rec.get("currency"), year=rec["year"], amount=rec["after_tax"],
-            label=f"{rec['holder']}薪资税后", source_file=rec.get("source_file"),
+            label=f"{ent.name}薪资税后", source_file=rec.get("source_file"),
         ))
         _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
                            year=rec["year"], amount=rec["after_tax"],
-                           label=f"{rec['holder']}薪资税后", source_file=rec.get("source_file"))
+                           label=f"{ent.name}薪资税后", source_file=rec.get("source_file"))
         stats["stream"] += 1
     return stats
 
@@ -381,7 +396,7 @@ def import_household_expense(session: Session, records: list[dict]) -> dict:
     """
     stats = {"n": 0, "skipped": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["holder"])
+        ent = _canonical_person(session, rec["holder"])
         cur = rec.get("currency") or "BEF"
         acc = get_or_create_account(session, ent.id, cur)
         d = resolve_date(rec["year"])
@@ -447,8 +462,8 @@ def import_bank(session: Session, segments: list[dict], source_file: str | None 
         if not cur:
             stats["skipped"] += 1
             continue
-        # entity + account（唯一键：entity × currency × bank）
-        ent = upsert_entity(session, "person", holder)
+        # entity + account（唯一键：entity × currency × bank）；issue #136：holder 归一规范名
+        ent = _canonical_person(session, holder)
         acc = session.execute(
             select(Account).where(
                 Account.entity_id == ent.id, Account.currency == cur, Account.bank == bank)
@@ -573,11 +588,13 @@ def import_income_rent(session: Session, records: list[dict],
     """惠民租房 → 逐年租金 income_stream（单套年租金×套数×分段复利系数）。
 
     issue #69：分段复利系数外置 app/core/factors.py（数值与源文件说明段一致）。
+    窗口 (1974, 2007) = 惠民租房.md §一.2 明文测算周期「1974 起租至 2007 年末，
+    合计 34 年」（issue #144：口径来源注记，非遗漏）。
     """
     from app.core.factors import rent_factor
     stats = {"stream": 0}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["holder"])
+        ent = _canonical_person(session, rec["holder"])
         base = (rec.get("unit_rent") or 0.0) * (rec.get("units") or 0.0)
         for y in range(years[0], years[1] + 1):
             if y < (rec.get("start") or 1974):

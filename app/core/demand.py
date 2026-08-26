@@ -22,10 +22,10 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.invest import ValidationError, _entity_kind
+from app.core.invest import ValidationError, _entity_kind, delete_derived_by_tag
 from app.model import Account, FinanceEntry, LedgerEntry, TimelineEvent
 from app.model.types import SourceKind
 
@@ -111,10 +111,8 @@ def accrue_demand_interest(session: Session, year: int) -> dict:
         raise ValidationError(f"活期结息须在结算日 {settle} 之后操作（当前 {date.today()}）")
 
     tag = _tag(year)
-    session.execute(delete(LedgerEntry).where(LedgerEntry.note.like(f"%{tag}%")))
-    session.execute(delete(FinanceEntry).where(FinanceEntry.label.like(f"%{tag}%")))
-    session.execute(delete(TimelineEvent).where(
-        TimelineEvent.note.like(f"%{tag}%"), TimelineEvent.overlay.is_(True)))
+    # issue #137：词边界抹除复用 invest.delete_derived_by_tag（demand#{year} 不得命中他年）
+    delete_derived_by_tag(session, tag=tag)
 
     quotes = quote_demand_interest(session, year)
     total_by_cur: dict[str, Decimal] = {}

@@ -208,18 +208,16 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             bypass = force or bool(force_files and r.file in force_files)
             if not bypass and _skip_by_state(session, r, source_dir, log, force_files):
                 continue
-            if bypass:
-                # issue #114 --force / F-P2-06 force_files（采纳新版本）：先按 source_file
-                # 清除旧派生行（income_stream + finance 镜像；salary 同样只涉这两表）再重导
-                purged = _purge_income_derived(session, r.file)
-                log(f"   ♻ {r.file}: 清除旧派生行 {purged} 条后重导")
+            if force and r.category == "salary":
+                # issue #114：--force 仅支持四类收益文件（只落 income_stream+finance 镜像，
+                # 可按 source_file 安全清除）；salary 涉及账务镜像，维持整文件跳过。
+                # force_files（F-P2-06 版本采纳）不受此限——采纳新版本必须重导。
+                log(f"   ⏭ {r.file}: --force 不支持薪资文件（涉及 ledger 行），跳过")
                 continue
-            if force:
-                # issue #114：force 仅支持四类收益文件（只落 income_stream+finance 镜像，
-                # 可按 source_file 安全清除）；salary 涉及 ledger 行，维持跳过。
-                if r.category == "salary":
-                    log(f"   ⏭ {r.file}: --force 不支持薪资文件（涉及 ledger 行），跳过")
-                    continue
+            if bypass:
+                # issue #135 回归修复：清场后必须继续走下方冲突检测+重导。
+                # 此前 purge 后直接 continue，--force(#114) 重浇灌与 F-P2-06「采纳新版本」
+                # 均退化为「只删不补」的数据清零事故。
                 purged = _purge_income_derived(session, r.file)
                 log(f"   ♻ {r.file}: 清除旧派生行 {purged} 条后重导")
             crep = conflict.check_income_stream_conflict(
@@ -620,6 +618,32 @@ def finance_backfill(env: str = typer.Option(None, "--env")):
         s.commit()
         typer.echo(f"[{_resolved_env(env)}] 财务收支回填：收入 {r['income']}、支出 {r['expense']}"
                    f"（跳过 收入{r['skipped_income']}/支出{r['skipped_expense']}）")
+
+
+@app.command("merge-alias-persons")
+def merge_alias_persons_cmd(env: str = typer.Option(None, "--env"),
+                            dry_run: bool = typer.Option(False, "--dry-run",
+                                                         help="只报告将合并的名单，不写库")):
+    """issue #136 存量修复：职称别名 person（养祖父/养父…）引用并入规范实体后删别名。
+
+    writer 已接 TITLE_ENTITY 归一；本命令收口历史数据（收益挂别名、账户挂规范名的分裂）。
+    合并 >0 时自动重算 + 重建快照。
+    """
+    from app.core.entity_merge import merge_alias_persons
+    with _session_for(env) as s:
+        r = merge_alias_persons(s, log=typer.echo, dry_run=dry_run)
+        if dry_run:
+            typer.echo(f"[{_resolved_env(env)}] {r}")
+            return
+        merged = r.get("merged", 0)
+        if merged:
+            from app.core.recompute import recompute_all
+            from app.core.snapshot import rebuild_snapshots
+            recompute_all(s, 1947)
+            rebuild_snapshots(s, range(1947, 2026), from_year=1947)
+        s.commit()
+    typer.echo(f"[{_resolved_env(env)}] 别名实体合并完成：{r}"
+               + ("；已重算+重建快照" if merged else ""))
 
 
 @app.command()
