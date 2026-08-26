@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.config import CALENDAR_MAX_YEAR, CALENDAR_MIN_YEAR
 from app.api.date_rules import router as date_rules_router
+from app.api.exports import router as exports_router   # F-P2-07：导出资源
 from app.api.jobs import router as jobs_router
 from app.api.labor_cost import router as labor_cost_router
 from app.api.movie_events import router as movie_events_router
@@ -51,6 +52,7 @@ app.include_router(search_router)
 app.include_router(restricted_router)
 app.include_router(date_rules_router)
 app.include_router(jobs_router)   # issue #138：异步 job 资源（import-jobs / recompute-jobs）
+app.include_router(exports_router)   # F-P2-07：导出（md/csv/pdf，仅导出不回写）
 
 # issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
 # 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。

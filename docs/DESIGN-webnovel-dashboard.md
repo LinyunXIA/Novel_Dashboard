@@ -746,7 +746,8 @@ class Importer(Protocol):
 > `GET /entities/{id}/finance-entries`、`GET /source-files/{id}/meta` 别名与 `/{vid}/diff`、
 > `GET /ingest-reports`（issue #118/#123）、`GET /ping`。
 > 功能语义分别见 §13/§18/§19/§21.3；`snapshots/{date}` 与 `source-files 单版本内容`
-> 两端点已按 §14.2 原表补齐（issue #155）。
+> 两端点已按 §14.2 原表补齐（issue #155）；`GET /exports`（产物清单）为 F-P2-07 实现超集
+> （§14.2 原表仅列 POST /exports 与 GET /exports/{id}）。
 
 ---
 
@@ -932,10 +933,15 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2-04 | **事件·股票** | HP_CSC 重组链数值导入 → 依 §11.4 + H2 逐行验证｜已实现 `app/core/stock_chain.py`（apply_chain 按日期驱动 apply_buy/apply_merger/apply_sell 幂等重放 + verify_chain 逐行对账，只读）+ `app/core/hp_csc_chain.py`（HP_CSC_DXC 主链 14 步编码锚定点：CPQ→HPQ→HPE→DXC、CSC→DXC、DXC→PRSP→现金、MFGP→OTEX 现金，as_of=2025 闭合到 DXC 8,782,400/OTEX 1,227,944/三笔现金）+ health `check_stock_h2`（buy 源成本离群 warn / 同日同源单价 crit，排除 split 双源误判）+ conflict `check_stock_event_conflict` 接入 `events-stock`（§11.4 跨文件同键金额不符 hard-block，同源重导入不拦）。模型局限：split 无法「父保留+子另计」，用同名腿近似，只断言股数+现金；链部分数值(DXC 减持等)回测校准标 calibrated。21 新单测，全量 346 passed | §19.6/§11.4/§10 | ✅ |
 | F-P2-05 | **时间线/编年史 UI 编辑** | overlay 增改删、差异/重置回源/以源为最新｜已实现 `app/core/overlay.py`（DB-backed 覆盖层 user_data_overlay 为权威 + 合并到 timeline_event(overlay=True)；用户覆盖行 source_file=`overlay:timeline:{key}`，**与 issue#86 系统 overlay 行(source_file=NULL: 投资/划拨/活期)结构隔离只读**；create/update/delete/merge/diff/restore/source_as_latest）+ `app/api/timeline.py`（POST/PATCH/DELETE timeline-events、overlay/restore、overlay/source-as-latest、overlay/diff、合并 GET 每 key 一行覆盖优先，普通 UI 放行）+ 前端「编年史」屏（新增/编辑/删除/差异/重置/以源为最新）。12 新单测(overlay 8 + api 4)，全量 358 passed | §12/§6.4 | ✅ |
 | F-P2-06 | **文件 diff 回退** | 版本 diff → UI 决策「更新」/「回退」（DB+磁盘复原）｜已实现 `app/core/versioning.py`（list_tracked/file_diff [[unified diff]]/adopt_current [[复用 import_all(force_files=该文件) 重导入+记版+notification]]/restore_version [[§11.3 安全写盘复原 source_dir + is_current 切换，路径防越权 + 原子写 + notification]]）+ `app/ingest/main.py` import_all/_skip_by_state 加 force_files（版本决策「采纳」强制重导入）+ `app/api/source_files.py`（GET /source-files、/{vid}/versions、diff、POST versions(采纳)、POST versions/{vid}/restore(回退)；普通 UI 放行）+ 前端「版本/diff」屏。**写盘目标偏离**：本仓库实际导入读 source_dir(Design_Folder)，回退写回 source_dir（有意偏离 §11.3 的 input_dir——无独立 input 流）。11 新单测，全量 369 passed | §11 | ✅ |
-| F-P2-07 | **导出** | markdown/CSV/报告 PDF（只导出不回写源） | §15 | ⬜ |
-| F-P2-08 | **统一搜索增强** | 搜索数据质量达标后再评估是否需要 LLM 判文件兜底 | §18.5 | ⬜ |
+| F-P2-07 | **导出** | markdown/CSV/报告 PDF（只导出不回写源）｜已实现 `app/export/`（render.py md 全库结构化档案+csv 五 scope RFC4180 / pdf.py reportlab 报告含家族总资产折线图内嵌）+ `/api/v1/exports`×3（POST 201+Location 同步生成、GET 清单、GET {id} 文件流，ID_RE 防穿越）+「导入状态」屏导出中心；产物落 per-env `data/exports*` 不入 git；编年史导出按 §12 每 key 覆盖行优先 | §15 | ✅ |
 
 > 推进原则：先 P0 工程骨架打通 ingest→快照→曲线→健康；再 P1 各交互操作；Phase 2 事件/增强。跨 P0/P1 共用 §6.8 四类操作模板，避免重复实现。
+
+### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
+
+| 编号 | 模块 | 功能 | 关键章节 | 状态 |
+|---|---|---|---|---|
+| F-P3-01（原 F-P2-08） | **统一搜索增强** | 搜索数据质量达标后再评估是否需要 LLM 判文件兜底｜编号沿用原 F-P2-08 以便引用追溯 | §18.5 | ⬜ |
 
 ---
 
@@ -1067,3 +1073,20 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   收紧备案（§21.5 已注）；snapshot.scope DB 列注释更正三段式（迁移 a3b4c5d6e7f8）；
   §14.1 分页例外备案、graph 点号记法更正、§14.2 超集路由收录、DELETE entities 门禁与
   取消 job 终态口径注记。
+
+### 21.8 F-P2-07 导出落地回写（2026-08-26）
+
+- **端点**：`POST /api/v1/exports`（body `{format:'markdown'|'csv'|'pdf', scope?}`；
+  同步生成——本地单机数据量小，不建异步 job；201 + Location + body 含 download_url）、
+  `GET /api/v1/exports`（产物清单，实现超集）、`GET /api/v1/exports/{id}`（文件流；
+  id 凭 ID_RE `[a-z]{3,8}-\d{8}T\d{6}-[0-9a-f]{6}` 校验 + resolve 双保险防路径穿越，
+  非法/缺失一律 404）。校验：非法 format 422、csv 缺/错 scope 422、scope 仅 csv 支持。
+- **内容口径**：markdown=全库结构化档案六节（实体/编年史/账户/财务计数/收益节选/汇率），
+  编年史按 §12 每 key 用户覆盖行优先、系统行与源行保留语义不变；csv 五 scope
+  （finance/returns/holdings/timeline/ledger），RFC4180 转义（包裹+内部引号翻倍）；
+  pdf=reportlab 报告（摘要表 + family:total 年度折线图内嵌 + 编年史最近 20 条）。
+- **存储**：产物落 per-env `config.exports_dir`（dev/test/prod → data/exports-dev|exports-test|exports），
+  data/ 已 gitignore；**只读 DB，绝不触碰 source_dir/input_dir**（§15 铁律，测试覆盖）。
+- **前端**：「导入状态」屏新增导出中心（格式/scope 选择 + 生成 + 最近产物下载列表）。
+- **依赖**：requirements.txt 增 `reportlab>=4.0`（§2 技术栈既定 PDF 选型）。
+- **Phase 调整**：F-P2-08（统一搜索增强）自 Phase 2 移入 Phase 3（编号沿用 F-P2-08 → F-P3-01 备案）。
