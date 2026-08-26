@@ -4,7 +4,9 @@ import { ErrorBox, Field } from './ui'
 
 const RISK = ['R1', 'R2', 'R3', 'R4', 'R5']
 
-/** F-P1-01/02/09 投资屏：一年一投、R 级计息、年末赎回、失败整体拒绝（useDataOp）。 */
+/** F-P1-01/02/09 投资屏：一年一投、R 级计息、年末赎回、失败整体拒绝（useDataOp）。
+ *  #143 备案：本屏为写操作表单，**有意**不随全局日历游标（asOf）联动重挂载——
+ *  投资年份/发生日由表单显式输入；余额校验以服务端 start_date 的 as-of 口径为准。 */
 export default function Invest() {
   const regions = useFetch('/api/v1/returns/regions')
   const ents = useFetch('/api/v1/entities?page_size=200')

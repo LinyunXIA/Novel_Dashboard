@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -28,6 +29,29 @@ def _rel(db: Session, vid: int) -> str:
 @router.get("/source-files")
 def list_source_files(db: Session = Depends(get_db)):
     return {"items": versioning.list_tracked(db, get_config()), "total": 0}
+
+
+@router.get("/source-files/{vid}")
+@router.get("/source-files/{vid}/meta")
+def get_source_file(vid: int, db: Session = Depends(get_db)):
+    """单文件元信息（§14.2 GET /source-files/{id}，issue #142 补端点；/meta 为别名）。
+
+    文件标识沿用本路由的 current_version id 约定（规避中文 rel 进 URL）。
+    """
+    v = db.get(SourceFileVersion, vid)
+    if v is None:
+        raise HTTPException(status_code=404, detail="版本不存在")
+    rel = v.file_path
+    rows = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.file_path == rel).order_by(SourceFileVersion.version)).scalars().all()
+    cur = next((x for x in rows if x.is_current), None)
+    return {
+        "id": vid, "file": rel,
+        "current_version": cur.version if cur else None,
+        "current_version_row_id": cur.id if cur else None,
+        "version_count": len(rows),
+        "versions": [{"id": x.id, "version": x.version, "current": bool(x.is_current)} for x in rows],
+    }
 
 
 @router.get("/source-files/{vid}/versions")

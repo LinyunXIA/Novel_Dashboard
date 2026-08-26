@@ -20,7 +20,9 @@ from pathlib import Path
 _PREFIX_RULES: list[tuple[str, str]] = [
     ("基准/事件/电影/", "event_movie"),       # Phase2 占位（DESIGN §6.1 / §19.6）
     ("基准/事件/股票/", "event_stock"),       # Phase2 占位（DESIGN §6.1 / §19.6）
-    ("基准/事件/", "PHASE2_EVENT"),          # Phase1 跳过（通用兜底）
+    # issue #144：散文件兜底改归 SKIP_*——§6.1「Phase 1 直接跳过」语义，
+    # 不再落无 parser 类别每轮报 ❌ 解析器未实现（event CLI 单独导入，不走扫描链）
+    ("基准/事件/", "SKIP_PHASE2_EVENT"),
     ("基准/CPI工资.md", "SKIP_PARAM"),        # issue #70：CPI 与工资增幅基准参数，无消费方显式跳过
     ("基准/公司/用工成本/", "SKIP_P1"),        # issue #26：P1 §13 范围，Phase1 跳过
     ("设计文件/", "SKIP_DOC"),                # issue #26：创作约束笔记，不入库
@@ -41,7 +43,7 @@ _PREFIX_RULES: list[tuple[str, str]] = [
 ]
 
 # Phase2 类别集合（需数据调整员导入后 UI 关联，Phase1 跳过）
-PHASE2_CATEGORIES = {"event_movie", "event_stock", "PHASE2_EVENT"}
+PHASE2_CATEGORIES = {"event_movie", "event_stock", "SKIP_PHASE2_EVENT"}
 
 
 def is_skip_category(category: str) -> bool:
