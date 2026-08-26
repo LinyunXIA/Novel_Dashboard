@@ -159,12 +159,18 @@ def execute_import_job(env: str, job_id: int, *, sessionmaker=None,
 
 
 def cancel_pending(session, model, job_id: int) -> bool:
-    """取消 pending 任务（置 failed/已取消）；非 pending 返回 False（API→409）。"""
-    job = session.get(model, job_id)
-    if job is None or job.status != "pending":
-        return False
-    job.status = "failed"
-    job.error = "已取消（DELETE pending 任务）"
-    job.finished_at = datetime.now()
-    session.commit()
-    return True
+    """取消 pending 任务（置 failed/已取消）；非 pending 返回 False（API→409）。
+
+    四轮审计 #169：与 worker 的 pending→running 迁移互斥（否则取消返回 True
+    后 worker 仍照跑并以 done 覆盖终态）。锁为进程内 threading.Lock，
+    与 API 层 session 无关，仅串行化状态判定窗口。
+    """
+    with _job_lock:
+        job = session.get(model, job_id)
+        if job is None or job.status != "pending":
+            return False
+        job.status = "failed"
+        job.error = "已取消（DELETE pending 任务）"
+        job.finished_at = datetime.now()
+        session.commit()
+        return True

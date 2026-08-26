@@ -53,8 +53,17 @@ def test_parse_error_persisted(session):
     session.commit()
     row = session.execute(select(IngestReport)).scalar_one()
     assert row.level == "error"
-    assert row.rule is None
+    assert row.rule == "fx"   # 四轮审计 #168：rule 存 category 供幂等定位
     assert "表头不识别" in row.detail
+
+
+def test_parse_error_idempotent_per_file(session):
+    """四轮审计 #168：同文件重复解析失败 → 更新既有行而非每轮新插。"""
+    _record_parse_error(session, "基准/汇率/新表.md", "fx", "错误A")
+    _record_parse_error(session, "基准/汇率/新表.md", "fx", "错误B")
+    session.commit()
+    rows = session.execute(select(IngestReport)).scalars().all()
+    assert len(rows) == 1 and "错误B" in rows[0].detail
 
 
 def test_level_check_constraint(session):

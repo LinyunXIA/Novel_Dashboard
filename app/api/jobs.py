@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -69,7 +69,10 @@ def list_recompute_jobs(status: Optional[str] = None,
     if status:
         q = q.where(RecomputeJob.status == status)
     rows = db.execute(q.limit(limit).offset(offset)).scalars().all()
-    return {"items": [_recompute_dto(x) for x in rows], "total": len(rows)}
+    # 四轮审计 #169：total=过滤后总数（此前为页内条数，破坏分页语义）
+    total = db.execute(select(func.count()).select_from(RecomputeJob)
+                       .where(*([RecomputeJob.status == status] if status else []))).scalar()
+    return {"items": [_recompute_dto(x) for x in rows], "total": total}
 
 
 @router.get("/recompute-jobs/{jid}")
@@ -117,12 +120,18 @@ def list_import_jobs(provider: Optional[str] = None, status: Optional[str] = Non
                      limit: int = Query(50, le=200), offset: int = Query(0, ge=0),
                      db: Session = Depends(get_db)):
     q = select(ImportJob).order_by(ImportJob.id.desc())
+    conds = []
     if provider:
         q = q.where(ImportJob.provider == provider)
+        conds.append(ImportJob.provider == provider)
     if status:
         q = q.where(ImportJob.status == status)
+        conds.append(ImportJob.status == status)
     rows = db.execute(q.limit(limit).offset(offset)).scalars().all()
-    return {"items": [_import_dto(x) for x in rows], "total": len(rows)}
+    # 四轮审计 #169：total=过滤后总数（此前为页内条数）
+    total = db.execute(select(func.count()).select_from(ImportJob)
+                       .where(*conds)).scalar()
+    return {"items": [_import_dto(x) for x in rows], "total": total}
 
 
 @router.get("/import-jobs/{jid}")

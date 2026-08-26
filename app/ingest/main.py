@@ -358,26 +358,42 @@ def _record_findings(session, file_path: str, crep) -> None:
 
     此前仅 stdout，进程结束即失；现与 echo 并行写入 ingest_report 表，
     供数据调整员事后回看与「导入状态」屏展示。
+    四轮审计 #168：同 (file_path, rule, level) 幂等 upsert——每轮重导不再重复插行。
     """
+    from sqlalchemy import select
     from app.model import IngestReport
-    for p in crep.problems:
-        session.add(IngestReport(
-            file_path=file_path, rule=p.get("rule"), level="block",
-            line=_coerce_line(p.get("line")),
-            detail=str(p.get("detail", ""))))
-    for w in crep.warnings:
-        session.add(IngestReport(
-            file_path=file_path, rule=w.get("rule"), level="warn",
-            line=_coerce_line(w.get("line")),
-            detail=str(w.get("detail", ""))))
+    for level, items in (("block", crep.problems), ("warn", crep.warnings)):
+        for p in items:
+            rule = p.get("rule")
+            detail = str(p.get("detail", ""))
+            existing = session.execute(select(IngestReport).where(
+                IngestReport.file_path == file_path,
+                IngestReport.rule == rule,
+                IngestReport.level == level).limit(1)).scalar_one_or_none()
+            if existing is not None:
+                existing.line = _coerce_line(p.get("line"))
+                existing.detail = detail   # 最新一次为准
+            else:
+                session.add(IngestReport(
+                    file_path=file_path, rule=rule, level=level,
+                    line=_coerce_line(p.get("line")), detail=detail))
 
 
 def _record_parse_error(session, file_path: str, category: str, error: str | None) -> None:
-    """解析失败落库（issue #118：level='error'，需人工处理）。"""
+    """解析失败落库（issue #118：level='error'，需人工处理）。
+    四轮审计 #168：同文件幂等——更新既有 error 行而非每轮新插。"""
+    from sqlalchemy import select
     from app.model import IngestReport
-    session.add(IngestReport(
-        file_path=file_path, rule=None, level="error", line=None,
-        detail=f"[{category}] {error or '解析失败'}"))
+    detail = f"[{category}] {error or '解析失败'}"
+    existing = session.execute(select(IngestReport).where(
+        IngestReport.file_path == file_path,
+        IngestReport.level == "error").limit(1)).scalar_one_or_none()
+    if existing is not None:
+        existing.detail = detail
+        existing.rule = category or None
+    else:
+        session.add(IngestReport(file_path=file_path, rule=category or None,
+                                 level="error", line=None, detail=detail))
 
 def _log_soft(log, file: str, crep) -> int:
     """输出软警告（§11.4「标」：入库但高亮），返回条数（issue #72）。"""

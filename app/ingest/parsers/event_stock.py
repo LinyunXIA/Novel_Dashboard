@@ -12,10 +12,12 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from app.ingest.parsers import _split_table_row
+
+_ONE_DAY = timedelta(days=1)
 from app.ingest.normalize import parse_number
 
 # 事件词 → 归一化 event_type
@@ -35,16 +37,24 @@ def _norm_type(word: str) -> str:
 
 
 def _date_of(cell: str) -> date | None:
-    """支持 '2025.12.31' / '2017-05-17' / '2017年5月' / '2018' → date。"""
+    """支持 '2025.12.31' / '2017-05-17' / '2017年5月' / '2018' → date。
+
+    四轮审计 #166：缺粒度按 §6.2 统一日历默认规则补全——年月→该月**月底**、
+    仅年→当年 **12-30**（修复前误取 1 日 / 1 月 1 日）。
+    """
     m = re.search(r"((?:19|20)\d{2})[-.](\d{1,2})[-.](\d{1,2})", cell)
     if m:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    m = re.search(r"((?:19|20)\d{2})年?\s*(\d{1,2})?月?", cell)
-    if m:
-        return date(int(m.group(1)), int(m.group(2) or 1), 1)
+    m = re.search(r"((?:19|20)\d{2})\s*年?\s*(\d{1,2})\s*月?", cell)
+    if m and m.group(2):
+        y, mo = int(m.group(1)), int(m.group(2))
+        if 1 <= mo <= 12:
+            if mo == 12:
+                return date(y, 12, 31)
+            return date(y, mo + 1, 1) - _ONE_DAY
     m = re.search(r"((?:19|20)\d{2})", cell)
     if m:
-        return date(int(m.group(1)), 1, 1)
+        return date(int(m.group(1)), 12, 30)   # §6.2：仅年 → 当年结算日
     return None
 
 

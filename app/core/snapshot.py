@@ -130,6 +130,14 @@ def _usd_rate(session: Session, currency: str, year: int) -> Decimal | None:
     return usd_rate(session, currency, year)
 
 
+def _holding_entity_ids(holding_by_year: dict[int, dict[int, Decimal]]) -> set[int]:
+    """有股票持仓的主体 id 集（跨年并集；#169 对齐 calendar 的 entity 键构建）。"""
+    out: set[int] = set()
+    for ymap in holding_by_year.values():
+        out.update(ymap.keys())
+    return out
+
+
 def rebuild_snapshots(session: Session, years: range = None,
                       from_year: int | None = None) -> dict:
     """重建逐年账户/实体/家族三层快照。
@@ -216,6 +224,11 @@ def rebuild_snapshots(session: Session, years: range = None,
             if y < start:
                 continue
             ea[y] = ea.get(y, _ZERO) + v
+    # 四轮审计 #169：与 calendar.snapshot_as_of 对齐——无 USD 银行账户但持有股票的
+    # 主体也要有 entity:{eid}:USD 行（此前仅 calendar 建、年度快照缺该行，两接口数值不同）
+    for eid in {eid for eid, cur in
+                [(e, "USD") for e in _holding_entity_ids(holding_by_year)]}:
+        entity_agg.setdefault((eid, "USD"), {})
     for (eid, cur), ymap in entity_agg.items():
         written = False
         for y in years_list:

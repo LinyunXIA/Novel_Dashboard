@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_importer
-from app.model import Entity, FinanceEntry, LedgerEntry, Relationship
+from app.model import Account, Entity, FinanceEntry, LedgerEntry, Relationship
 
 router = APIRouter(prefix="/api/v1", tags=["restricted-writes"])
 
@@ -64,6 +64,7 @@ def create_entity(body: EntityCreate, response: Response,
 
 @router.put("/entities/{entity_id}", dependencies=[Depends(require_importer)])
 def replace_entity(entity_id: int, body: EntityCreate, db: Session = Depends(get_db)):
+    from sqlalchemy.exc import IntegrityError
     e = db.get(Entity, entity_id)
     if not e:
         raise HTTPException(status_code=404, detail="entity not found")
@@ -73,7 +74,12 @@ def replace_entity(entity_id: int, body: EntityCreate, db: Session = Depends(get
     e.status = body.status
     if body.fields is not None:
         e.fields = body.fields
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 四轮审计 #169：与 POST 对称——改名撞 UNIQUE(entity_type,name) → 409 而非裸 500
+        db.rollback()
+        raise HTTPException(status_code=409, detail="同名实体已存在（entity_type+name 唯一）")
     return {"id": e.id, "type": e.entity_type, "name": e.name}
 
 
@@ -157,6 +163,9 @@ def create_ledger(body: LedgerCreate, response: Response, db: Session = Depends(
         d = _date.fromisoformat(body.date)
     except ValueError:
         raise HTTPException(status_code=422, detail="date 需 YYYY-MM-DD")
+    # 四轮审计 #169：先校验账户存在，防 FK 违约裸 500
+    if db.get(Account, body.account_id) is None:
+        raise HTTPException(status_code=404, detail=f"account #{body.account_id} 不存在")
     e = LedgerEntry(account_id=body.account_id, date=d, reason=body.reason,
                     inflow=body.inflow, outflow=body.outflow, balance=body.balance,
                     kind=body.kind, note=body.note)

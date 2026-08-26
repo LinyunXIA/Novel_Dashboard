@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.snapshot import rebuild_snapshots
 from app.model import Account, LedgerEntry, MovieEvent
 
 router = APIRouter(prefix="/api/v1", tags=["movie-events"])
@@ -100,10 +101,17 @@ def link_movie(movie_id: int, body: LinkIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "movie event not found")
     if m.linked_account_id is not None:
         return {"linked": True, "skipped": True, "account_id": m.linked_account_id}
-    _require_same_currency(db, m.currency, body.account_id)   # issue #164
+    acc = _require_same_currency(db, m.currency, body.account_id)   # issue #164
     written = _write_movie_ledger(m, body.account_id, db)
     m.linked_account_id = body.account_id
     m.linked_at = datetime.now()
+    if written:
+        # 四轮审计 #169：与 stock 侧 _settle 对称——写账后刷新派生视图（此前滞后到下次重算）
+        years = [d.year for d, amt, _k, _r in
+                 [(m.investment_date, m.investment_total, None, None),
+                  (m.principal_return_date, m.principal_return_amount, None, None)]
+                 if d is not None and amt]
+        rebuild_snapshots(db, from_year=min(years) if years else date.today().year)
     db.commit()
     return {"linked": True, "skipped": False, "ledger_written": written, "account_id": body.account_id}
 

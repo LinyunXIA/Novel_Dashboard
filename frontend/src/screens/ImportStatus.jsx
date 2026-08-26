@@ -17,16 +17,31 @@ export default function ImportStatus() {
   // F-P2-07：导出中心（§15 md/csv/pdf · 仅导出不回写）
   const [expFmt, setExpFmt] = useState('markdown')
   const [expScope, setExpScope] = useState('finance')
+  const [expBusy, setExpBusy] = useState(false)
+  const [expErr, setExpErr] = useState(null)
   const expList = useFetch('/api/v1/exports')
 
+  // 四轮审计 #167：busy 防重 + r.ok 校验 + 成功后 refresh 产物列表
   const doExport = async () => {
-    const body = { format: expFmt }
-    if (expFmt === 'csv') body.scope = expScope
-    await fetch('/api/v1/exports', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(r => r.json())
-    setTimeout(() => setTick(t => t + 1), 200)
+    setExpBusy(true)
+    setExpErr(null)
+    try {
+      const body = { format: expFmt }
+      if (expFmt === 'csv') body.scope = expScope
+      const r = await fetch('/api/v1/exports', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => null)
+        throw new Error(j?.detail || `HTTP ${r.status}`)
+      }
+      expList.refresh()
+    } catch (e) {
+      setExpErr(String(e.message || e))
+    } finally {
+      setExpBusy(false)
+    }
   }
 
   // issue #138：异步 job 资源——触发重算 + 轮询任务状态
@@ -119,8 +134,9 @@ export default function ImportStatus() {
             </select>
           </>
         )}
-        <button className="primary" onClick={doExport}>生成导出</button>
+        <button className="primary" disabled={expBusy} onClick={doExport}>{expBusy ? '生成中…' : '生成导出'}</button>
       </div>
+      <ErrorBox error={expErr} />
       <table style={{ marginBottom: 16 }}>
         <thead><tr><th>产物</th><th>格式</th><th>大小</th><th>下载</th></tr></thead>
         <tbody>

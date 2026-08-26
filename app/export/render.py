@@ -30,10 +30,14 @@ _CONTENT_TYPE = {"markdown": "text/markdown; charset=utf-8",
                  "pdf": "application/pdf"}
 
 
-def new_export_id(fmt: str) -> str:
-    """自包含产物 id：`{fmt}-{yyyymmddTHHMMSS}-{hex6}`；GET 侧凭 ID_RE 校验防路径穿越。"""
+def new_export_id(fmt: str, cfg: EnvConfig | None = None) -> str:
+    """自包含产物 id：`{fmt}-{yyyymmddTHHMMSS}-{hex6}`；GET 侧凭 ID_RE 校验防路径穿越。
+    四轮审计 #169：同秒碰撞（~1/1677万）时重生成，防静默覆盖旧产物。"""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    return f"{fmt[:8]}-{stamp}-{secrets.token_hex(3)}"
+    while True:
+        eid = f"{fmt[:8]}-{stamp}-{secrets.token_hex(3)}"
+        if cfg is None or not (cfg.exports_dir / f"{eid}{_EXT[fmt]}").exists():
+            return eid
 
 
 def export_path(cfg: EnvConfig, export_id: str) -> Path | None:

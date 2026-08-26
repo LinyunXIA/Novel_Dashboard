@@ -297,7 +297,9 @@ def check_stock_h2(session: Session) -> list[Finding]:
     r2 = session.execute(
         select(HoldingEvent.entity_id, HoldingEvent.company, HoldingEvent.date,
                func.count(), func.min(HoldingEvent.unit_price), func.max(HoldingEvent.unit_price))
-        .where(HoldingEvent.event_type.in_(("buy", "sell")),
+        # 四轮审计 #169：仅比 buy 间源单价——sell.unit_price 是 FIFO 平均成本，
+        # 同日 buy+sell 单价几乎必然不等，纳入会系统性 crit 噪声
+        .where(HoldingEvent.event_type == "buy",
                HoldingEvent.unit_price.isnot(None))
         .group_by(HoldingEvent.entity_id, HoldingEvent.company, HoldingEvent.date)
         .having(func.count() > 1,
@@ -305,7 +307,7 @@ def check_stock_h2(session: Session) -> list[Finding]:
     ).all()
     for eid, comp, d, cnt, mn, mx in r2:
         finds.append(Finding("H2", "crit", f"{comp} {d}",
-                             f"{cnt}笔 buy/sell 源 unit_price {mn} ≠ {mx}"))
+                             f"{cnt}笔 buy 源 unit_price {mn} ≠ {mx}"))
     return finds
 
 

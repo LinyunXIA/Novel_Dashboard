@@ -633,6 +633,7 @@ def backfill_finance_entries(session: Session) -> dict:
         dup = session.execute(select(FinanceEntry.id).where(
             FinanceEntry.entity_id == s.entity_id, FinanceEntry.year == s.year,
             FinanceEntry.kind == "income", FinanceEntry.amount == s.amount,
+            FinanceEntry.currency == s.currency,
             FinanceEntry.label == label).limit(1)).scalar_one_or_none()
         if dup is not None:
             stats["skipped_income"] += 1

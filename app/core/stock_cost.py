@@ -244,7 +244,9 @@ def apply_sell(db: Session, *, entity_id: int, company: str, date, shares: float
         HoldingEvent.closed_on.is_(None),
     ).order_by(HoldingEvent.date, HoldingEvent.id)).scalars().all()
     available = sum(float(r.shares) for r in rows)
-    if shares > available:
+    # 四轮审计 #169：浮点残差容差——部分卖出的 float 累减可致 available=…9999998，
+    # 足额卖出被误判超卖；差值在 1e-6 相对量级内视为足额
+    if shares > available and shares - available > max(1e-6, available * 1e-9):
         raise ValueError(f"卖出 {shares} 股超持仓，可卖 {available} 股")
     remaining = float(shares)
     cost_sold = 0.0
