@@ -40,6 +40,21 @@ BONUS_MONTHS_DEFAULT = 2
 BONUS_MONTHS_JAPAN = 3
 PROMOTION_STEP_PCT = 0.05  # 晋升：每跨一级 5%
 
+# 英国学徒税（Apprenticeship Levy · §13.2 隐藏项）：超出免征额的年工资总额 × 税率。
+# 法定为雇主年度工资总盘 >£3m 部分收 0.5%；此处按岗位年薪口径代入同一公式，
+# 免征额/税率可被基准 params（levy_allowance/levy_pct，原样%数值）覆盖。
+APPRENTICESHIP_LEVY_ALLOWANCE = 3_000_000.0
+APPRENTICESHIP_LEVY_PCT = 0.5
+
+
+def apprenticeship_levy(salary: float, p: dict | None = None) -> float:
+    """英国学徒税：max(0, salary − 免征额) × 税率（≤免征额免征）。"""
+    p = p or {}
+    allowance = float(p.get("levy_allowance") or APPRENTICESHIP_LEVY_ALLOWANCE)
+    rate = (_pct(p["levy_pct"]) if p.get("levy_pct") is not None
+            else APPRENTICESHIP_LEVY_PCT / 100.0)
+    return max(0.0, salary - allowance) * rate
+
 # work_location → (region 工资/CPI, office 税率, bonus 月数)。
 # ⚠ 初始初稿，外部 work_location 实际取值待用户给清单后校正（尤其 北京→上海工资代理、香港无税率 office）。
 LOCATION_ALIAS: list[tuple[str, str, str | None, int]] = [
@@ -157,11 +172,12 @@ def employer_social_cost(formula: str, salary: float, p) -> float:
         return annual * _pct(p.get("soc_pct")) + annual * _pct(p.get("housing_pct"))
     if formula == "headcount":             # 丹麦：人头固定 + 假期%
         return float(p.get("total_fixed") or 0) + salary * (_pct(p.get("feriepenge_pct")) + _pct(p.get("ferietillaeg_pct")))
-    if formula == "uk_nic":                # 英国：NIC 超额起征点 + 养老金 + 工伤
+    if formula == "uk_nic":                # 英国：NIC 超额起征点 + 养老金 + 工伤 + 学徒税(>£3m×0.5%)
         above = max(0.0, salary - float(p.get("nic_threshold") or 0))
         return (above * _pct(p.get("nic_pct"))
                 + salary * _pct(p.get("pension_pct"))
-                + salary * _pct(p.get("wc_pct")))
+                + salary * _pct(p.get("wc_pct"))
+                + apprenticeship_levy(salary, p))
     if formula == "onss":                  # 比利时：ONSS% + 工伤 + 双倍假期92%×月 + 十三薪1×月
         return (salary * _pct(p.get("onss_pct"))
                 + salary * _pct(p.get("wc_pct"))

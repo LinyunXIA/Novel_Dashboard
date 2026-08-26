@@ -39,9 +39,17 @@ export default function App() {
   const [active, setActive] = useState('dashboard')
   const [asOf, setAsOf] = useState('2001-12-30')
   const [health, setHealth] = useState(null)
+  // issue #152：日历上限随后端 CALENDAR_MAX_YEAR 动态收敛（API 未连接回落静态口径）
+  const [calRange, setCalRange] = useState({ min: '1947-01-01', max: '2026-12-31' })
 
   useEffect(() => {
     fetch('/api/v1/health').then(r => r.json()).then(setHealth).catch(() => setHealth(null))
+    fetch('/api/v1/overview').then(r => r.json()).then(ov => {
+      const cal = ov?.calendar
+      if (cal?.min_year && cal?.max_year) setCalRange({
+        min: `${cal.min_year}-01-01`, max: `${cal.max_year}-12-31`
+      })
+    }).catch(() => {})
   }, [])
 
   return (
@@ -55,7 +63,7 @@ export default function App() {
 
       <div className="panel calendar-bar">
         <span className="label">全局日历游标 · 截至日期（全 App 生效）</span>
-        <input type="date" value={asOf} min="1947-01-01" max="2026-12-31"
+        <input type="date" value={asOf} min={calRange.min} max={calRange.max}
           onChange={e => setAsOf(e.target.value)} />
         <span className="mono">{asOf}</span>
       </div>

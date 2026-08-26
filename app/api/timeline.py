@@ -16,9 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.config import CALENDAR_MAX_YEAR as _YEAR_MAX  # issue #141
+from app.config import CALENDAR_MIN_YEAR
 from app.core.overlay import (_is_user_overlay_row, create_overlay, delete_overlay,
-                              diff_overlay, make_key, merge_overlay, restore_overlay,
-                              source_as_latest, update_overlay)
+                              diff_overlay, list_user_overlays, make_key, merge_overlay,
+                              restore_overlay, source_as_latest, update_overlay)
 from app.core.recompute import record_recompute_done
 from app.core.snapshot import rebuild_snapshots
 from app.model import TimelineEvent
@@ -59,6 +60,13 @@ def _guard_user_overlay(db: Session, event_id: int) -> TimelineEvent:
     if t is None or not _is_user_overlay_row(t):
         raise HTTPException(status_code=404, detail="timeline overlay row not found / not user-editable")
     return t
+
+
+def _min_overlay_year(db: Session) -> int:
+    """issue #153：merge 批量生效的起点年 = 覆盖层条目最小 event_year（§12 起点=条目年份）；无则兜底最早年。"""
+    years = [int(o.payload["event_year"]) for o in list_user_overlays(db)
+             if (o.payload or {}).get("event_year") is not None]
+    return min(years) if years else CALENDAR_MIN_YEAR
 
 
 def _row(t: TimelineEvent, *, overlay_status=None, editable=False, system=False, has_source=False) -> dict:
@@ -205,7 +213,8 @@ def restore_timeline(event_id: int, db: Session = Depends(get_db)):
     key = make_key(t.event_year, t.title)
     r = restore_overlay(db, key)
     db.commit()
-    return r
+    _after_timeline_write(db, t.event_year)   # issue #153：§12 重算起点=条目年份
+    return {**r, "source_preserved": r["source_preserved"]}
 
 
 @router.post("/timeline-events/{event_id}/overlay/source-as-latest")
@@ -215,6 +224,8 @@ def source_as_latest_ep(event_id: int, db: Session = Depends(get_db)):
     key = make_key(t.event_year, t.title)
     r = source_as_latest(db, key)
     db.commit()
+    if r.get("status") == "synced":
+        _after_timeline_write(db, t.event_year)   # issue #153：生效内容变更才触发
     return r
 
 
@@ -228,4 +239,6 @@ def get_overlay_diff(db: Session = Depends(get_db)):
 def merge_timeline_overlay(db: Session = Depends(get_db)):
     r = merge_overlay(db)
     db.commit()
+    if r["reconciled"] or r["cleaned"]:
+        _after_timeline_write(db, _min_overlay_year(db))   # issue #153：起点=覆盖层最小条目年
     return r

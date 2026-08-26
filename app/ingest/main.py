@@ -295,7 +295,7 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     start_year = 1947 if any(y is None for y in affected) else min(
         (y for y in affected if y is not None), default=1947)
     recompute_all(session, start_year)
-    _rebuild(session, range(1947, 2026), from_year=start_year)
+    _rebuild(session, from_year=start_year)   # issue #152：years 缺省走 calendar_years() 动态上限
     job = record_recompute_done(
         session, start_year,
         reason="ingest" if not blocked_files else f"ingest(部分：{blocked_files} 文件被拦)")
@@ -526,7 +526,7 @@ def recompute(env: str = typer.Option(None, "--env"), from_year: int = typer.Opt
     with _session_for(env) as s:
         res = recompute_all(s, from_year)
         # §9.2c 重算后重建受影响起点起的快照（account/entity/family 三层，增量）
-        rebuild_snapshots(s, range(from_year, 2026), from_year=from_year)
+        rebuild_snapshots(s, from_year=from_year)   # issue #152：动态上限
         # §9.2 步骤3-4：写 job + 通知
         job = record_recompute_done(s, from_year, reason="recompute")
         s.commit()
@@ -576,7 +576,7 @@ def snapshot(env: str = typer.Option(None, "--env"),
     """重建逐年 as-of 快照（account/entity/family 三层；F-P0-08 + issue #12）。"""
     from app.core.snapshot import rebuild_snapshots
     with _session_for(env) as s:
-        r = rebuild_snapshots(s, range(from_year, 2026))
+        r = rebuild_snapshots(s, from_year=from_year)   # issue #152：动态上限
         s.commit()
         typer.echo(f"[{_resolved_env(env)}] 快照重建完成：{r['snapshots']} 条 / {r['accounts']} 账户 / {r['entities']} 实体聚合 / {r['family_years']} 家族合计年（自 {from_year} 起）")
 
@@ -663,7 +663,7 @@ def merge_alias_persons_cmd(env: str = typer.Option(None, "--env"),
             from app.core.recompute import recompute_all
             from app.core.snapshot import rebuild_snapshots
             recompute_all(s, 1947)
-            rebuild_snapshots(s, range(1947, 2026), from_year=1947)
+            rebuild_snapshots(s)   # issue #152：全量重建走 calendar_years() 动态上限
         s.commit()
     typer.echo(f"[{_resolved_env(env)}] 别名实体合并完成：{r}"
                + ("；已重算+重建快照" if merged else ""))
