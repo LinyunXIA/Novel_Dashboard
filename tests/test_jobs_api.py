@@ -23,7 +23,7 @@ from app.model import Account, Entity, LedgerEntry, Notification, RecomputeJob
 
 
 @pytest.fixture
-def env():
+def env(monkeypatch):
     from sqlalchemy import BigInteger, Integer
     for table in Base.metadata.tables.values():
         for col in table.columns:
@@ -43,7 +43,8 @@ def env():
             s.close()
 
     # 后台执行器注入同一 SQLite 工厂（替代 make_sessionmaker(env) 的真实 PG）
-    jobs_mod.make_sessionmaker = lambda env: Session
+    # 七轮审计 #183：monkeypatch 保证 teardown 还原（此前直赋值泄漏已 dispose 引擎）
+    monkeypatch.setattr(jobs_mod, "make_sessionmaker", lambda env: Session)
 
     app.dependency_overrides[get_db] = _override
     with TestClient(app) as c:

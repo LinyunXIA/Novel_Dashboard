@@ -10,6 +10,7 @@ UI 第二类改数据操作（§6.8）：输入 年份 → 源账户 → 源币�
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -120,12 +121,18 @@ def _simulate_annual_asof_nonneg(session: Session, account_id: int,
 
 
 def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
-             target_currency: str, amount, year: int) -> dict:
+             target_currency: str, amount, year: int,
+             nonce: str | None = None) -> dict:
     """划拨（同币）/ 换汇（跨币）。返回 {operation, source_account_id,
-    target_account_id, source_currency, target_currency, amount, target_amount, year}。
+    target_account_id, source_currency, target_currency, amount, target_amount, year,
+    skipped}。
 
     校验：金额>0；源/目标账户存在；源非关池（§6.6 只读终态，issue #83）；源自 year 起全链
     as-of 非负（否则拒绝）；换汇需该年汇率。成功后：写两笔 ledger（year-12-30）→ 编年史 overlay。
+
+    七轮审计 #182：nonce 幂等——API 层生成唯一 nonce，两笔 ledger note 打
+    `UI 转移#{nonce}` 标签；重放（同 nonce 已入账）→ skipped=True 不再写账，
+    对齐 inv#/demand#/股票事件 nonce 三个既有先例。
     调用方负责 flush/commit + recompute_all + rebuild_snapshots + record_recompute_done。
     """
     source = session.get(Account, source_account_id)
@@ -145,6 +152,20 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
 
     at_date = date(year, 12, 30)
     same_currency = source.currency == target.currency
+
+    # 七轮审计 #182：nonce 幂等重放（LIKE 粗筛 + Python 词边界精确复核，防 #1 命中 #10~19；
+    # 与 invest.delete_derived_by_tag 同款手法，兼容 SQLite 测试环境）
+    if nonce:
+        tag = f"UI 转移#{nonce}"
+        candidates = session.execute(
+            select(LedgerEntry.id, LedgerEntry.note).where(
+                LedgerEntry.note.like(f"%{tag}%"))
+        ).all()
+        if any(re.search(rf"{re.escape(tag)}(?!\d)", note or "") for _i, note in candidates):
+            return {"operation": "重放跳过", "source_account_id": source.id,
+                    "target_account_id": None, "source_currency": source.currency,
+                    "target_currency": target_currency, "amount": float(amt),
+                    "target_amount": 0.0, "year": year, "skipped": True}
 
     # gate：源向后全链 as-of 不破负
     if not _simulate_annual_asof_nonneg(session, source.id, amt, year):
@@ -169,12 +190,13 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
         reason_src = f"换汇 {amt} {source.currency} → {target.currency} @{year}"
         reason_tgt = f"换汇入账 {target_amount} {target.currency}（@{year} 汇率 {rate}）"
 
+    tag = f"UI 转移#{nonce}" if nonce else f"UI 转移·{op}"
     session.add(LedgerEntry(
         account_id=source.id, date=at_date, reason=reason_src,
-        outflow=amt, kind=None, note=f"UI 转移·{op}·源",     ))
+        outflow=amt, kind=None, note=f"{tag}·{op}·源",     ))
     session.add(LedgerEntry(
         account_id=target.id, date=at_date, reason=reason_tgt,
-        inflow=target_amount, kind=None, note=f"UI 转移·{op}·目标",     ))
+        inflow=target_amount, kind=None, note=f"{tag}·{op}·目标",     ))
     session.add(TimelineEvent(
         event_year=year, event_date=at_date,
         title=f"{op} {amt} {source.currency} → {target_amount} {target.currency}",

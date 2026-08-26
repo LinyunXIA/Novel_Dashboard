@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 所有正文资料以 Markdown 中文文档存放在 `Design_Folder/`（PyCharm 项目名 "设计草稿"）。`.venv` 是空的（无任何依赖），`Novel_Dashboard` 仅是外层目录名。
 
-因此本项目没有可运行/可测试的命令；唯一相关的"命令"是下方 webnovel-writer 插件的斜杠技能（通过 Claude Code 调用）。
+因此**写作线**本身没有可运行/可测试的命令；唯一相关的「命令」是下方 webnovel-writer 插件的斜杠技能（通过 Claude Code 调用）。（Dashboard 工程线的 pytest/uvicorn/npm 命令见下文双层声明。）
 
 ## 工作流命令（webnovel-writer 插件）
 

@@ -77,9 +77,14 @@ def get_movie(movie_id: int, db: Session = Depends(get_db)):
     return _me(m)
 
 
-def _write_movie_ledger(movie: MovieEvent, account_id: int, db: Session) -> int:
-    """把已知现金流写 ledger（投资出 expense / 本金返还 income / 分红 investment_income）。"""
+def _write_movie_ledger(movie: MovieEvent, account_id: int,
+                        db: Session) -> tuple[int, list[int]]:
+    """把已知现金流写 ledger（投资出 expense / 本金返还 income / 分红 investment_income）。
+
+    返回 (written, years)——七轮审计 #184：years 为实际写入流水的年份集，
+    供 link 后 rebuild_snapshots 选起点（此前分红-only 事件会回退 today() 致历史滞后）。"""
     written = 0
+    years: list[int] = []
     flows = [
         (movie.investment_date, movie.investment_total, "expense",
          f"电影投资·{movie.title}"),
@@ -96,7 +101,8 @@ def _write_movie_ledger(movie: MovieEvent, account_id: int, db: Session) -> int:
                            outflow=amt if kind == "expense" else None,
                            balance=None, kind=kind, note=f"电影事件关联 F-P2-01"))
         written += 1
-    return written
+        years.append(d.year)
+    return written, years
 
 
 @router.post("/movie-events/{movie_id}/link")
@@ -106,17 +112,14 @@ def link_movie(movie_id: int, body: LinkIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "movie event not found")
     if m.linked_account_id is not None:
         return {"linked": True, "skipped": True, "account_id": m.linked_account_id}
-    acc = _require_same_currency(db, m.currency, body.account_id)   # issue #164
-    written = _write_movie_ledger(m, body.account_id, db)
+    acc = _require_same_currency(db, m.currency, body.account_id)   # issue #164/#176
+    written, years = _write_movie_ledger(m, body.account_id, db)
     m.linked_account_id = body.account_id
     m.linked_at = datetime.now()
     if written:
-        # 四轮审计 #169：与 stock 侧 _settle 对称——写账后刷新派生视图（此前滞后到下次重算）
-        years = [d.year for d, amt, _k, _r in
-                 [(m.investment_date, m.investment_total, None, None),
-                  (m.principal_return_date, m.principal_return_amount, None, None)]
-                 if d is not None and amt]
-        rebuild_snapshots(db, from_year=min(years) if years else date.today().year)
+        # 四轮审计 #169 + 七轮审计 #184：与 stock 侧 _settle 对称——从实际写入流水的
+        # 最早年份刷新派生视图（分红-only 事件不再回退 today() 致历史滞后）
+        rebuild_snapshots(db, from_year=min(years))
     db.commit()
     return {"linked": True, "skipped": False, "ledger_written": written, "account_id": body.account_id}
 

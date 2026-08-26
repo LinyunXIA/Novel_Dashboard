@@ -137,8 +137,6 @@
 
 ## [Phase 2 · F-P2-01] — 2026-08-24
 
-## [Phase 2 · F-P2-01] — 2026-08-24
-
 **事件·电影：导入 + 不关联 + 同币种 UI 手动关联**（DESIGN §19.6）
 
 - `movie_event` 表 + `event_movie` 解析器（best-effort 正则，8 部：泰坦尼克投资90M/本金90M@1998-09/分红376.74M 全中）+ `ingest events-movie` 导入。

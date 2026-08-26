@@ -17,28 +17,32 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.currency import usd_rate
+from app.core.currency import rate_loader
 from app.model import Snapshot
 
 
-def _usd_rate(session: Session, currency: str, year: int) -> float | None:
+def _usd_rate(session: Session, currency: str, year: int,
+              rate_of=None) -> float | None:
     """currency → USD 折算率（issue #71：委托 core/currency.py 权威实现，float 适配）。
 
+    七轮审计 #186：rate_of 可注入 rate_loader 闭包（批量路径零点查）；缺省走 usd_rate。
     返回 None 表示汇率缺失；调用方必须 1) 跳过该币种贡献，2) 记入 missing_rates。
     绝不静默返回 1.0 防止 BEF/DKK/NLG/SEK 裸加当美元（issue #2 根因）。
     """
-    d = usd_rate(session, currency, year)
+    d = rate_of(currency, year) if rate_of is not None else usd_rate(session, currency, year)
     return float(d) if d is not None else None
 
 
-def _missing_rates_from_snaps(session: Session, snaps: list[Snapshot], year: int) -> list[str]:
-    """从一组快照筛出该年汇率缺失的币种（用于 wealth_series 告警）。"""
+def _missing_rates_from_snaps(session: Session, snaps: list[Snapshot], year: int,
+                              rate_of=None) -> list[str]:
+    """从一组快照筛出该年汇率缺失的币种（用于 wealth_series 告警）。
+    七轮审计 #186：rate_of 注入 loader 闭包（批量零点查）。"""
     out: set[str] = set()
     for sn in snaps:
         cur = sn.currency or "USD"
         if cur == "USD":
             continue
-        if _usd_rate(session, cur, year) is None and float(sn.value or 0.0) != 0:
+        if _usd_rate(session, cur, year, rate_of=rate_of) is None and float(sn.value or 0.0) != 0:
             out.add(cur)
     return sorted(out)
 
@@ -96,6 +100,7 @@ def wealth_series(session: Session, year_from: int = 1947,
             fam_by_year[sn.as_of_year] = float(sn.value or 0.0)
         elif sn.scope.startswith("account:"):
             acct_by_year[sn.as_of_year].append(sn)
+    rate_of = rate_loader(session)   # 七轮审计 #186：循环内零点查
     for y in range(year_from, year_to + 1):
         account_snaps = acct_by_year.get(y, [])
         accounts: dict[str, float] = {}
@@ -109,6 +114,7 @@ def wealth_series(session: Session, year_from: int = 1947,
             "family_total_usd": round(fam_by_year.get(y, 0.0), 2),
             "accounts": accounts,
             "currencies": dict(currencies),
-            "missing_rates": _missing_rates_from_snaps(session, account_snaps, y),
+            "missing_rates": _missing_rates_from_snaps(session, account_snaps, y,
+                                                            rate_of=rate_of),
         }
     return out

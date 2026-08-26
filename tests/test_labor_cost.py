@@ -179,7 +179,8 @@ class TestEndpoint:
             with TestClient(app) as c:
                 r = c.get("/api/v1/labor-cost/rules").json()
                 assert r["level_adjust_pct"]["M11b"] == 5
-                assert c.get("/api/v1/labor-cost/results?year=1982").status_code == 200
+                rr = c.get("/api/v1/labor-cost/results?year=1982")
+                assert rr.status_code == 200 and "items" in rr.json()   # 七轮审计 #183
         finally:
             app.dependency_overrides.pop(get_db, None)
 
