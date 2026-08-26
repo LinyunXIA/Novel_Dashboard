@@ -96,6 +96,9 @@ def import_external_companies(session: Session, companies: list[dict]) -> dict:
             "opening_date": rec.get("opening_date"),
             "closing_date": rec.get("closing_date"),
             "is_active": rec.get("is_active"),
+            # 外部 API v1.6/v2.6 R1：公司↔税区一对一（内部成本口径键，对外仅引用）
+            "tax_zone_id": rec.get("tax_zone_id"),
+            "tax_zone_label": rec.get("tax_zone_label"),
         }
         comp = writer.upsert_entity(
             session, "company", name, source="external-api", fields=fields)

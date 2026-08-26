@@ -184,3 +184,25 @@ class TestWriterExtras:
         session.commit()
         assert rel.since_year == 1990
         assert rel.until_year == 2000  # 同键复用并更新年窗
+
+# ---- 外部 API v1.6/v2.6 更新适配（tax_zone 字段落 fields）----
+def test_tax_zone_fields_persisted(session):
+    """v1.6/v2.6 R1：tax_zone_id/tax_zone_label 随公司信息落 entity.fields 备查。"""
+    recs = [{"id": 77, "name": "税区对照公司", "is_active": True,
+             "tax_zone_id": 3, "tax_zone_label": "比利时（国家级）",
+             "shareholders": []}]
+    company_info.import_external_companies(session, recs)
+    session.flush()
+    ent = session.query(Entity).filter(Entity.name == "税区对照公司").one()
+    assert ent.fields["tax_zone_id"] == 3
+    assert ent.fields["tax_zone_label"] == "比利时（国家级）"
+
+
+def test_tax_zone_absent_is_none_not_missing_key(session):
+    """旧版响应无 tax_zone 字段 → fields 显式 None（不缺键，消费方安全 .get）。"""
+    recs = [{"id": 78, "name": "旧版无税区公司", "is_active": True}]
+    company_info.import_external_companies(session, recs)
+    session.flush()
+    ent = session.query(Entity).filter(Entity.name == "旧版无税区公司").one()
+    assert ent.fields.get("tax_zone_id") is None
+    assert ent.fields.get("tax_zone_label") is None
