@@ -84,7 +84,11 @@ def _resolve_entity_id(session: Session, name: str | None) -> int | None:
 
 
 def check_income_stream_conflict(session: Session, file: str, records: list[dict]) -> ConflictReport:
-    """income_stream 金额冲突（H2）：同 (entity, stream_type, currency, year) 已存在且金额不同 → 拦。"""
+    """income_stream 金额冲突（H2）：同 (entity, stream_type, currency, year) 已存在且金额不同 → 拦。
+
+    四轮审计 #168 备案：income_security（祖产债券）源文件仅含基桩值（无 year），
+    逐年行由 factors 展开产生、不经本函数——该类目的导入期 H2 保护结构性旁路，
+    跨文件金额打架由导入后 health.check_h2 兜底（§11.4 与 §10 分工）。"""
     rep = ConflictReport(file)
     for rec in records:
         # issue #68：键存在值为 None 时 .get 的 default 不生效 → 显式 or 回退

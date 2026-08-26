@@ -39,7 +39,7 @@ def _do_export(db: Session, fmt: str, scope: Optional[str]) -> str:
     from pathlib import Path
     cfg = get_config()
     cfg.exports_dir.mkdir(parents=True, exist_ok=True)
-    export_id = render.new_export_id(fmt)
+    export_id = render.new_export_id(fmt, cfg)
     path = cfg.exports_dir / f"{export_id}{render._EXT[fmt]}"
     if not path.resolve().is_relative_to(Path(cfg.exports_dir).resolve()):
         raise HTTPException(status_code=500, detail="导出目录解析异常")

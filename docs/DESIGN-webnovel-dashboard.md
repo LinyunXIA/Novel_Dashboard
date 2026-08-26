@@ -396,7 +396,7 @@ CREATE TABLE notification (
 - **固定 vs 年标记**：行含年份列/日期列 → 年标记；否则 → 固定值（写入 entity.fields 或常量表）。
 
 ### 6.3 各解析器要点
-- **bank**：按 `## 一、…BEF（祖父）` 分币种节；每节读表列 `日期|理由|收入|支出|余额|备注`；`account_id` 由 `entity × currency × bank` 唯一确定。**余额**：存入源值，并于 normalize 校验连续（见 §9）。
+- **bank**：按 `## 一、…BEF（祖父）` 分币种节；每节读表列 `日期|理由|收入|支出|余额|备注`；`account_id` 由 `entity × currency × bank` 唯一确定。**余额**：存入源值；连续性校验位置更正（四轮审计 #171）：导入期 conflict H4 仅查「新首笔前值 vs DB 末余额」衔接，全链连续由导入后 health.check_h4_balance_chain 兜底——非字面「于 normalize 校验」。币种识别（#162）：节标题「中文币种词+缩写」配对优先，防多币种标题误判。文件名含「模版/模板」→ SKIP_TEMPLATE 不导入（#168）。
 - **stock_tx**：`### 基本信息` 列表 → 常量入 entity.fields；`### 年度明细` 表 → holding_event。拆股/换股链可由 `event_type` 关联出一张 `relationship`（acquired/split）。
 - **return_table**：年度 × R1..R5 表 → return_curve（仅供投资用，与收益流无关）。
 - **initial_asset**：初始资产（现金/债券/股票/房产）→ 存量建档 `initial_asset`；现金进银行、股票债券一组、房产一组。
@@ -744,7 +744,8 @@ class Importer(Protocol):
 > `labor-cost`×3（compute/rules/results）、timeline overlay 扩展×3（diff/merge/source-as-latest）、
 > `GET /returns/countries|regions`、`GET /graph/all`（issue #84）、
 > `GET /entities/{id}/finance-entries`、`GET /source-files/{id}/meta` 别名与 `/{vid}/diff`、
-> `GET /ingest-reports`（issue #118/#123）、`GET /ping`。
+> `GET /ingest-reports`（issue #118/#123）、`GET /ping`、`POST /graph/companies/import`
+> （四轮审计 #171 补录；语义见 §13.3/§21.3 同步 RPC 清单）。
 > 功能语义分别见 §13/§18/§19/§21.3；`snapshots/{date}` 与 `source-files 单版本内容`
 > 两端点已按 §14.2 原表补齐（issue #155）；`GET /exports`（产物清单）为 F-P2-07 实现超集
 > （§14.2 原表仅列 POST /exports 与 GET /exports/{id}）。
@@ -871,7 +872,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 ### 19.6 事件·股票与资产模型（Phase 2）
 - **导入链**：`基准/事件/股票/**` Phase 2 重新纳入 detect → 数据调整员导入**不关联账户** → UI 用户按**同币种**手动关联到某账户(人物/公司)；现金流经事件生成 `ledger_entry` 进账户。
 - **总资产**：`银行账户余额(现金) + 投资专款池 + 股票持仓市值`；现金与市值不重叠（买入=ledger 支出「购入股票」移除现金）。
-- **持仓**：`holding_event` 需 **batch 维度**（每批买入=一个 batch，各自成本）。分红=每股派息×加权平均持仓→现金收入进账户。被动抬升占比（回购缩股本）持股不变、无现金动作。
+- **持仓**：`holding_event` 需 **batch 维度**（每批买入=一个 batch，各自成本）。分红=每股派息×加权平均持仓→现金收入进账户（口径备案 #166：实现为**事件日当前 open 持仓合计**近似——单批持有下与加权平均等价；事件日期缺粒度按 §6.2 归一）。被动抬升占比（回购缩股本）持股不变、无现金动作。
 - **成本 = FIFO**：卖出/减持从最早批次扣成本，`盈亏=卖出现金−批次成本`，进账户；成本仅供卖出结算，不参与总资产。
 - **并购三形态**：
   1. 纯换股/分拆（HPQ→HP+HPE；2DXC→1PRSP）→ 只改持仓、成本按比分摊、现金不动。
@@ -1090,3 +1091,44 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - **前端**：「导入状态」屏新增导出中心（格式/scope 选择 + 生成 + 最近产物下载列表）。
 - **依赖**：requirements.txt 增 `reportlab>=4.0`（§2 技术栈既定 PDF 选型）。
 - **Phase 调整**：F-P2-08（统一搜索增强）自 Phase 2 移入 Phase 3（编号沿用 F-P2-08 → F-P3-01 备案）。
+
+### 21.9 四轮审计修复批回写（2026-08-26，issue #160–#171，跟踪索引 #172）
+
+> 本节为第四轮全量对照审计后的实现/口径回写；与前文冲突处以本节为准。PR-1（P0 #160-#165）+ PR-2（P1-P3 #166-#171）。
+
+**P0（#160-#165，已随 PR-1 合入）**
+- PDF 注册 `UnicodeCIDFont('STSong-Light')` 全样式应用 + 测试升级断言字体资源（#160）；
+- 换汇正向汇率行 rate>0 校验、0/负视缺失 → 422（#161）；
+- currency_from 中文币种词↔缩写配对优先（#162）；
+- return_table 每 year 集满 R1-R5 封盘，复合年化附录不再污染末年（#163）；
+- 事件关联同币种铁律：movie link / stock associate 服务端 422 + 前端下拉过滤（#164；
+  手动 buy/sell/dividend 无事件币种概念不在铁律范围）；
+- .gitignore data 段重写为 `data/**` 反白目录与 .gitkeep（#165）。
+
+**P1（#166-#168）**
+- event_stock._date_of 缺粒度按 §6.2 归一（年月→月底/年仅→12-30）（#166A）；分红口径
+  「事件日当前持仓」近似备案见 §19.6（#166B）；
+- 前端健壮性合集（#167）：useFetch 统一 r.ok + 组件内请求序号防乱序；Dashboard 三处
+  fetch 补错误态；ImportStatus doExport busy 防重 + refresh 列表；styles.css 补
+  .badge/.banner/.diff-add/.diff-del 四类；清理 verMap/RiskLine 死形参/formatNum 重复。
+- ingest 卫生九项（#168）：detect「模版/模板」文件名 → SKIP_TEMPLATE；return_table 零条
+  落 warning（对照 fx #115）；holders 恒真守卫清理；_CURRENCIES/_CUR_RE 补 NOK/JPY/GBP；
+  fx `_cur` 未知币名返 None 宁缺勿错（TSV 直接采信 ISO 代码列）；backfill dup 键补
+  currency；ingest_report 同键幂等 upsert（error 行 rule 存 category）；levy 关键词精确为
+  「学徒税率」；timeline decade 按行年份推导；parse_number 拒 inf/nan + 支持括号负数。
+
+**P2/P3（#169-#171）**
+- core/API 十五项（#169）：invest 负收益赎回拆 outflow；FIFO 浮点残差容差；snapshot 与
+  calendar 的 entity 域市值键构建对齐（无 USD 账户的有仓主体也产 entity:{eid}:USD 行）；
+  llm 空 data/chat 结构错统一 LlmUnavailable；cancel_pending 纳入 _job_lock；restore 后
+  notification 提示重导（磁盘-DB 非事务化语义明示）；check_stock_h2 仅比 buy 间源单价；
+  movie link 写账后 rebuild_snapshots；jobs 列表 total=过滤后总数；PUT entities 撞唯一键
+  409、POST ledger-entries 先校验账户存在；date-rules PUT 同 pattern 409；source-files
+  adopt 异常收窄（业务 422 / 其余 500 通用文案）；export id 碰撞重生成。
+- 备案不改码：H3 对 usd_rate 实际生效的 EUR hub 回退链不对账（direct 缺失即 skip——
+  hub 链闭合由「宁缺勿错」与 H3 direct 存在时校验共同兜底，§21.4 补充）；
+  LLM_MODEL_CONTEXT 为预留配置（omlx 服务端自管上下文，当前未消费，§18.5）。
+- 测试缺口（#170）：健康 H1/H2基础/H5 直接测试、外部错误映射 503/502、ALLOW_ADMIN_CLEAN
+  正向路径、GET /wealth、pool_in_transit 跨年段、close_2002_currency 承接分录直接单测。
+- 文档更正（#171）：§6.3 余额校验位置、§19.6 分红口径备案、§14.2 补录 companies/import、
+  本节汇总。

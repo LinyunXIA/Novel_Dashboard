@@ -59,8 +59,15 @@ class Detected:
 
 
 def detect(rel: str) -> Detected:
-    """按相对路径返回类别。rel 用正斜杠同 input_dir 下相对路径。"""
+    """按相对路径返回类别。rel 用正斜杠同 input_dir 下相对路径。
+
+    四轮审计 #168：文件名含「模版/模板」→ SKIP_TEMPLATE（模版非数据——《经济/银行/
+    模版.md》曾按真实台账全链导入，四节 105+84+78+78 行写成各人名下 ledger）。
+    """
     rel = rel.strip().lstrip("/")
+    stem = rel.rsplit("/", 1)[-1]
+    if "模版" in stem or "模板" in stem:
+        return Detected(rel, "SKIP_TEMPLATE")
     for prefix, cat in _PREFIX_RULES:
         if rel.startswith(prefix):
             return Detected(rel, cat, cat in PHASE2_CATEGORIES)

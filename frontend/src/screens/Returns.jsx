@@ -47,7 +47,7 @@ export default function Returns({ asOf }) {
           {Object.keys(series).length ? (
             <svg viewBox="0 0 620 280" preserveAspectRatio="none">
               {RISK_ORDER.filter(r => series[r]).map(r => (
-                <RiskLine key={r} name={r} pts={series[r]} color={RISK_COLOR[r]} ys={ys}
+                <RiskLine key={r} pts={series[r]} color={RISK_COLOR[r]}
                   minY={Math.min(...ys, 0)} maxY={Math.max(...ys, 1)} />
               ))}
             </svg>
@@ -62,7 +62,7 @@ export default function Returns({ asOf }) {
   )
 }
 
-function RiskLine({ name, pts, color, ys, minY, maxY }) {
+function RiskLine({ pts, color, minY, maxY }) {
   const W = 620, H = 260, pad = 24
   if (!pts.length) return null
   const years = pts.map(p => p[0])

@@ -90,17 +90,20 @@ def parse_fx(path: Path) -> tuple[list[dict], list[str]]:
         # 格式一：1XXX = rate YYY
         m = re.search(r"1\s*([A-Za-z]{2,4})\s*=\s*([\d.,]+)\s*([A-Za-z一-鿿]{2,6})", s, re.I)
         if m:
+            fx_to = _cur(m.group(3))
+            if fx_to is None:   # 四轮审计 #168：未知币名跳过（宁缺勿错）
+                continue
             recs.append({
                 "fx_from": m.group(1).upper(), "rate": parse_number(m.group(2)),
-                "fx_to": _cur(m.group(3)), "year": line_year,
+                "fx_to": fx_to, "year": line_year,
             })
             continue
         # 格式二：TSV 表格行  `Belgian Franc  BEF  32.14`
         t = re.fullmatch(r"([A-Za-z一-鿿]+(?:\s+[A-Za-z一-鿿]+)?)\s+([A-Z]{3})\s+([\d.,]+)", s)
         if t:
-            code = _cur(t.group(1)) or t.group(2).upper()
+            # 四轮审计 #168：第二列本就是 ISO 三字母代码，直接采信（_cur 识别不出时不再兜底整串大写）
             recs.append({"fx_from": "USD", "rate": parse_number(t.group(3)),
-                         "fx_to": code, "year": line_year})
+                         "fx_to": t.group(2).upper(), "year": line_year})
     if not recs and any(l.strip().startswith("|") for l in lines):
         return [], [f"汇率文件含 markdown 表格但解析出 0 条记录（表头格式不识别？）"]
     return recs, []
@@ -175,8 +178,9 @@ def _parse_fx_wide_table(lines: list[str]) -> list[dict]:
     return []
 
 
-def _cur(name: str) -> str:
-    """币种名/代码 → 标准代码；无法识别返回大写原样。"""
+def _cur(name: str) -> str | None:
+    """币种名/代码 → 标准代码；无法识别返回 None（四轮审计 #168：宁缺勿错，
+    此前整串大写原样入库会产出 'SWISS FRANC' 之类的垃圾货币对）。"""
     n = name.strip().lower()
     up = n.upper()
     if up in ("USD", "EUR", "BEF", "LUF", "NLG", "DKK", "SEK", "HKD", "CNY"):
@@ -190,7 +194,7 @@ def _cur(name: str) -> str:
     for k, v in _CUR_NAME.items():
         if k in n:
             return v
-    return up
+    return None
 
 
 def _year_from_name(name: str) -> int | None:
@@ -245,6 +249,10 @@ def parse_return_table(path: Path) -> list[dict]:
                          "year": year, "rate": parse_number(rm.group(2)),
                          "source_file": path.name})
             done.add(int(rm.group(1)))
+    if not recs:
+        # 四轮审计 #168：对照 fx 零条告警（#115）——收益表 catch-all 兜底类别
+        # （detect `基准/收益表/` 目录级匹配）零条时不再静默
+        return [], ["收益测算表解析出 0 条记录（年份标题/R 列格式不识别？）"]
     return recs
 
 
@@ -297,11 +305,7 @@ def parse_timeline(path: Path) -> tuple[list[dict], list[str]]:
     lines = _lines(path)
     recs: list[dict] = []
     warnings: list[str] = []
-    decade = None
     for line in lines:
-        dm = re.match(r"^#+\s*(19\d0|20\d0)s\s*$", line.strip())
-        if dm:
-            decade = dm.group(1) + "s"
         cells = _split_table_row(line)
         if len(cells) >= 2:
             # 首个表格格任一位置含年份即视为事件行（允许「约1992年」等日期格）
@@ -319,7 +323,9 @@ def parse_timeline(path: Path) -> tuple[list[dict], list[str]]:
                     "date_str": ds,
                     "title": cells[1].strip(),
                     "note": cells[2].strip() if len(cells) > 2 else None,
-                    "decade": decade,
+                    # 四轮审计 #168：decade 按**行年份**推导（节标题可能跨年，
+                    # 如 `## 1970s` 节下有 1969 行——忠实转抄会产脏标注）
+                    "decade": f"{(d.year // 10) * 10}s",
                     "source_file": path.name,
                 })
     return recs, warnings

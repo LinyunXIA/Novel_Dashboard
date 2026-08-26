@@ -277,14 +277,19 @@ def redeem_investment(session: Session, investment: Investment) -> dict:
             label=f"投资赎回本金 {tag}", source=SourceKind.UI.value,
         ))
         # 收益划回（kind=investment_income）
+        # 四轮审计 #169：负收益（R<0 亏损）拆 outflow 列，不写负 inflow
+        # （对照 stock_cost.apply_sell 盈亏拆法；inflow<0 属 schema 语义异常行）
+        interest = Decimal(it["interest"])
         session.add(LedgerEntry(
             account_id=acc.id, date=settlement, reason=f"投资损益 {investment.region} R{investment.risk_lvl}",
-            inflow=Decimal(it["interest"]), kind="investment_income",
-            note=f"UI 投资赎回收益 {tag}",
+            inflow=interest if interest >= 0 else None,
+            outflow=-interest if interest < 0 else None,
+            kind="investment_income",
+            note=f"UI 投资赎回收益 {tag}" + ("（亏损）" if interest < 0 else ""),
         ))
         session.add(FinanceEntry(
             entity_id=it["entity_id"], entity_kind=ek, year=investment.year,
-            kind="investment_income", amount=Decimal(it["interest"]), currency=it["currency"],
+            kind="investment_income", amount=interest, currency=it["currency"],
             label=f"投资赎回收益 {tag}", source=SourceKind.UI.value,
         ))
         made += 1

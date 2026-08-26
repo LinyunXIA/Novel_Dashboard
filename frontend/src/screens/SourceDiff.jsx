@@ -20,8 +20,6 @@ export default function SourceDiff() {
 
   const items = files.data?.items || []
   const diffData = diff.data
-  const verMap = {}
-  for (const v of (versions.data?.versions || [])) verMap[v.id] = v.version
 
   const selectFile = (f) => {
     setSelVid(f.current_version)

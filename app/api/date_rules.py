@@ -74,6 +74,12 @@ def replace_rule(rule_id: int, body: DateRuleIn, db: Session = Depends(get_db)):
     row = db.get(DateRule, rule_id)
     if row is None:
         raise HTTPException(status_code=404, detail="date_rule not found")
+    # 四轮审计 #169：PUT 与 POST 对称——同 pattern 去重（此前 PUT 可绕过造重复规则）
+    dup = db.execute(select(DateRule).where(
+        DateRule.pattern == body.pattern, DateRule.id != rule_id)).scalar_one_or_none()
+    if dup is not None:
+        raise HTTPException(status_code=409,
+                            detail=f"pattern 已被规则 #{dup.id} 占用")
     row.pattern = body.pattern
     row.resolve = body.resolve
     row.note = body.note

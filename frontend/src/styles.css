@@ -78,3 +78,23 @@ button.ghost:hover { color: var(--ink); }
 .legend { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
 .muted { color: var(--muted); }
+/* 四轮审计 #167：补齐被 JSX 引用但缺失的样式类 */
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  background: var(--panel, #1f2937);
+  border: 1px solid var(--border, #374151);
+  color: var(--muted, #9ca3af);
+}
+.badge.warn {
+  color: var(--warn, #d97706);
+  border-color: var(--warn, #d97706);
+}
+.banner {
+  border-left: 3px solid var(--accent, #2563eb);
+  margin-bottom: 10px;
+}
+.diff-add { color: #22c55e; background: rgba(34, 197, 94, .08); }
+.diff-del { color: #ef4444; background: rgba(239, 68, 68, .08); text-decoration: line-through; }

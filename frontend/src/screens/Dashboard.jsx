@@ -1,26 +1,39 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ErrorBox } from './ui'
+import { fmt } from './ui'
 
 /** P0-2/#124 序列选择：family=家族合计(USD)；BEF…=分币种合计；account:* =单账户。
- *  #143：序列支持多选叠加对比（同一标尺归一化渲染），不再只是单选切换。 */
+ *  #143：序列支持多选叠加对比（同一标尺归一化渲染），不再只是单选切换。
+ *  四轮审计 #167：fetch 补 r.ok 校验 + 错误态展示（此前 {detail} 响应致 snaps.find TypeError 白屏）。 */
 export default function Dashboard({ asOf }) {
   const [ov, setOv] = useState(null)
   const [wealth, setWealth] = useState(null)
   const [snaps, setSnaps] = useState(null)
   const [seriesSel, setSeriesSel] = useState(['family'])
+  const [err, setErr] = useState(null)
 
   const year = Number(asOf.split('-')[0])
 
   useEffect(() => {
-    fetch('/api/v1/overview').then(r => r.json()).then(setOv).catch(() => setOv(null))
+    fetch('/api/v1/overview').then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    }).then(setOv).catch(e => { setOv(null); setErr(String(e.message || e)) })
   }, [])
 
   useEffect(() => {
-    fetch(`/api/v1/snapshots?as_of=${asOf}`).then(r => r.json()).then(setSnaps).catch(() => setSnaps([]))
+    fetch(`/api/v1/snapshots?as_of=${asOf}`).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    }).then(setSnaps).catch(e => { setSnaps([]); setErr(String(e.message || e)) })
   }, [asOf])
 
   useEffect(() => {
     fetch(`/api/v1/wealth?year_from=${Math.max(1947, year - 10)}&year_to=${year}`)
-      .then(r => r.json()).then(setWealth).catch(() => setWealth(null))
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      }).then(setWealth).catch(e => { setWealth(null); setErr(String(e.message || e)) })
   }, [year])
 
   // issue #111：总资产只取 family:total 行（USD 口径）。
@@ -80,8 +93,9 @@ export default function Dashboard({ asOf }) {
 
   return (
     <div className="grid">
+      <ErrorBox error={err} />
       <div className="grid stats">
-        <Stat label={`总资产（${asOf} · 展示折USD）`} value={familyTotal ? formatNum(familyTotal.value) : '—'} />
+        <Stat label={`总资产（${asOf} · 展示折USD）`} value={familyTotal ? fmt(familyTotal.value) : '—'} />
         <Stat label="实体 / 账户" value={ov ? `${ov.entities} / ${ov.accounts}` : '—'} />
         <Stat label="快照 / 收益流" value={ov ? `${ov.snapshots} / ${ov.income_streams}` : '—'} />
       </div>
@@ -136,7 +150,7 @@ export default function Dashboard({ asOf }) {
                 <tr key={s.scope}>
                   <td className="mono">{s.scope}</td>
                   <td>{scopeLayer(s.scope)}</td>
-                  <td className="num">{formatNum(s.value)}</td>
+                  <td className="num">{fmt(s.value)}</td>
                   <td>{s.currency}</td>
                 </tr>
               ))}
@@ -183,12 +197,4 @@ function MultiPolyline({ datasets }) {
         stroke={PALETTE[idx % PALETTE.length]} strokeWidth="2.5" />
     )
   })
-}
-
-function formatNum(n) {
-  if (n === null || n === undefined || Number.isNaN(n)) return '—'
-  const abs = Math.abs(n)
-  if (abs >= 1e8) return (n / 1e8).toFixed(2) + ' 亿'
-  if (abs >= 1e4) return (n / 1e4).toFixed(1) + ' 万'
-  return n.toLocaleString()
 }

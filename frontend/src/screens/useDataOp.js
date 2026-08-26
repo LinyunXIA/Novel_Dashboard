@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * F-P1-09 统一改数据操作模板（DESIGN §6.8/§19）：
@@ -47,14 +47,26 @@ export function useFetch(url) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [tick, setTick] = useState(0)
+  const seqRef = useRef(0)   // 组件内请求序号（四轮审计 #167：防乱序覆盖）
   const refresh = () => setTick(t => t + 1)
   useEffect(() => {
     let alive = true
     if (!url) { setData(null); return () => { alive = false } }
     setErr(null)
-    fetch(url).then(r => r.json()).then(
-      d => { if (alive) setData(d) },
-      e => { if (alive) setErr(String(e)) },
+    const seq = ++seqRef.current
+    fetch(url).then(async r => {
+      if (!r.ok) {
+        let detail = `HTTP ${r.status}`
+        try {
+          const j = await r.json()
+          if (j?.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+        } catch { /* 非 JSON 错误体 */ }
+        throw new Error(detail)
+      }
+      return r.json()
+    }).then(
+      d => { if (alive && seq === seqRef.current) setData(d) },
+      e => { if (alive && seq === seqRef.current) setErr(String(e.message || e)) },
     )
     return () => { alive = false }
   }, [url, tick])

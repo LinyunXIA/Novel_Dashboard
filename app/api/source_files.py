@@ -94,9 +94,20 @@ def adopt_new_version(vid: int, db: Session = Depends(get_db)):
         r = versioning.adopt_current(db, get_config(), rel)
         db.commit()
         return r
-    except Exception as e:  # noqa: BLE001 - 冲突/解析错误透传给前端
+    except versioning.RestoreConflict as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=e.detail)
+    except KeyError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        # 四轮审计 #169：仅业务校验错误透传 422；其余异常收窄为通用 500
+        # （此前广谱 except Exception → str(e) 把 SQLAlchemy/文件系统内部细节外泄）
         db.rollback()
         raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="采纳失败：导入链路内部错误，请查看服务日志")
 
 
 @router.post("/source-files/{vid}/versions/{v2}/restore")

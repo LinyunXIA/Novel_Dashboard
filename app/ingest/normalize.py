@@ -30,9 +30,20 @@ def parse_number(raw: object, scale: float = 1.0) -> float | None:
         mult = 10_000.0 if m.group(1) == "万" else 100_000_000.0
         s = (s[:m.start()] + s[m.end():]).strip()
     try:
-        return float(s) * scale * mult
+        v = float(s) * scale * mult
     except ValueError:
+        # 四轮审计 #168：(123) 括号负数记法支持
+        m_neg = re.fullmatch(r"\((.+)\)", s)
+        if m_neg:
+            try:
+                return -float(m_neg.group(1)) * scale * mult
+            except ValueError:
+                return None
         return None
+    # 四轮审计 #168：拒绝 inf/nan（float() 会接受 "inf"/"nan" 字面量）
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    return v
 
 
 def parse_amount(raw: object, unit: str | None = None) -> float | None:
@@ -60,7 +71,7 @@ def parse_amount(raw: object, unit: str | None = None) -> float | None:
 # 顺序无所谓（alternation 最长优先：re 默认从左到右，但 \b 防止前缀误吞）。
 # issue #32：补 `CNY`——fx 解析会把 yuan/rmb/人民币 归一为 CNY（_cur），detect_currency
 # 口径需一致，否则「人民币」串被识别为空、下游 `cur not in _CURRENCIES` 误回退 BEF。
-_CUR_RE = re.compile(r"\b(USD|BEF|LUF|NLG|DKK|SEK|HKD|CNY|EUR|RMB)\b", re.IGNORECASE)
+_CUR_RE = re.compile(r"\b(USD|BEF|LUF|NLG|DKK|SEK|HKD|CNY|EUR|RMB|NOK|JPY|GBP)\b", re.IGNORECASE)
 
 
 def detect_currency(text: str) -> str | None:
@@ -77,7 +88,8 @@ def detect_currency(text: str) -> str | None:
     return "CNY" if code == "RMB" else code
 
 
-_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "CNY", "EUR")
+_CURRENCIES = ("BEF", "LUF", "NLG", "DKK", "SEK", "USD", "HKD", "CNY", "EUR",
+               "NOK", "JPY", "GBP")   # 四轮审计 #168：fx 宽表已能入库三币，白名单对齐
 
 
 def _month_end(year: int, month: int) -> date:

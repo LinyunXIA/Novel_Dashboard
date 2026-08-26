@@ -34,8 +34,11 @@ def embed(texts: list[str], *, client: httpx.Client | None = None) -> list[list[
             raise LlmUnavailable(f"embedding 失败（HTTP {r.status_code}）")
         data = r.json()
         out = [item["embedding"] for item in data.get("data", [])]
+        if not out:
+            # 四轮审计 #169：空 data 原样返回会让 search.py `[0]` 抛 IndexError 裸 500
+            raise LlmUnavailable("embedding 返回空 data（模型未加载？）")
         dim = CONFIG.embed_dim
-        if dim and out and any(len(v) != dim for v in out):
+        if dim and any(len(v) != dim for v in out):
             raise LlmUnavailable(f"embedding 维度 {len(out[0])} ≠ EMBED_DIM {dim}（请设 EMBED_DIM）")
         return out
     except httpx.RequestError as e:
@@ -58,7 +61,11 @@ def chat(system: str, user: str, *, client: httpx.Client | None = None) -> str:
         if r.status_code != 200:
             raise LlmUnavailable(f"chat 失败（HTTP {r.status_code}）")
         data = r.json()
-        return data["choices"][0]["message"]["content"]
+        # 四轮审计 #169：响应结构错（缺 choices/message）按 docstring 统一降级，不裸 500
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise LlmUnavailable(f"chat 响应结构异常：{e}") from e
     except httpx.RequestError as e:
         raise LlmUnavailable(f"无法连接本地 omlx（{base}）") from e
     finally:

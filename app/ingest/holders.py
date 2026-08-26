@@ -51,8 +51,9 @@ def holder_currencies(keyword: str) -> tuple[str, ...]:
         if kw == k:
             return curs
     # 前缀命中：kw 长度 ≥ k（去后缀场景下两者等长或 kw 更长，因 holder 是 path.stem）
+    # 四轮审计 #168：`len(kw) >= len(k)` 在 startswith 成立时恒真，属冗余守卫——清理
     for k, curs in HOLDER_CURRENCY.items():
-        if kw.startswith(k) and len(kw) >= len(k):
+        if kw.startswith(k):
             return curs
     return ()
 
@@ -66,6 +67,6 @@ def holder_entity_name(keyword: str) -> str | None:
             return v
     # 前缀命中：去后缀场景（path.stem）
     for k, v in TITLE_ENTITY.items():
-        if kw.startswith(k) and len(kw) >= len(k):
+        if kw.startswith(k):
             return v
     return None
