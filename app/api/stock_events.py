@@ -27,9 +27,21 @@ from app.core.snapshot import rebuild_snapshots
 from app.core.stock_cost import (
     apply_buy, apply_dividend, apply_passive_uplift, apply_sell,
 )
-from app.model import HoldingEvent, StockEvent
+from app.model import Account, HoldingEvent, StockEvent
 
 router = APIRouter(prefix="/api/v1", tags=["stock-events"])
+
+
+def _require_same_currency(db: Session, event_currency: str | None, account_id: int):
+    """PRD §6.8 第3类铁律（四轮审计 #164）：同币种才连、不换算；不符则不可关联。"""
+    acc = db.get(Account, account_id)
+    if not acc:
+        raise HTTPException(404, "account not found")
+    ev_cur = event_currency or "USD"
+    if acc.currency != ev_cur:
+        raise HTTPException(
+            422, f"同币种才可关联（不换算）：事件 {ev_cur} ≠ 账户 {acc.currency}")
+    return acc
 
 
 class AssociateIn(BaseModel):
@@ -121,6 +133,7 @@ def associate_stock_event(body: AssociateIn, db: Session = Depends(get_db)):
         return {"associated": True, "skipped": True, "account_id": se.linked_account_id}
     if se.event_type != "buy" or not se.shares or not se.unit_price:
         raise HTTPException(422, "仅 buy 事件可关联；sell/dividend 请用对应动作端点")
+    _require_same_currency(db, se.currency, body.account_id)   # issue #164
     try:
         r = apply_buy(db, entity_id=body.entity_id, company=se.company, ticker=se.ticker,
                       date=se.date, unit_price=float(se.unit_price), shares=float(se.shares),

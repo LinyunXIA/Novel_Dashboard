@@ -77,21 +77,26 @@ export default function Stock() {
         </table>
 
         <h4>导入的待关联 buy 事件</h4>
-        {assocId && (
-          <div style={{ margin: '8px 0' }}>
-            <span className="note">选择主体 & 账户：</span>
-            <select value={entSel} onChange={e => setEntSel(e.target.value)}>
-              <option value="">— 主体 —</option>
-              {entities.map(e => <option key={e} value={e}>entity#{e}</option>)}
-            </select>
-            <select value={accSel} onChange={e => setAccSel(e.target.value)}>
-              <option value="">— 账户 —</option>
-              {accts.map(a => <option key={a.id} value={a.id}>acct#{a.id} {a.currency}</option>)}
-            </select>
-            <button className="primary" disabled={!entSel || !accSel || op.busy} onClick={doAssociate}>确认关联</button>
-            <button className="ghost" onClick={() => { setAssocId(null); setEntSel(''); setAccSel('') }}>取消</button>
-          </div>
-        )}
+        {assocId && (() => {
+          const evCur = (events.data?.items || []).find(e => e.id === assocId)?.currency || 'USD'
+          return (
+            <div style={{ margin: '8px 0' }}>
+              <span className="note">选择主体 & 账户（同币种 {evCur} · PRD §6.8）：</span>
+              <select value={entSel} onChange={e => setEntSel(e.target.value)}>
+                <option value="">— 主体 —</option>
+                {entities.map(e => <option key={e} value={e}>entity#{e}</option>)}
+              </select>
+              <select value={accSel} onChange={e => setAccSel(e.target.value)}>
+                <option value="">— 账户 —</option>
+                {accts.filter(a => a.currency === evCur).map(a => <option key={a.id} value={a.id}>acct#{a.id} {a.currency}</option>)}
+              </select>
+              {accts.length > 0 && accts.every(a => a.currency !== evCur) &&
+                <span className="warn">无同币种账户可关联</span>}
+              <button className="primary" disabled={!entSel || !accSel || op.busy} onClick={doAssociate}>确认关联</button>
+              <button className="ghost" onClick={() => { setAssocId(null); setEntSel(''); setAccSel('') }}>取消</button>
+            </div>
+          )
+        })()}
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead><tr><th>公司</th><th>日期</th><th>股数</th><th>单价</th><th>金额(万USD)</th><th>占比</th><th></th></tr></thead>
           <tbody>

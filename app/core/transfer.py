@@ -52,7 +52,10 @@ def _fx_rate(session: Session, fx_from: str, fx_to: str, year: int) -> Optional[
         ).limit(1)
     ).first()
     if row is not None and row[0] is not None:
-        return Decimal(str(row[0]))
+        rate = Decimal(str(row[0]))
+        if rate > 0:                     # issue #161：正向行同样拒绝 0/负值（防 amt×0 资金蒸发）
+            return rate
+        return None                      # 非法汇率行视同缺失 → 上层 422
     rrow = session.execute(
         select(ExchangeRate.rate).where(
             ExchangeRate.fx_from == fx_to,
