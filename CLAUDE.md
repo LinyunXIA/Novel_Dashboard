@@ -107,21 +107,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   npm run dev                   # 默认 http://localhost:5173
   ```
 
-CLI 全清单（13 个子命令，均支持 `--env dev/test/prod`，缺省回落 `APP_ENV`）：
+CLI 全清单（14 个子命令，均支持 `--env dev/test/prod`，缺省回落 `APP_ENV`）：
 ```bash
 .venv/bin/python -m app.ingest.main ping                    # 连通自检（打印实际 env/DSN）
 .venv/bin/python -m app.ingest.main run                     # 扫描+解析报告（不落库）
-.venv/bin/python -m app.ingest.main ingest [--force]        # 落库主链路；--force 重浇灌四类收益文件(#114)
+.venv/bin/python -m app.ingest.main ingest [--force]        # 落库主链路；--force 重浇灌四类收益文件(#114/#135 已修复)
 .venv/bin/python -m app.ingest.main health                  # H1-H5/H-STOCK 健康校验
 .venv/bin/python -m app.ingest.main recompute --from 1947   # 增量重算（杠杆复利仅 compound opt-in 账户）
 .venv/bin/python -m app.ingest.main snapshot --from 1947    # 重建逐年快照
 .venv/bin/python -m app.ingest.main wealth --year 2001      # 家族合计(USD)+分币种
 .venv/bin/python -m app.ingest.main calendar --as-of 2001-12-30
-.venv/bin/python -m app.ingest.main labor-baseline --office be   # 用工基准三表导入
+.venv/bin/python -m app.ingest.main labor-baseline --office be   # 用工基准三表导入（office 支持中文或 ISO 缩写 be/lu/nl/dk/se/uk，#144）
 .venv/bin/python -m app.ingest.main search-index            # 搜索索引构建（pgvector）
 .venv/bin/python -m app.ingest.main finance-backfill        # finance_entry 存量回填
 .venv/bin/python -m app.ingest.main events-movie            # Phase2 电影事件导入
 .venv/bin/python -m app.ingest.main events-stock            # Phase2 股票事件导入
+.venv/bin/python -m app.ingest.main merge-alias-persons [--dry-run]  # 职称别名 person 并入规范实体（#136 存量修复，幂等）
 ```
 三环境均同源代码，仅 `APP_ENV` + 库名(`novel_*`) + 数据目录不同；`Design_Folder` 为只读源。
 

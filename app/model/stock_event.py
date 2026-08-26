@@ -34,7 +34,7 @@ class StockEvent(Base):
     pct: Mapped[Optional[float]] = mapped_column(Numeric)
     linked_entity_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("entity.id"))
     linked_account_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("account.id"))
-    linked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    linked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # issue #145：统一 TIMESTAMPTZ
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)

@@ -31,7 +31,7 @@ class MovieEvent(Base):
     raw_cashflows: Mapped[Optional[dict]] = mapped_column(JSONBCompat,
                                                          comment="解析出的全部现金流明细")
     linked_account_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("account.id"))
-    linked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    linked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # issue #145：统一 TIMESTAMPTZ
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)

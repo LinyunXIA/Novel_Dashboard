@@ -167,7 +167,8 @@ class Snapshot(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     as_of_year: Mapped[int] = mapped_column(Integer, nullable=False)
     as_of_date: Mapped[Optional[date]] = mapped_column(Date, comment="date 级游标；NULL=仅年聚合")
-    scope: Mapped[str] = mapped_column(String, nullable=False, comment="'account:12:BEF' / 'entity:3' / 'family:total'")
+    # issue #12/§21.5：三段式 scope——'account:{id}:{cur}' / 'entity:{id}:{cur}' / 'family:total'
+    scope: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[Optional[float]] = mapped_column(Numeric)
     currency: Mapped[Optional[str]] = mapped_column(String)
 
