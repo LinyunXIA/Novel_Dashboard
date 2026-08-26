@@ -33,6 +33,13 @@ export default function Transfer({ calMax = 2026 }) {
   // 源账户/年份变化后目标币种随之回落到合法首项（避免显示与提交不一致）
   const effTarget = validTargets.includes(form.target_currency) ? form.target_currency : (validTargets[0] || '')
 
+  // 八轮审计 #189：表单级幂等键——挂载生成、仅成功提交后重置；
+  // 双击/重试复用同一 nonce → 服务端查重第二次 skipped，不再双记账
+  const [nonce, setNonce] = useState(() =>
+    (crypto.randomUUID?.() || `${Date.now()}${Math.random()}`).replace(/-/g, '').slice(0, 12))
+  const newNonce = () => setNonce(
+    (crypto.randomUUID?.() || `${Date.now()}${Math.random()}`).replace(/-/g, '').slice(0, 12))
+
   const doSubmit = async () => {
     if (!form.source_account_id || !form.target_entity_id) return
     const res = await op.submit('/api/v1/transfers', {
@@ -41,8 +48,14 @@ export default function Transfer({ calMax = 2026 }) {
       target_currency: effTarget || form.target_currency,
       amount: Number(form.amount),
       year: Number(form.year),
+      nonce,
     })
-    if (res.ok) { setForm(f => ({ ...f, amount: '' })) }
+    if (res.ok) {
+      setForm(f => ({ ...f, amount: '' }))
+      newNonce()
+    }
+    // skipped（幂等重放）也重置 nonce——用户需感知为一次新操作起点
+    else if (res.data?.status === 'skipped') { newNonce() }
   }
 
   return (
@@ -95,7 +108,9 @@ export default function Transfer({ calMax = 2026 }) {
           <ErrorBox error={op.error} />
           {op.last && (
             <div className="result">
-              {op.last.operation === '换汇' ? '换汇' : '划拨'}：{op.last.amount} {op.last.source_currency} → {op.last.target_amount} {op.last.target_currency}
+              {op.last.status === 'skipped' || op.last.operation === '重放跳过'
+                ? '重复提交已跳过（幂等保护）——该笔此前已入账'
+                : `${op.last.operation === '换汇' ? '换汇' : '划拨'}：${op.last.amount} ${op.last.source_currency} → ${op.last.target_amount} ${op.last.target_currency}`}
             </div>
           )}
         </div>

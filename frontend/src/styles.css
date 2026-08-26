@@ -10,10 +10,13 @@ body { background: var(--page); color: var(--ink); font-family: system-ui, -appl
   --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
   --card:hsl(0 0% 100% / .65); --border:rgba(11,11,11,.10);
   --shadow:0 1px 2px rgba(11,11,11,.05), 0 4px 14px rgba(11,11,11,.05);
+  /* 八轮审计 #190：补齐 badge/banner 引用的语义变量（原引用未定义恒走兜底色） */
+  --panel:#fcfcfb; --accent:#2a78d6; --diff-add-bg:rgba(12,163,12,.10); --diff-del-bg:rgba(208,59,59,.10);
   min-height: 100vh; padding: 20px clamp(12px, 3vw, 40px) 60px; }
 :root[data-theme="dark"] .viz { --surface-1:#1a1a19; --page:#0d0d0d; --ink:#fff; --ink-2:#c3c2b7;
   --muted:#898781; --grid:#2c2c2a; --axis:#383835; --s1:#3987e5; --s2:#d95926; --s3:#199e70;
-  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b; --card:hsl(0 0% 9%/.6); --border:rgba(255,255,255,.10); }
+  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b; --card:hsl(0 0% 9%/.6); --border:rgba(255,255,255,.10);
+  --panel:#242423; --accent:#3987e5; --diff-add-bg:rgba(12,163,12,.16); --diff-del-bg:rgba(208,59,59,.16); }
 
 .topbar { display: flex; align-items: center; gap: 16px; padding: 6px 2px 14px; }
 .brand h1 { font-size: 17px; font-weight: 650; }
@@ -84,17 +87,17 @@ button.ghost:hover { color: var(--ink); }
   padding: 1px 7px;
   border-radius: 9px;
   font-size: 11px;
-  background: var(--panel, #1f2937);
+  background: var(--panel);
   border: 1px solid var(--border, #374151);
-  color: var(--muted, #9ca3af);
+  color: var(--ink-2);
 }
 .badge.warn {
   color: var(--warn, #d97706);
   border-color: var(--warn, #d97706);
 }
 .banner {
-  border-left: 3px solid var(--accent, #2563eb);
+  border-left: 3px solid var(--accent);
   margin-bottom: 10px;
 }
-.diff-add { color: #22c55e; background: rgba(34, 197, 94, .08); }
-.diff-del { color: #ef4444; background: rgba(239, 68, 68, .08); text-decoration: line-through; }
+.diff-add { color: var(--good); background: var(--diff-add-bg); }
+.diff-del { color: var(--crit); background: var(--diff-del-bg); text-decoration: line-through; }

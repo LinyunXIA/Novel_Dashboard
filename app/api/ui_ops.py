@@ -51,6 +51,9 @@ class TransferIn(BaseModel):
     target_currency: str
     amount: float
     year: int = Field(ge=1947, le=_YEAR_MAX)
+    # 八轮审计 #189：客户端幂等键——同一表单重试复用同一 nonce → 服务端查重 skipped；
+    # 缺省时服务端生成（兼容直调方，但该路径无重放保护）
+    nonce: str | None = Field(default=None, max_length=32)
 
 
 _apply_error = apply_error   # issue #132：收敛到 deps 共享
@@ -187,13 +190,16 @@ def post_transfer(body: TransferIn, db: Session = Depends(get_db)):
                        target_entity_id=body.target_entity_id,
                        target_currency=body.target_currency,
                        amount=body.amount, year=body.year,
-                       nonce=uuid4().hex[:12])   # 七轮审计 #182：幂等标签
+                       nonce=body.nonce or uuid4().hex[:12])   # 七轮 #182 + 八轮 #189：客户端幂等键透传
     except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
+    if out.get("skipped"):
+        # 八轮审计 #189：幂等重放无写入——short-circuit，不跑全量重算/通知/commit
+        return {"status": "skipped", **out}
     _after_ui_write(db, body.year, f"{out['operation']} {body.year}")
     return {"status": "ok", **out}
 
