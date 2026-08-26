@@ -249,7 +249,13 @@ def redeem_investment(session: Session, investment: Investment) -> dict:
     防重（issue #82）：按本笔 redeemed_at 判重，非空 → 409；不再按年扫全库，同年多地区互不阻塞。
     审计修复：年末结算 gate——未到当年 12-30 拒绝赎回（409），防误触提前锁定全年收益
     （历史年份结算日已过，不受影响）。
+    七轮审计 #182：行读取改 with_for_update()——并发双赎回窗口由 DB 行锁关闭
+    （SQLite no-op / PG 生效）。
     """
+    locked_inv = session.execute(
+        select(Investment).where(Investment.id == investment.id).with_for_update()
+    ).scalar_one()
+    investment = locked_inv
     if investment.redeemed_at is not None:
         raise ConflictError(f"该投资 {investment.region} {investment.year} 已赎回，勿重复")
     settlement = date(investment.year, 12, 30)

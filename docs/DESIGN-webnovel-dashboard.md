@@ -3,6 +3,7 @@
 对应 [PRD-webnovel-dashboard.md](PRD-webnovel-dashboard.md) 的技术设计文档。目标：把 PRD 落成可实现的架构、数据模型(DDL)、解析器、增量重算算法、文件变更流与 API 契约。
 
 > 版本：1.0（草案） · 三环境：dev / test / prod（三个独立本地 Postgres 库）
+> UI 原型：[ui-mockup/index.html](ui-mockup/index.html)（七轮 #185 补录互引；实现以 frontend/src/App.jsx TABS=16 为准）
 
 ---
 
@@ -1132,3 +1133,27 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   正向路径、GET /wealth、pool_in_transit 跨年段、close_2002_currency 承接分录直接单测。
 - 文档更正（#171）：§6.3 余额校验位置、§19.6 分红口径备案、§14.2 补录 companies/import、
   本节汇总。
+
+
+### 21.10 七轮审计修复批回写（2026-08-26，issue #182–#187，跟踪索引 #187）
+
+> 第七轮独立盲审（叠加影响/性能并发/测试质量二遍/验收核对）后的回写；与前文冲突处以本节为准。
+
+- **transfers 幂等**（#182）：transfer() 加 nonce 参数——两笔 ledger note 打 `UI 转移#{nonce}`
+  标签、重放词边界复核 skipped 幂等返回；API 层 uuid4 hex 生成。redeem 行读取改
+  `with_for_update()` 关闭并发双赎回窗口（SQLite no-op / PG 生效）。
+- **return_table 附录 % 特征过滤**（#184A）：格式A 明细行不带 %、「分阶段复合年化」附录行带 %
+  ——带 % 的 pair 跳过，杜绝缺档年被复合费率补齐的口径混合（封盘逻辑保留为第二道防线）。
+- **movie link 分红-only 快照滞后**（#184B）：_write_movie_ledger 返回 (written, years)，
+  rebuild 起点=实际写入流水最早年（消除 today() 回退）。
+- **性能形态修复**（#186）：currency.py 抽出 `_rate_from_pairs` 纯函数核心 +
+  `rate_loader(session)` 批量预载闭包；wealth_series / rebuild_snapshots 循环内零点查；
+  同批修复「NULL-rate 具体年行遮蔽 year=NULL 基准常量」——非正/NULL 行在载入时剔除。
+- **fx 源头告警**（#186）：解析层 rate<=0 行不入库并落 warning（ingest_report 可见）。
+- **PG-only 冒烟**（#186）：tests/test_pg_smoke.py（无法连 novel_test 自动 skip）——
+  import_return_curves on_conflict 真库幂等 + search.retrieve cosine_distance 可编译执行。
+- **测试卫生**（#183）：时间炸弹 min(today,2026)→CALENDAR_MAX_YEAR；jobs/search 两处
+  monkeypatch 还原；labor results/finance filter 断言补强；snapshot 注释修正（issue #28
+  零值跳过语义下条数相等不成立）。
+- **docs**（#185）：PRD 屏数条款更正+差异备案、CHANGELOG 重复标题去重、DESIGN↔mockup
+  互引补齐、CLAUDE.md 写作线措辞限定。

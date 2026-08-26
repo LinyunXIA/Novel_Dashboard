@@ -100,3 +100,32 @@ class TestApiLink:
                 assert c.post(f"/api/v1/movie-events/{mid}/unlink").json()["unlinked"] is True
         finally:
             app.dependency_overrides.pop(get_db, None)
+
+# ---- 七轮审计 #184：分红-only 事件的快照起点 ----
+def test_dividend_only_link_rebuilds_from_dividend_year(db):
+    """仅分红流的电影：link 后 rebuild_snapshots 起点=分红日期年（非 today 回退）。"""
+    from datetime import date as _d
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+    from app.core.snapshot import rebuild_snapshots
+    from app.model import Account, Snapshot
+    e = Entity(entity_type="person", name="D184人")
+    db.add(e); db.flush()
+    acc = Account(entity_id=e.id, currency="USD")
+    db.add(acc); db.flush()
+    m = MovieEvent(title="分红only", currency="USD",
+                   investment_date=None, investment_total=None,
+                   principal_return_date=_d(2003, 6, 1), dividends_total=7.0)
+    db.add(m); db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        with TestClient(app) as c:
+            r = c.post(f"/api/v1/movie-events/{m.id}/link", json={"account_id": acc.id})
+            assert r.status_code == 200 and r.json()["ledger_written"] == 1
+        # 分红年份(2003)的 entity 快照行已反映该笔收入
+        row = db.execute(select(Snapshot).where(
+            Snapshot.scope == f"entity:{e.id}:USD",
+            Snapshot.as_of_year == 2003)).scalar_one_or_none()
+        assert row is not None and abs(float(row.value) - 7.0) < 0.01
+    finally:
+        app.dependency_overrides.pop(get_db, None)

@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -184,7 +186,8 @@ def post_transfer(body: TransferIn, db: Session = Depends(get_db)):
         out = transfer(db, source_account_id=body.source_account_id,
                        target_entity_id=body.target_entity_id,
                        target_currency=body.target_currency,
-                       amount=body.amount, year=body.year)
+                       amount=body.amount, year=body.year,
+                       nonce=uuid4().hex[:12])   # 七轮审计 #182：幂等标签
     except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)

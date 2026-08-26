@@ -120,8 +120,10 @@ class TestRebuildSnapshotsFromYear:
         snaps_1981 = session.query(Snapshot).filter(Snapshot.as_of_year == 1981).all()
         # 旧 1980 段全部保留
         assert all(s.value is not None for s in snaps_1980)
-        # 新 1981 段重写（条数与 from_year=1980 一致）
+        # 新 1981 段重写；条数可少于 1980 段（issue #28：value=0 且无流水的年份/账户跳过）
+        # 七轮审计 #183：修正注释——相等断言不成立，改为「非空 + 全部有值」
         assert len(snaps_1981) > 0
+        assert all(s.value is not None for s in snaps_1981)
 
     def test_from_year_default_is_full_rebuild(self, session):
         _seed_basic(session)

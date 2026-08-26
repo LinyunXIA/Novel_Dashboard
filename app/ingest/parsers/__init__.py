@@ -79,6 +79,7 @@ def parse_fx(path: Path) -> tuple[list[dict], list[str]]:
     # 文件级 fallback：行内/节内无年份时使用（issue #25：行/节上下文优先于文件头）
     file_year = _detect_year_in_lines(lines) or _year_from_name(path.name)
     current_year: int | None = file_year
+    warnings: list[str] = []
     for line in lines:
         s = line.strip()
         # 节标题型：纯 4 位年份 token（如 `1999`），更新 current_year 并跳过
@@ -93,8 +94,13 @@ def parse_fx(path: Path) -> tuple[list[dict], list[str]]:
             fx_to = _cur(m.group(3))
             if fx_to is None:   # 四轮审计 #168：未知币名跳过（宁缺勿错）
                 continue
+            rate = parse_number(m.group(2))
+            if rate is not None and rate <= 0:
+                # 七轮审计 #186：非正汇率行不入库并告警（防遮蔽同对 year=NULL 基准常量）
+                warnings.append(f"汇率行非正（{m.group(1)}={rate} {fx_to}）已跳过")
+                continue
             recs.append({
-                "fx_from": m.group(1).upper(), "rate": parse_number(m.group(2)),
+                "fx_from": m.group(1).upper(), "rate": rate,
                 "fx_to": fx_to, "year": line_year,
             })
             continue
@@ -102,11 +108,15 @@ def parse_fx(path: Path) -> tuple[list[dict], list[str]]:
         t = re.fullmatch(r"([A-Za-z一-鿿]+(?:\s+[A-Za-z一-鿿]+)?)\s+([A-Z]{3})\s+([\d.,]+)", s)
         if t:
             # 四轮审计 #168：第二列本就是 ISO 三字母代码，直接采信（_cur 识别不出时不再兜底整串大写）
-            recs.append({"fx_from": "USD", "rate": parse_number(t.group(3)),
+            rate2 = parse_number(t.group(3))
+            if rate2 is not None and rate2 <= 0:
+                warnings.append(f"汇率行非正（USD/{t.group(2)}={rate2}）已跳过")
+                continue
+            recs.append({"fx_from": "USD", "rate": rate2,
                          "fx_to": t.group(2).upper(), "year": line_year})
     if not recs and any(l.strip().startswith("|") for l in lines):
-        return [], [f"汇率文件含 markdown 表格但解析出 0 条记录（表头格式不识别？）"]
-    return recs, []
+        return [], [f"汇率文件含 markdown 表格但解析出 0 条记录（表头格式不识别？）"] + warnings
+    return recs, warnings
 
 
 _CN_CURRENCY = {
@@ -230,8 +240,11 @@ def parse_return_table(path: Path) -> list[dict]:
             if fm:
                 year = int(fm.group(0))
         # 格式A：竖线分隔 `R1：4.35｜R2：6.12｜R3：8.64｜R4：68.82｜R5：76.35`
-        vm = re.finditer(r"R([1-5])\s*[:：]\s*([-+]?\d+(?:\.\d+)?)", line)
-        pairs = [(int(m.group(1)), parse_number(m.group(2))) for m in vm]
+        # 七轮审计 #184：明细行不带 %、「分阶段复合年化」附录行带 %——
+        # 带 % 的 pair 视为附录数据跳过（防缺档年被复合费率补齐致口径混合）
+        vm = re.finditer(r"R([1-5])\s*[:：]\s*([-+]?\d+(?:\.\d+)?)\s*(%?)", line)
+        pairs = [(int(m.group(1)), parse_number(m.group(2)))
+                 for m in vm if not m.group(3)]
         done = seen.setdefault(year if year is not None else -1, set())
         if pairs and len(pairs) >= 3 and year and len(done) < 5:
             fresh = [(rl, rate) for rl, rate in pairs if rl not in done]

@@ -75,15 +75,22 @@ def test_search_no_hits(db, monkeypatch):
 
 
 def test_search_endpoint(db, monkeypatch):
+    # 七轮审计 #183：monkeypatch 保证 teardown 还原（此前直赋值泄漏抛错 lambda）
     import app.api.search as api
-    result = {"answer": "1965年", "hits": [{"content": "x"}]}
-    api.search = lambda d, q, as_of=None, **kw: result       # 成功
+
+    def _ok(d, q, as_of=None, **kw):
+        return {"answer": "1965年", "hits": [{"content": "x"}]}
+
+    def _boom(d, q, as_of=None, **kw):
+        raise llm.LlmUnavailable("omlx 未启动")
+
+    monkeypatch.setattr(api, "search", _ok)
     app.dependency_overrides[get_db] = lambda: db
     try:
         with TestClient(app) as c:
             assert c.get("/api/v1/search", params={"q": "祖母"}).json()["answer"] == "1965年"
             assert c.get("/api/v1/search").status_code == 422   # 缺 q
-            api.search = lambda d, q, as_of=None, **kw: (_ for _ in ()).throw(llm.LlmUnavailable("omlx 未启动"))
+            monkeypatch.setattr(api, "search", _boom)
             assert c.get("/api/v1/search", params={"q": "x"}).status_code == 503
     finally:
         app.dependency_overrides.pop(get_db, None)

@@ -26,7 +26,7 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.core.currency import usd_rate
+from app.core.currency import rate_loader
 from app.model import Account, IncomeStream, LedgerEntry, Snapshot
 
 # 写库精度：保留 2 位小数（与原 round(v, 2) 一致）
@@ -125,9 +125,10 @@ def _ownership_accounts(session: Session) -> list[Account]:
     return session.execute(select(Account)).scalars().all()
 
 
-def _usd_rate(session: Session, currency: str, year: int) -> Decimal | None:
-    """currency → USD 折算率（issue #71：委托 core/currency.py 权威实现）。"""
-    return usd_rate(session, currency, year)
+def _usd_rate(session: Session, currency: str, year: int, rate_of=None) -> Decimal | None:
+    """currency → USD 折算率（issue #71：委托 core/currency.py 权威实现）。
+    七轮审计 #186：rate_of 注入 loader 闭包（批量路径零点查）。"""
+    return (rate_of or rate_loader(session))(currency, year)
 
 
 def _holding_entity_ids(holding_by_year: dict[int, dict[int, Decimal]]) -> set[int]:
@@ -251,6 +252,7 @@ def rebuild_snapshots(session: Session, years: range = None,
             stats["entities"] += 1
 
     # 5) 写 family:total 行（USD 口径；汇率缺失币种不计入；全账户 0 时跳过该年）
+    _rate_of = rate_loader(session)   # 七轮审计 #186：批量零点查
     for y in years_list:
         if y < start:
             continue
@@ -261,7 +263,7 @@ def rebuild_snapshots(session: Session, years: range = None,
             v = series.get(y, _ZERO)
             if v == 0:
                 continue
-            rate = _usd_rate(session, acc.currency, y)
+            rate = _usd_rate(session, acc.currency, y, rate_of=_rate_of)
             if rate is None:
                 continue                                 # 汇率缺失 → 不计入
             family_usd = family_usd + v * rate
@@ -269,7 +271,7 @@ def rebuild_snapshots(session: Session, years: range = None,
         # §19.4：净值 = 银行 + 专款池在途；family:total 补回该年 12-30 在途本金（issue #85）。
         # 在途本金按主体×币种记（account 银行余额已含划出凹陷，这里加回对冲）。
         for (eid, cur), amt in pool_by_year[y].items():
-            rate = _usd_rate(session, cur, y)
+            rate = _usd_rate(session, cur, y, rate_of=_rate_of)
             if rate is None:
                 continue                                 # 汇率缺失 → 不计入
             family_usd = family_usd + amt * rate

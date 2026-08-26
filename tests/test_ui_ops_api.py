@@ -210,7 +210,9 @@ def test_post_demand_interest_endpoint(client):
     kinds = [n.kind for n in s.query(Notification).all()]
     assert "recompute-done" in kinds
     # 未到结算日的年份（当年 12-30 前不可结）→ 422
-    this_year = min(_date.today().year, 2026)
+    # 七轮审计 #183：用 CALENDAR_MAX_YEAR（其 12-30 恒在未来，跨年不炸）
+    from app.config import CALENDAR_MAX_YEAR as _MAXY
+    this_year = _MAXY
     r2 = c.post("/api/v1/demand-interest", json={"year": this_year})
     assert r2.status_code == 422
     assert "结算日" in r2.json()["detail"]

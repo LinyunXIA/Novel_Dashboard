@@ -81,6 +81,7 @@ def test_filter_by_year(client):
     c, Session = client
     _seed(Session())
     r = c.get("/api/v1/finance-entries?year=1992")
+    assert r.status_code == 200   # 七轮审计 #183：显式状态码（此前隐式依赖 KeyError 失败）
     items = r.json()["items"]
     assert len(items) == 1
     assert items[0]["amount"] == 500.0
