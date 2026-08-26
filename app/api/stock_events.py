@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import apply_error, get_db
 from app.core.snapshot import rebuild_snapshots
 from app.core.stock_cost import (
     apply_buy, apply_dividend, apply_passive_uplift, apply_sell,
@@ -51,9 +51,7 @@ class StockActionIn(BaseModel):
     event_id: str = Field(min_length=3)
 
 
-def _apply_error(e: Exception):
-    status = getattr(e, "status", 422)
-    raise HTTPException(status_code=status, detail=getattr(e, "detail", str(e)))
+_apply_error = apply_error   # issue #132：收敛到 deps 共享
 
 
 def _se_dict(se: StockEvent) -> dict:

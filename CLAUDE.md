@@ -43,6 +43,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. 收益率以 **R1–R5 风险分级** 体系锚定（R1 保本 → R5 高杠杆商品/外汇/期权），家族主仓按 `2倍杠杆` 上限（1989年前1.5倍），遇历史事件（1992黑色星期三、2008危机、2016脱欧、2022特拉斯迷你预算）有重生记忆套利。
 4. **数据要算得平**：任何金额改动引发的复利/汇率/杠杆传导，都要能回推自洽；改了一个数字要顺着 `时间线.md` 的汇总链核对下游。
 5. **学业/时间一致性**：角色求学轨迹（如 KU Leuven 基准入学 1996.9）与 `时间线.md` 的年表必须吻合，防止"悬浮"设定。
+6. **银行台账复利 opt-in**（issue #113 定案 A）：默认不对源台账套曲线复利（文件即权威）；
+   仅 `entity.fields["compound"]=true` 的账户参与 §7.2 滚动。地区/R 覆盖：`return_region`/`risk_lvl`。
+7. **收益展开因子 A 口径「文件终值权威」**（issue #114 定案）：调价在每年年初（含起租年 1974）、
+   年末结算入账——factor(1984)=1.07¹¹≈2.1049、factor(2007)≈5.2100 与收益文件示例一致；
+   income(1974)=基桩×1.07。改因子后用 `ingest --force` 重浇灌。
 
 历史主线投资（作为共识背景）：皮克斯→迪士尼换股、阿里巴巴、腾讯（港）、联合技术/GE 系拆分股（GE/GEHC/GEV/UTX→CARR/OTIS/RTX）、漫威、影视投资（泰坦尼克号、指环王、阿凡达、霍比特人、侏罗纪世界、阿丽塔）。
 
@@ -87,6 +92,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    APP_ENV=dev .venv/bin/python -m app.ingest.main recompute --from 1947
    APP_ENV=dev .venv/bin/python -m app.ingest.main snapshot
    ```
+   > 环境（issue #107 修复后）：`--env` 缺省回落 `APP_ENV`，再缺省 dev；回显一律以命令输出
+   > `[<env>]` 为准。跨环境操作推荐显式 `--env test|prod`。
 
 启动服务：
 - **后端 API**（FastAPI，Swagger 在 `/docs`）：
@@ -100,11 +107,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   npm run dev                   # 默认 http://localhost:5173
   ```
 
-其他 CLI（同参数 `--env dev/test/prod`）：
+CLI 全清单（13 个子命令，均支持 `--env dev/test/prod`，缺省回落 `APP_ENV`）：
 ```bash
-.venv/bin/python -m app.ingest.main health      # H1-H5 健康校验
-.venv/bin/python -m app.ingest.main wealth --year 2001
+.venv/bin/python -m app.ingest.main ping                    # 连通自检（打印实际 env/DSN）
+.venv/bin/python -m app.ingest.main run                     # 扫描+解析报告（不落库）
+.venv/bin/python -m app.ingest.main ingest [--force]        # 落库主链路；--force 重浇灌四类收益文件(#114)
+.venv/bin/python -m app.ingest.main health                  # H1-H5/H-STOCK 健康校验
+.venv/bin/python -m app.ingest.main recompute --from 1947   # 增量重算（杠杆复利仅 compound opt-in 账户）
+.venv/bin/python -m app.ingest.main snapshot --from 1947    # 重建逐年快照
+.venv/bin/python -m app.ingest.main wealth --year 2001      # 家族合计(USD)+分币种
 .venv/bin/python -m app.ingest.main calendar --as-of 2001-12-30
+.venv/bin/python -m app.ingest.main labor-baseline --office be   # 用工基准三表导入
+.venv/bin/python -m app.ingest.main search-index            # 搜索索引构建（pgvector）
+.venv/bin/python -m app.ingest.main finance-backfill        # finance_entry 存量回填
+.venv/bin/python -m app.ingest.main events-movie            # Phase2 电影事件导入
+.venv/bin/python -m app.ingest.main events-stock            # Phase2 股票事件导入
 ```
 三环境均同源代码，仅 `APP_ENV` + 库名(`novel_*`) + 数据目录不同；`Design_Folder` 为只读源。
 

@@ -7,7 +7,7 @@ const RISK_ORDER = ['R1', 'R2', 'R3', 'R4', 'R5']
 
 /** F-P1-06 各国收益曲线：R1–R5 五条 SVG 线对比。
  *  issue #87-3：国家下拉来自 /returns/countries，不再前端硬编码 9 国。 */
-export default function Returns() {
+export default function Returns({ asOf }) {
   const [country, setCountry] = useState('')
   const countries = useFetch('/api/v1/returns/countries')
   const countryList = countries.data?.countries || []
@@ -15,17 +15,22 @@ export default function Returns() {
   const effective = (country && countryList.includes(country)) ? country : (countryList[0] || '比利时')
   const data = useFetch(effective ? `/api/v1/returns?country=${encodeURIComponent(effective)}&page_size=500` : null)
   const regions = useFetch('/api/v1/returns/regions')
+  // issue #121：收益曲线窗口截至全局日历游标所在年
+  const asOfYear = asOf ? Number(asOf.split('-')[0]) : null
 
   const series = useMemo(() => {
     const byR = {}
     for (const r of (data.data?.items || [])) {
-      (byR[r.risk_lvl] ||= []).push([r.year, Number(r.rate)])
+      if (asOfYear && r.year > asOfYear) continue
+      ;(byR[r.risk_lvl] ||= []).push([r.year, Number(r.rate)])
     }
     for (const k of Object.keys(byR)) byR[k].sort((a, b) => a[0] - b[0])
     return byR
-  }, [data.data])
+  }, [data.data, asOfYear])
 
-  const ys = (data.data?.items || []).flatMap(r => r.rate == null ? [] : [Number(r.rate)])
+  const ys = (data.data?.items || [])
+    .filter(r => !asOfYear || r.year <= asOfYear)
+    .flatMap(r => r.rate == null ? [] : [Number(r.rate)])
 
   return (
     <div className="cols2">

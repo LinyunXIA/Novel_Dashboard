@@ -34,17 +34,24 @@ _RENT_SEGMENTS: tuple[tuple[int | None, float], ...] = (
 # 全周期固定票息，窗口即「持有至观察期末」口径）
 SECURITY_DEFAULT_YEARS: tuple[int, int] = (1947, 2025)
 
-# 各收益流的基桩年（base year：该年系数=1，自次年始复利）
+# 各收益流的基桩年（base year）。
+# issue #114 口径定案 A「文件终值权威」：调价发生在每年**年初**（含起租年 1974）、
+# 年末结算入账 → factor(1974)=1.07、factor(1984)=1.07¹¹≈2.1049、
+# factor(2007)=5.2100，与两份源文件的示例金额逐字一致
+# （如 惠民租房.md「18000×2.1049=37888.2 BEF」）。
 _BASE_YEAR = 1974
 
 
 def compound_factor(year: int, segments: tuple[tuple[int | None, float], ...],
                     base_year: int = _BASE_YEAR) -> float:
-    """基桩年到目标年的分段复利系数；year <= base_year → 1.0。"""
-    if year <= base_year:
+    """基桩年到目标年的分段复利系数；year < base_year → 1.0。
+
+    自 base_year 当年起逐年应用所在段率（首段含基桩年本身，见 _BASE_YEAR 注记）。
+    """
+    if year < base_year:
         return 1.0
     f = 1.0
-    for y in range(base_year + 1, year + 1):
+    for y in range(base_year, year + 1):
         for until, rate in segments:
             if until is None or y <= until:
                 f *= rate
@@ -56,10 +63,10 @@ def compound_factor(year: int, segments: tuple[tuple[int | None, float], ...],
 
 
 def property_factor(year: int) -> float:
-    """经营性房产分段复利系数（1974 基桩=1）。"""
+    """经营性房产分段复利系数（1974 起租年即计首次涨幅；1984=1.07¹¹）。"""
     return compound_factor(year, _PROPERTY_SEGMENTS)
 
 
 def rent_factor(year: int) -> float:
-    """惠民租房分段复利系数（1974 基桩=1）。"""
+    """惠民租房分段复利系数（同上口径）。"""
     return compound_factor(year, _RENT_SEGMENTS)

@@ -72,6 +72,11 @@ export default function Invest() {
 
   const regionDisabled = regionMap[form.region] && form.year < regionMap[form.region].start_year
 
+  // issue #125：已投年份（年+地区，锁定且未赎回）UI 置灰——防重投不再只靠服务端 409 兜底
+  const investedSet = new Set((inv.data?.items || [])
+    .filter(x => x.locked && !x.redeemed).map(x => `${x.year}:${x.region}`))
+  const alreadyInvested = investedSet.has(`${Number(form.year)}:${form.region}`)
+
   return (
     <div className="cols2">
       <div className="panel">
@@ -118,11 +123,14 @@ export default function Invest() {
           ))}
           <div className="row">
             <button className="ghost" onClick={addAlloc}>+ 添加主体</button>
-            <button className="primary" disabled={regionDisabled || submit.busy} onClick={doSubmit}>
+            <button className="primary" disabled={regionDisabled || alreadyInvested || submit.busy} onClick={doSubmit}>
               {submit.busy ? '提交中…' : '提交投资'}
             </button>
           </div>
           {regionDisabled && <div className="warn">年份低于 {form.region} 起始年下限 {regionMap[form.region].start_year}</div>}
+          {alreadyInvested && (
+            <div className="warn">该「年份+地区」已投且锁定（§6.7 一年一投）——请在右侧状态表先「解锁」再重输</div>
+          )}
           <ErrorBox error={localErr || submit.error} />
 
           <h3 style={{ marginTop: 22 }}>活期结息（§19.2 · 2% 年化按日折）</h3>

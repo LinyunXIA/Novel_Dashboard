@@ -8,12 +8,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import apply_error, get_db
 from app.core.demand import accrue_demand_interest
 from app.core.invest import (
     create_investment, redeem_investment, region_start_years, unlock_investment,
@@ -49,10 +49,7 @@ class TransferIn(BaseModel):
     year: int = Field(ge=1947, le=2026)
 
 
-def _apply_error(e: Exception):
-    """投资/划拨业务错误 → HTTPException（422/409 per status）。"""
-    status = getattr(e, "status", 422)
-    raise HTTPException(status_code=status, detail=getattr(e, "detail", str(e)))
+_apply_error = apply_error   # issue #132：收敛到 deps 共享
 
 
 def _after_ui_write(session: Session, start_year: int, reason: str):
@@ -105,7 +102,7 @@ def get_investment(investment_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/investments", status_code=201)
-def post_investment(body: InvestmentIn, db: Session = Depends(get_db)):
+def post_investment(body: InvestmentIn, response: Response, db: Session = Depends(get_db)):
     """创建投资（§19.1–19.3 校验链 + 划出走账 + 后传重算）。"""
     allocs = [{"entity_id": a.entity_id, "currency": a.currency,
                "amount": a.amount, "is_all": a.is_all} for a in body.allocs]
@@ -117,6 +114,7 @@ def post_investment(body: InvestmentIn, db: Session = Depends(get_db)):
         db.rollback()
         _apply_error(e)
     _after_ui_write(db, body.year, f"投资 {body.region} R{body.risk_lvl} {body.year}")
+    response.headers["Location"] = f"/api/v1/investments/{inv.id}"   # §14.1（issue #127）
     return {"id": inv.id, "status": "created", "year": body.year, "region": body.region}
 
 

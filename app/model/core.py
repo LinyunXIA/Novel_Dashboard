@@ -34,7 +34,8 @@ class Entity(Base):
     fields: Mapped[dict] = mapped_column(JSONBCompat, default=dict, nullable=False, server_default="{}")
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
-    source: Mapped[Optional[str]] = mapped_column(String, default=SourceKind.FILE.value)
+    source: Mapped[Optional[str]] = mapped_column(
+        String, default=SourceKind.FILE.value, server_default="'file'")   # issue #132
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)
 
 
@@ -48,7 +49,8 @@ class Account(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     entity_id: Mapped[int] = mapped_column(ForeignKey("entity.id"), nullable=False)
     currency: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default=AccountStatus.ACTIVE.value, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String, default=AccountStatus.ACTIVE.value, server_default="'active'", nullable=False)   # issue #132
     closed_on: Mapped[Optional[date]] = mapped_column(Date)
     migrate_to_currency: Mapped[Optional[str]] = mapped_column(String)
     bank: Mapped[Optional[str]] = mapped_column(String)
@@ -153,7 +155,7 @@ class HoldingEvent(Base):
     company: Mapped[str] = mapped_column(String, nullable=False)
     ticker: Mapped[Optional[str]] = mapped_column(String)
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    event_type: Mapped[Optional[str]] = mapped_column(String, comment="buy/sell/split/acquire-cash/acquire-share")
+    event_type: Mapped[Optional[str]] = mapped_column(String, comment="buy/sell/split/acquire-cash/acquire-share/pseudo")
     batch_id: Mapped[Optional[int]] = mapped_column(BigInteger, comment="成本批次；FIFO 卖出扣成本")
     shares: Mapped[Optional[float]] = mapped_column(Numeric)
     unit_price: Mapped[Optional[float]] = mapped_column(Numeric, comment="该批次成本价（FIFO）")

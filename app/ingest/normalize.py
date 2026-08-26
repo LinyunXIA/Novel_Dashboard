@@ -36,7 +36,11 @@ def parse_number(raw: object, scale: float = 1.0) -> float | None:
 
 
 def parse_amount(raw: object, unit: str | None = None) -> float | None:
-    """金额解析：去千分位、去单位后缀，返回数值（不含单位）。"""
+    """金额解析：去千分位、去单位后缀，返回数值（不含单位）。
+
+    issue #132 复核：本函数无生产调用方但被测试钉定，保留为工具函数；
+    注意其万/亿仅剥离不换算——需要数量级换算请用 parse_number。
+    """
     if raw is None:
         return None
     s = str(raw).strip().replace(",", "").replace(" ", "").replace("≈", "").replace("~", "")
@@ -126,14 +130,17 @@ def parse_date_cell(raw: str) -> tuple[date | None, str | None]:
 
     支持：YYYY-MM-DD / YYYY-MM / YYYY（及中文分隔 YYYY年M月D日）与 年初/月初/上中下旬
     标注 → 统一走 resolve_date 默认规则。命中 → (date, pattern)；超规则无法解析 →
-    (None, None)，由调用方进 ingest_report 提示补 date_rule。
+    尝试用户补充的 date_rule（issue #119），仍失败 → (None, None)，由调用方进
+    ingest_report 提示补 date_rule。
     """
     s = (raw or "").strip()
     if not s:
         return None, None
     ym = re.match(r"^(?P<y>[12]\d{3})(?P<rest>.*)$", s)
     if not ym:
-        return None, None
+        # 年份不在格首（如「约1992年」）：默认规则无从下手，先试用户 date_rule（issue #119）
+        hit = apply_user_date_rules(s)
+        return hit if hit is not None else (None, None)
     y = int(ym["y"])
     hint = _date_hint(s)
     # 年之后抽数值片段：1 段 → 月（year-month）；≥2 段 → 月+日（year-month-day）。
@@ -144,9 +151,61 @@ def parse_date_cell(raw: str) -> tuple[date | None, str | None]:
             return resolve_date(y, int(parts[0]), int(parts[1])), "year-month-day"
         if parts:
             return resolve_date(y, int(parts[0]), hint=hint), "year-month"
+        # 无月日片段：若年份后仍有未识别的残留文字（非分隔符/已知标注），
+        # 先尝试用户 date_rule（issue #119）；否则走仅年默认（12-30）。
+        leftover = re.sub(r"[\d\s年月度\-/.．]+", "", ym["rest"])
+        leftover = re.sub(r"年初|年首|月初|上旬|中旬|下旬", "", leftover)
+        if leftover:
+            hit = apply_user_date_rules(s)
+            if hit is not None:
+                return hit
         return resolve_date(y, hint=hint), "year"
     except ValueError:
-        return None, None
+        pass
+    hit = apply_user_date_rules(s)
+    return hit if hit is not None else (None, None)
+
+
+# ---- date_rule 用户补充规则（issue #119 · §6.2「补一条沉淀复用」闭环）----
+# 规则存 DB（date_rule 表），ingest 启动 / API 变更时经 load_date_rules 装载；
+# pattern 为对原始 cell 全文 re.search 的正则，resolve 为 'MM-DD' 字面，
+# 与 cell 内解析出的年份组合成日。规则只在默认规则失配后才尝试。
+_USER_DATE_RULES: list[tuple[int, "re.Pattern[str]", str]] = []
+
+
+def load_date_rules(rows) -> int:
+    """装载 (id, pattern, resolve) 序列；非法正则/格式跳过。返回装载条数。"""
+    global _USER_DATE_RULES
+    out: list[tuple[int, "re.Pattern[str]", str]] = []
+    for rid, pattern, resolve in rows or []:
+        try:
+            compiled = re.compile(str(pattern))
+        except re.error:
+            continue
+        md = re.fullmatch(r"\s*(\d{2})-(\d{2})\s*", str(resolve or ""))
+        if not md:
+            continue
+        out.append((int(rid), compiled, f"{md.group(1)}-{md.group(2)}"))
+    _USER_DATE_RULES = out
+    return len(out)
+
+
+def apply_user_date_rules(raw: str) -> tuple[date, str] | None:
+    """按用户规则匹配原始 cell（cell 内需含 19xx/20xx 年份，位置不限）；命中返回 (date, 'date_rule:{id}')。"""
+    s = (raw or "").strip()
+    m4 = re.search(r"(?:19|20)\d{2}", s)
+    if not m4:
+        return None
+    y = int(m4.group(0))
+    for rid, pat, mmdd in _USER_DATE_RULES:
+        if not pat.search(s):
+            continue
+        m = re.fullmatch(r"(\d{2})-(\d{2})", mmdd)
+        try:
+            return date(y, int(m.group(1)), int(m.group(2))), f"date_rule:{rid}"
+        except ValueError:
+            continue
+    return None
 
 
 def currency_from(seg_title: str) -> str | None:

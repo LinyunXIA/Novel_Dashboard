@@ -56,17 +56,24 @@ def record_recompute_done(session: Session, start_year: int, reason: str = "manu
                           files: Optional[list] = None) -> dict:
     """DESIGN §9.2 步骤 3-4：写 recompute_job(status=done) → 建 recompute-done Notification。
 
-    供 ingest/recompute 成功路径调用，UI 据此弹「全局重算完成」非阻断横幅（§9.3）。
+    §9.2d（issue #120）：通知 payload 附带重算后的健康摘要（H1-H5/H-STOCK 计数），
+    使「导入/UI 改动 → 重算 → 健康复核」链路自动闭环，无需手动跑 health。
     返回 {"job_id": int, "notification_id": int}；session.flush 后由外层 commit。
     """
+    from app.core.health import summarize
     from app.model import Notification
     job_id = register_job(session, start_year, reason, files)
+    try:
+        health_summary = summarize(session)
+    except Exception:  # noqa: BLE001 — 健康摘要失败不阻断重算完成通知
+        health_summary = {}
     notif = Notification(
         job_id=job_id,
         kind="recompute-done",
         title="全局重算完成",
         message=f"已在全局重算财富与派生数据（自 {start_year} 起）",
-        payload={"start_year": start_year, "files": files or []},
+        payload={"start_year": start_year, "files": files or [],
+                 "health": {k: v.get("total", 0) for k, v in health_summary.items()}},
         created_at=datetime.now(),
     )
     session.add(notif)

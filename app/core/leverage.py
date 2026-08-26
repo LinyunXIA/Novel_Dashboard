@@ -1,7 +1,11 @@
-"""杠杆/收益曲线计算（DESIGN §7.2 · F-P0-12 修正）。
+"""杠杆/收益曲线计算（DESIGN §7.2 · F-P0-12 修正 · issue #113 口径定案）。
 
 提供 `recompute_one(account, from_year)`：按地区→国家映射读取 return_curve，
 应用杠杆倍率（1989年前 1.5×，1989年起 2×），逐年滚动复利重算账户余额。
+
+**复利为 opt-in**：仅 `entity.fields["compound"]=true` 的账户参与 §7.2 滚动；
+普通源台账账户（含自带收益明细行者）文件即权威、纯算术连续（PRD §6.10）。
+H4 健康校验经 `_rate_for_account_year` 同源取率，两模块口径恒一致。
 
 该模块为增量重算核心，替代 `recompute.py` 中纯台账滚动逻辑。
 """
@@ -14,16 +18,14 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.regions import (
+    CURRENCY_REGION, DEFAULT_RISK_LVL, REGION_COUNTRY,
+    entity_region_override, entity_risk_override,
+)
 from app.model import Account, LedgerEntry, ReturnCurve
 
-# 地区 → 收益曲线国家映射（与 invest.REGION_COUNTRY 一致）
-REGION_COUNTRY = {
-    "欧洲": "比利时",
-    "英国": "英国",
-    "美国": "美国",
-    "香港": "中国香港",
-    "中国": "中国大陆",
-}
+# 地区 → 收益曲线国家映射：单一权威定义见 app/core/regions.py（issue #113：
+# 旧字面量 欧洲→比利时 等在 return_curve 中无对应国家行，收益查询恒 None）
 
 # 杠杆分界：1989 年前 1.5×，1989 年起 2×（PRD §6.3 / CLAUDE.md 数值纪律）
 LEVERAGE_SINCE_1989 = Decimal("2.0")
@@ -35,32 +37,18 @@ _ONE = Decimal(1)
 
 
 def _get_account_region(session: Session, account: Account) -> Optional[str]:
-    """推断账户所属地区：按 entity 的 currency 与国家对应关系反推（简化：currency → 地区）。
+    """推断账户所属地区（issue #113）：
 
-    实际业务中，账户币种强关联地区：
-    - BEF/LUF/EUR(比利时/卢森堡) → 欧洲
-    - SEK → 欧洲(瑞典)
-    - DKK → 欧洲(丹麦)
-    - NLG → 欧洲(荷兰)
-    - GBP → 英国
-    - USD → 美国
-    - HKD → 香港
-    - CNY → 中国
-
-    为保持与 return_curve.country 兼容，直接用 currency 推 region 再映射 country。
+    优先级：entity.fields["return_region"] 显式覆盖 > 币种推断（CURRENCY_REGION）。
+    币种归属（CLAUDE.md 币种纪律）：BEF/LUF/EUR/SEK/DKK/NLG→欧洲、GBP→英国、
+    USD→美国、HKD→香港、CNY→中国。源 canon 仅 5 份地区测算表，欧洲内部
+    不再细分国家（PRD §6.7「不细分国家」同源口径）。
     """
-    cur = account.currency
-    if cur in ("BEF", "LUF", "EUR", "SEK", "DKK", "NLG"):
-        return "欧洲"
-    if cur == "GBP":
-        return "英国"
-    if cur == "USD":
-        return "美国"
-    if cur == "HKD":
-        return "香港"
-    if cur == "CNY":
-        return "中国"
-    return None
+    fields = getattr(getattr(account, "entity", None), "fields", None)
+    override = entity_region_override(fields)
+    if override:
+        return override
+    return CURRENCY_REGION.get(account.currency)
 
 
 def _leverage_for_year(year: int) -> Decimal:
@@ -69,7 +57,20 @@ def _leverage_for_year(year: int) -> Decimal:
 
 
 def _rate_for_account_year(session: Session, account: Account, year: int) -> Optional[Decimal]:
-    """该账户该年有效年化收益率（已乘杠杆，百分数→小数，如 21.7% → 0.217）。"""
+    """该账户该年有效年化收益率（已乘杠杆，百分数→小数，如 21.7% → 0.217）。
+
+    **opt-in 门禁（issue #113 口径定案 A）**：仅 entity.fields["compound"]=true
+    的账户启用 §7.2 曲线×杠杆复利——自带收益明细行的源台账（如「杠杆投资收益R5」
+    入账行）默认不复利，避免双重计息；文件即权威（PRD §6.10）。
+    H4 健康校验经本函数同源取率，普通账户自动退化为纯算术连续。
+
+    R 级：entity.fields["risk_lvl"] 覆盖 > 默认 R3；地区：fields["return_region"]
+    覆盖 > 币种推断。
+    """
+    fields = getattr(getattr(account, "entity", None), "fields", None)
+    if not (fields and fields.get("compound") is True):
+        return None
+
     region = _get_account_region(session, account)
     if not region:
         return None
@@ -77,9 +78,7 @@ def _rate_for_account_year(session: Session, account: Account, year: int) -> Opt
     if not country:
         return None
 
-    # 取该账户币种对应的风险等级（简化：主仓按 R3，或按账户字段推断；此处按地区取 R3 作为基准）
-    # 实际应按 entity 投资策略决定 R 级；此处提供可配置钩子，默认 R3
-    risk_lvl = "R3"
+    risk_lvl = entity_risk_override(fields) or DEFAULT_RISK_LVL
 
     row = session.execute(
         select(ReturnCurve.rate).where(
@@ -152,14 +151,3 @@ def recompute_one(session: Session, account_id: int, from_year: int) -> dict:
                 years_updated += 1
 
     return {"account_id": account_id, "from_year": from_year, "entries": len(entries), "updated": years_updated}
-
-
-def recompute_all(session: Session, from_year: int, reason: str = "manual") -> list[dict]:
-    """全库增量重算（受影响起算年向后）。返回每账户结果。"""
-    from sqlalchemy import select as _select
-    from app.model import LedgerEntry as _LE
-    acc_ids = session.execute(_select(_LE.account_id).distinct()).scalars().all()
-    out = []
-    for aid in acc_ids:
-        out.append(recompute_one(session, aid, from_year))
-    return out

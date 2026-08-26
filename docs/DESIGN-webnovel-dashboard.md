@@ -511,7 +511,8 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 ## 11. 文件变更流与回退
 
 ### 11.1 新增文件（数据调整员）
-1. 放入 `input_dir` → 运行 `python -m app.ingest.main`。
+1. 放入 `source_dir` → 运行 `python -m app.ingest.main ingest --env <env>`
+   （typer 必须带子命令；`--force` 跳过指纹 gate 重浇灌四类收益文件，issue #114）。
 2. detect → parse → normalize → 事务导入 → 增量重算 → notification。
 3. `source_file_version` 记录 `is_current` 的新版本。
 
@@ -610,9 +611,10 @@ class Importer(Protocol):
 - **视图资源**（多资源聚合）以 `/api/v1/overview`、`/api/v1/graph/{kind}`、`/api/v1/wealth`、`/api/v1/returns`、`/api/v1/finance` 提供，只读 GET。
 - **URL 版本段**：所有内部 API 一律以 **`/api/v1/`** 为前缀；后续不兼容演进发布 v2 时**并行运行 v1**（v1 进入维护期，仅修 bug、不加新端点），客户端可显式指定版本。
 - **写端点授权**：除 `timeline-events`（编年史，经覆盖层）与 `source-files/{id}/versions*`（diff 决策）外，其余**写端点**（创建/全量替换/局部更新/删除 `entities`、新增 `ledger-entries`、新增 `finance-entries` 等）**不面向普通 UI 用户**，仅供 importer / 数据调整员（受限通道，对齐 PRD §1.4 铁律）。普通 UI 对这类写端点的调用应由 serve 层拒绝（409/403）。
-  > **实现注记（issue #87-4）**：守卫 `app/api/deps.py:require_importer` 已实现（`X-Importer: 1` 放行，否则 403），
-  > 但**当前无任何写端点挂载**（现有写端点即四类 UI 派生通道 §19，天然放行）——授权矩阵处于「空转」状态，
-  > 无实际风险。待 P1-05 外部 importer 或任一类受限写端点上线时**强制挂载并补 403 测试**。
+  > **实现注记（issue #87-4 → 2026-08 审计批回写）**：守卫 `app/api/deps.py:require_importer`
+  > （`X-Importer: 1` 放行，否则 403）现挂载于 `app/api/restricted.py` 的 8 个受限写端点
+  > （entities 增改删 / relationships 建·删 / ledger-entries·finance-entries 新增），
+  > 403/放行双路测试见 `tests/test_restricted_guard.py`（issue #112）。
 
 ### 14.2 资源端点
 
@@ -640,7 +642,7 @@ class Importer(Protocol):
 | POST | `/api/v1/ledger-entries` | 新增流水（手工纠错用；受限通道） |
 | GET | `/api/v1/ledger-entries/{id}` | 详情 |
 | GET | `/api/v1/holding-events` | 股票持仓事件列表 |
-| GET | `/api/v1/return-curves` | 收益曲线列表（国家 × 风险级 × 年份） |
+| GET | `/api/v1/returns` | 收益曲线列表（国家 × 风险级 × 年份；视图资源命名从 §14.1） |
 | GET | `/api/v1/exchange-rates` | 汇率列表 |
 
 #### 时间线 / 编年史
@@ -844,13 +846,13 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | F-P0-05 | **Phase1 摄入** | 收益文件模块化挂账(income_stream)：租/经营性房/祖产债券/开店（薪资在 F-P0-06）｜因子外置 core/factors.py，源文件仅基桩值 (#69) | §6.5/§6.3 | ✅ |
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR｜家庭支出幂等同 #68 | §6.5/§6.6 | ✅ |
 | F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
-| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量已实现；§19.4 专款池在途净值口径经 `pool_in_transit` 加回（issue #85，entity/family 不凹陷），逐年完整覆盖随真实数据联调 | §8/§19.4 | 🟨 |
-| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算（账务本币/展示USD）｜接口已上线；年中日历拖动在途不凹陷（issue #85，align §19.4），前端曲线仅 Dashboard 单屏可见 | §7/§8/§19.4 | 🟨 |
+| F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量 + pool_in_transit(#85)；date 级按 issue #17 A′ 实时累加口径定稿（§21.5）；真实库联调通过 | §8/§19.4 | ✅ |
+| F-P0-09 | **财富曲线** | 账户/币种/公司/全家族合计 + USD 展示折算｜多序列对比前端落地（issue #124）、日历联动（#121）；总资产指标修正为 family:total 口径（#111） | §7/§8/§19.4 | ✅ |
 | F-P0-10 | **日历游标** | 全局日历 as-of 拖拽，全 App 联动（服务函数就绪，API 端点 F-P0-13） | §8 | ✅ |
 | F-P0-11 | **健康校验** | H1–H5 汇总 + 问题清单（health.py） | §10 | ✅ |
-| F-P0-12 | **增量重算** | 受影响起点向后传播（recompute.py）+ 提示｜register_job/notification 已接线，范围边界待核实 | §9 | 🟨 |
+| F-P0-12 | **增量重算** | 受影响起点向后传播 + 提示｜最小传播起点已实现（#120）；blocked 不连坐（#117）；通知附健康摘要（§9.2d）；timeline 编辑触发重建 | §9 | ✅ |
 | F-P0-13 | **API** | 基础路由（entities/accounts/ledger/returns/fx/snapshots/overview/wealth） | §14 | ✅ |
-| F-P0-14 | **前端骨架** | React+Vite 10 屏骨架 + 全局日历 + 财富曲线｜仅 Dashboard 单屏骨架，10 屏未全实现 | §1 | 🟨 |
+| F-P0-14 | **前端骨架** | React+Vite：15 个 tab——Dashboard/投资/划拨/收益/财务/加薪规则/电影事件/股票事件/人物·公司·全图谱/编年史/搜索/健康校验/导入状态 + 全局横幅（#122）；文件 diff 决策屏随 F-P2-06 | §1 | 🟨 |
 
 ### Phase 1 —— P1（完整产品）
 
@@ -881,3 +883,71 @@ UI 派生操作（投资创建/赎回、划拨换汇）的编年史同步为**�
 | F-P2-08 | **统一搜索增强** | 搜索数据质量达标后再评估是否需要 LLM 判文件兜底 | §18.5 | ⬜ |
 
 > 推进原则：先 P0 工程骨架打通 ingest→快照→曲线→健康；再 P1 各交互操作；Phase 2 事件/增强。跨 P0/P1 共用 §6.8 四类操作模板，避免重复实现。
+
+---
+
+## 21. 实现回写与口径定案（2026-08-26 审计修复批）
+
+> 本节为对照审计（issue #107–#132）后与实现同步的口径/决策回写；正文相应小节如与本节冲突，以本节为准。
+
+### 21.1 计算口径
+
+- **地区→收益曲线国家 = identity**（issue #113）：`app/core/regions.py` 单一权威。源 canon 只有 5 份
+  地区测算表，`return_curve.country ∈ {欧洲,英国,美国,香港,中国}`；旧字面量映射（欧洲→比利时等）
+  已废弃——曾致收益查询恒 None（投资 422、重算永不复利）。
+- **银行台账复利 = opt-in**（issue #113 定案 A）：仅 `entity.fields["compound"]=true` 的账户参与
+  §7.2 曲线×杠杆滚动；普通源台账（含自带收益明细行者）文件即权威、纯算术连续（PRD §6.10）。
+  覆盖钩子：`fields["return_region"]` / `fields["risk_lvl"]`。H4 经 `_rate_for_account_year`
+  同源取率：年内非末条算术连续、年末=年初结转×(1+rate)+净流入、空年照常复利。
+- **收益展开因子 A 口径「文件终值权威」**（issue #114）：调价在每年**年初**（含起租年 1974）、
+  年末结算入账 → `factor(1984)=1.07¹¹≈2.1049`、`factor(2007)≈5.2100`，与两份收益文件示例逐字一致；
+  income(1974)=基桩×1.07。重浇灌命令：`ingest --force`（仅四类收益文件，清旧派生行后重导）。
+- **链式折算已实现**（issue #115）：`usd_rate` 直连缺失时经 EUR 枢纽两跳连乘（腿支持反向倒数），
+  任一腿缺失仍返回 None（宁缺勿错不变）；闭合性由 H3/conflict 把关。
+- **fx 版本 gate + 权威 upsert**（issue #116）：汇率文件纳入指纹 gate；权威全量表内容变更 →
+  同键不同值 upsert 覆盖并记版；非权威文件维持冲突检测+insert-only。
+
+### 21.2 ingest 链路
+
+- **重算不连坐**（issue #117）：hard-block 文件不入库即可，批尾一律对已入库集合执行
+  重算+快照重建+通知；通知 reason 标注「部分：N 文件被拦」。
+- **最小传播起点**（issue #120）：ingest 按成功导入文件的最早影响年推导起点
+  （timeline/shop/bank/rent 取记录最小年；property 固定 1974；全局性类目 → 1947）。
+- **ingest_report 落库**（issue #118）：conflict 的 block/warn 与解析失败(error)持久化到
+  `ingest_report` 表；`GET /api/v1/ingest-reports` 供「导入状态」屏（issue #123）。
+- **date_rule 闭环**（issue #119）：`POST/GET/PUT/DELETE /api/v1/date-rules` 登记；
+  ingest 启动装载进 normalize 缓存；默认规则失配或年份带未识别残留文字时消费，
+  命中返回 `'date_rule:{id}'`。resolve 仅支持 `'MM-DD'` 字面。
+
+### 21.3 API 契约
+
+- **受限写通道已挂载**（见 §14.1 注记）；403 测试齐备。
+- **同步 UI 动作的有意偏离**（§14.1「不暴露动词/避免 RPC」的例外清单，全部为本地单机低频动作，
+  不建模异步 job）：`POST /investments/{id}/redeem`、`POST /demand-interest`、
+  `/movie-events/{id}/link|unlink`、`/stock-events/associate|buy|sell|dividend|passive-uplift`、
+  `/graph/companies/import`、`/labor-cost/compute`、timeline `overlay/restore|source-as-latest|merge`。
+- **契约细节补齐**（issue #127）：timeline-events 支持 `?as_of` 且 page/page_size Query 校验
+  （默认 50）；新增 PUT 全量替换；201 响应统一带 Location；entities 支持 `?status=`；
+  外部系统错误不透传上游状态码（凭据类→503，其余→502，detail 附 upstream HTTP 码）；
+  notifications PATCH 接受 `{"read_at":"now"}`。
+- **search 数值铁律落地**（issue #126 · §18.6）：财富意图+年份 → 快照 family:total 确定值注入装配；
+  serve 后置校验剔除携带未知数字的整句，全剔则回退「资料未提供相关确定性数值。」。
+
+### 21.4 健康校验（§10 表外补充）
+
+- H-STOCK：持仓 shares>0 缺 unit_price → warn；持仓引用不存在实体 → crit（F-P2-02）。
+- check_stock_h2：buy 源成本离群 warn / 同日 buy/sell 单价打架 crit（F-P2-04）。
+- 负余额 warn 子检查、汇率覆盖盲区 warn（issue #22 系）。
+- H4 实现口径见 §21.1（复利感知双层校验），非纯算术连续。
+
+### 21.5 数据模型补充（接 §5 实现超集）
+
+- 新增表：`labor_wage_benchmark`/`labor_cpi_growth`/`labor_tax_benchmark`（§13.3）、
+  `search_index`（pgvector 4096 维精确扫描，§18）、`movie_event`、`stock_event`、`ingest_report`。
+- 列增补：`holding_event.closed_on`（F-P2-03 结清标记）、`investment.redeemed_at`（#82 防重）、
+  `labor_cpi_growth.source_file`。
+- snapshot scope 实现为三段式 `entity:{id}:{currency}`（issue #12），DDL 注释的单段示例作废。
+- server_default 补齐：account.status / finance_entry.source / timeline_event.overlay /
+  investment.locked / investment_alloc.is_all（e3 迁移）。
+- date 级快照按 issue #17 方案 A′ 由 `calendar.snapshot_as_of` 对 ledger 实时累加，
+  不预计算落库（§8 相应段落以此为准）。

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -269,22 +270,30 @@ def import_income_shop(session: Session, records: list[dict]) -> dict:
     return stats
 
 
-def import_fx(session: Session, records: list[dict]) -> dict:
-    """汇率 → exchange_rate（幂等 on_conflict on (fx_from,fx_to,year) 近似）。"""
+def import_fx(session: Session, records: list[dict], update: bool = False) -> dict:
+    """汇率 → exchange_rate。
+
+    幂等：按 (fx_from,fx_to,year) 已存在则跳过（insert-only，默认）。
+    issue #116：update=True（权威全量表内容变更重导）时改为 upsert——
+    同键 rate 不同 → 覆盖更新并计数；缺失 → 插入。非权威文件仍走冲突检测+insert-only。
+    """
     from app.model import ExchangeRate
-    stats = {"n": 0}
+    stats = {"n": 0, "updated": 0}
     if not records:
         return stats
     for rec in records:
-        exists = session.execute(
-            select(ExchangeRate.id).where(
+        row = session.execute(
+            select(ExchangeRate).where(
                 ExchangeRate.fx_from == rec["fx_from"], ExchangeRate.fx_to == rec["fx_to"],
                 ExchangeRate.year == rec.get("year"))
         ).scalar_one_or_none()
-        if exists is None:
+        if row is None:
             session.add(ExchangeRate(fx_from=rec["fx_from"], fx_to=rec["fx_to"],
                                      year=rec.get("year"), rate=rec["rate"]))
             stats["n"] += 1
+        elif update and row.rate is not None and Decimal(str(row.rate)) != Decimal(str(rec["rate"])):
+            row.rate = rec["rate"]
+            stats["updated"] += 1
     return stats
 
 

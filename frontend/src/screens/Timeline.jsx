@@ -6,9 +6,11 @@ import { ErrorBox, Field } from './ui'
  * 编年史屏（F-P2-05 · §12/§6.4）：overlay 增改删 + 差异/重置回源/以源为最新。
  * 用户覆盖行可编辑；系统行（投资/划拨 overlay）只读；源行可发起覆盖编辑。
  */
-export default function Timeline() {
+export default function Timeline({ asOf }) {
   const [refresh, setRefresh] = useState(0)
-  const merged = useFetch(`/api/v1/timeline-events?page_size=500&refresh=${refresh}`)
+  // issue #121：全局日历游标接入（§14.2 ?as_of= 已发生事件）
+  const asOfQ = asOf ? `&as_of=${asOf}` : ''
+  const merged = useFetch(`/api/v1/timeline-events?page_size=500${asOfQ}&refresh=${refresh}`)
   const diff = useFetch(`/api/v1/timeline-events/overlay/diff?refresh=${refresh}`)
   const op = useDataOp(() => setRefresh(r => r + 1))
 

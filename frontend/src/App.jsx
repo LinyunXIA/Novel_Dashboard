@@ -13,6 +13,8 @@ import Stock from './screens/Stock'
 import Search from './screens/Search'
 import SourceDiff from './screens/SourceDiff'
 import Timeline from './screens/Timeline'
+import Health from './screens/Health'
+import ImportStatus from './screens/ImportStatus'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -30,6 +32,7 @@ const TABS = [
   { key: 'diff', label: '版本/diff' },
   { key: 'search', label: '搜索' },
   { key: 'health', label: '健康校验' },
+  { key: 'imports', label: '导入状态' },
 ]
 
 export default function App() {
@@ -57,6 +60,9 @@ export default function App() {
         <span className="mono">{asOf}</span>
       </div>
 
+      {/* issue #122：重算完成非阻断横幅（§9.3 / F-U3） */}
+      <NotificationsBanner />
+
       <nav className="nav">
         {TABS.map(t => (
           <button key={t.key} className={`tab ${active === t.key ? 'active' : ''}`}
@@ -66,23 +72,70 @@ export default function App() {
 
       <main className="screen">
         {active === 'dashboard' && <Dashboard asOf={asOf} />}
-        {active === 'invest' && <Invest />}
-        {active === 'transfer' && <Transfer />}
-        {active === 'returns' && <Returns />}
-        {active === 'finance' && <Finance />}
+        {/* issue #121：数据屏以 asOf 作 key——游标变动即重挂载重新拉取，全 App 联动 */}
+        {active === 'invest' && <Invest asOf={asOf} />}
+        {active === 'transfer' && <Transfer asOf={asOf} />}
+        {active === 'returns' && <Returns key={`r-${asOf}`} asOf={asOf} />}
+        {active === 'finance' && <Finance key={`f-${asOf}`} asOf={asOf} />}
         {active === 'labor' && <LaborCost />}
+        {active === 'movies' && <Movies />}
+        {active === 'stock' && <Stock />}
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
         {active === 'movies' && <Movies />}
         {active === 'stock' && <Stock />}
-        {active === 'search' && <Search />}
-        {active === 'timeline' && <Timeline />}
+        {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} />}
+        {active === 'search' && <Search asOf={asOf} />}
         {active === 'diff' && <SourceDiff />}
-        {active === 'health' && (
-          <Placeholder label={TABS.find(t => t.key === active).label} asOf={asOf} />
-        )}
+        {active === 'health' && <Health />}
+        {active === 'imports' && <ImportStatus />}
       </main>
+    </div>
+  )
+}
+
+/**
+ * 重算通知横幅（issue #122 · DESIGN §9.3 / PRD F-U3）：
+ * 轮询 GET /notifications（默认仅未读）→ recompute-done 弹非阻断横幅，
+ * 附 payload.health 摘要（issue #120）；「知道了」PATCH 标记已读。
+ */
+function NotificationsBanner() {
+  const [items, setItems] = useState([])
+
+  useEffect(() => {
+    let alive = true
+    const load = () => fetch('/api/v1/notifications')
+      .then(r => r.json())
+      .then(d => { if (alive) setItems((d.items || []).filter(n => !n.read_at)) })
+      .catch(() => {})
+    load()
+    const timer = setInterval(load, 15000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [])
+
+  if (!items.length) return null
+
+  const ack = (id) => fetch(`/api/v1/notifications/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ read_at: 'now' }),
+  }).finally(() => setItems(xs => xs.filter(x => x.id !== id)))
+
+  const healthText = (h) => {
+    if (!h) return ''
+    const bad = Object.entries(h).filter(([, v]) => v > 0)
+    return bad.length ? `健康：${bad.map(([k, v]) => `${k}:${v}`).join(' ')}` : '健康：全部 ✓'
+  }
+
+  return (
+    <div className="panel banner" role="status">
+      {items.map(n => (
+        <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span>🔔 {n.message}{healthText(n.payload?.health) && ` · ${healthText(n.payload.health)}`}</span>
+          <button className="ghost" onClick={() => ack(n.id)}>知道了</button>
+        </div>
+      ))}
     </div>
   )
 }
@@ -126,7 +179,7 @@ function Placeholder({ label, asOf }) {
   return (
     <div className="panel">
       <h3>{label}</h3>
-      <p className="note">「{label}」屏待后续：截至 {asOf}。搜索(F-P1-08)阻塞于本地 omlx 不可用。</p>
+      <p className="note">「{label}」屏待后续：截至 {asOf}。</p>
     </div>
   )
 }

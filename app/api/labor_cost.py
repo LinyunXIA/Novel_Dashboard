@@ -40,8 +40,11 @@ def compute(body: LaborCostIn, db: Session = Depends(get_db)):
         res = run_labor_cost(db, body.year, body.company_ids)
         db.commit()
     except httpx.HTTPStatusError as e:
-        status = e.response.status_code if e.response is not None else 502
-        raise HTTPException(status_code=status, detail=f"外部 API 请求失败（HTTP {status}）")
+        upstream = e.response.status_code if e.response is not None else None
+        # issue #127：上游状态码不透传；凭据/权限类 → 503，其余 → 502，detail 附上游码
+        mapped = 503 if upstream in (401, 403) else 502
+        raise HTTPException(status_code=mapped,
+                            detail=f"外部系统 API 错误（upstream HTTP {upstream}）")
     except (httpx.RequestError, httpx.TimeoutException):
         raise HTTPException(status_code=502, detail="无法连接外部系统 API（请确认其已启动且已导入公司 API①）")
     return res

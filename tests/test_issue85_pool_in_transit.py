@@ -48,7 +48,7 @@ def _seed(session, *, cash: float = 1000, cur: str = "BEF", fx_to_usd: float = 0
     session.add(LedgerEntry(account_id=a.id, date=date(1980, 1, 1),
                             inflow=cash, balance=cash, kind="income", reason="初始现金"))
     session.add(ExchangeRate(fx_from=cur, fx_to="USD", year=1980, rate=fx_to_usd))
-    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1980, rate=10.0))
+    session.add(ReturnCurve(country="欧洲", risk_lvl="R3", year=1980, rate=10.0))
     session.flush()
     return h, a
 

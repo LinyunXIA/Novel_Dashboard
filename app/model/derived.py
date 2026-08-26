@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
-    Integer, JSON, Numeric, String, Text, UniqueConstraint, func,
+    Integer, JSON, Numeric, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -98,7 +98,7 @@ class TimelineEvent(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     note: Mapped[Optional[str]] = mapped_column(Text)
     decade: Mapped[Optional[str]] = mapped_column(String)
-    overlay: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    overlay: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)   # issue #132
     source_file: Mapped[Optional[str]] = mapped_column(Text)
     source_line: Mapped[Optional[int]] = mapped_column(Integer)
     version_id: Mapped[Optional[int]] = mapped_column(BigInteger)
@@ -130,12 +130,38 @@ class UserDataOverlay(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class IngestReport(Base):
+    """导入前冲突检测 / 解析失败的持久化报告（issue #118 · §11.4）。
+
+    此前冲突命中仅 stdout echo，进程结束即失；落库后供「导入状态」屏
+    与数据调整员事后回看。level：block=硬拦截（文件未入库）/ warn=软警告
+    （入库但高亮）/ error=解析失败。
+    """
+    __tablename__ = "ingest_report"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False, comment="源相对路径")
+    rule: Mapped[Optional[str]] = mapped_column(Text, comment="规则名（H1/H2/H4/FX-AUTH…）；解析失败为 NULL")
+    level: Mapped[str] = mapped_column(String, nullable=False,
+                                       comment="block=硬拦截 / warn=软警告 / error=解析失败")
+    line: Mapped[Optional[int]] = mapped_column(Integer, comment="源文件行号")
+    detail: Mapped[str] = mapped_column(Text, nullable=False, comment="含新旧值对照的明细")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("level IN ('block','warn','error')", name="ck_ingest_report_level"),
+        Index("ix_ingest_report_level_created", "level", "created_at"),
+    )
+
+
 class Snapshot(Base):
     __tablename__ = "snapshot"
     __table_args__ = (
         Index("ix_snap_years", "as_of_year"),
-        Index("ux_snap_year", "as_of_year", "scope", unique=True, postgresql_where=(Text("as_of_date IS NULL"))),
-        Index("ux_snap_date", "as_of_date", "scope", unique=True, postgresql_where=(Text("as_of_date IS NOT NULL"))),
+        # issue #108：partial index WHERE 必须是 sa.text() SQL 子句；
+        # 误用类型构造器 Text() 会导致 create_all() 编译即崩（迁移侧写法正确，故 DB 未暴露）。
+        Index("ux_snap_year", "as_of_year", "scope", unique=True, postgresql_where=text("as_of_date IS NULL")),
+        Index("ux_snap_date", "as_of_date", "scope", unique=True, postgresql_where=text("as_of_date IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -203,7 +229,7 @@ class Investment(Base):
     region: Mapped[str] = mapped_column(String, nullable=False, comment="欧洲/英国/美国/香港/中国")
     risk_lvl: Mapped[str] = mapped_column(String, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    locked: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    locked: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     # issue #82：已赎回标记（防重 to 按笔而非按年；GET 据此暴露 redeemed 置灰）
     redeemed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -216,7 +242,7 @@ class InvestmentAlloc(Base):
     entity_id: Mapped[int] = mapped_column(ForeignKey("entity.id"), nullable=False)
     currency: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[float] = mapped_column(Numeric, nullable=False)
-    is_all: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_all: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     entity: Mapped["Entity"] = relationship()  # noqa: F821  (runtime imports resolve)
 

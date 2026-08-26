@@ -50,7 +50,7 @@ def _seed(session):
     session.flush()
     session.add(LedgerEntry(account_id=a.id, date=date(1974, 1, 1),
                             inflow=1000, balance=1000, kind="income"))
-    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1989, rate=10.0))
+    session.add(ReturnCurve(country="欧洲", risk_lvl="R3", year=1989, rate=10.0))
     session.add(ReturnCurve(country="英国", risk_lvl="R3", year=1989, rate=12.0))
     session.commit()
     return h.id

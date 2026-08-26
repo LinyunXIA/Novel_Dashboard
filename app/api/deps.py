@@ -35,3 +35,9 @@ def require_importer(x_importer: str | None = Header(default=None)) -> None:
             status_code=403,
             detail="该写端点仅供 importer/数据调整员受限通道，普通 UI 无权调用（§14.1）",
         )
+
+def apply_error(e: Exception):
+    """UI 派生业务错误 → HTTPException（422/409 per status；issue #132 收敛重复定义）。"""
+    from fastapi import HTTPException
+    status = getattr(e, "status", 422)
+    raise HTTPException(status_code=status, detail=getattr(e, "detail", str(e)))

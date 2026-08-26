@@ -45,7 +45,7 @@ def _seed(session, *, cash: float = 1000, cur: str = "BEF"):
     session.flush()
     session.add(LedgerEntry(account_id=a.id, date=date(1974, 1, 1),
                             inflow=cash, balance=cash, kind="income", reason="初始现金"))
-    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=1980, rate=10.0))
+    session.add(ReturnCurve(country="欧洲", risk_lvl="R3", year=1980, rate=10.0))
     session.flush()
     return h, a
 
@@ -149,7 +149,7 @@ def test_redeem_before_settlement_409(session):
     """审计修复：未到年末结算日（当年 12-30）不可赎回（409）。"""
     h, a = _seed(session, cash=1000)
     future = date.today().year + 10
-    session.add(ReturnCurve(country="比利时", risk_lvl="R3", year=future, rate=10.0))
+    session.add(ReturnCurve(country="欧洲", risk_lvl="R3", year=future, rate=10.0))
     session.flush()
     inv = create_investment(session, year=future, region="欧洲", risk_lvl="R3",
                             start_date=date(future, 6, 1),

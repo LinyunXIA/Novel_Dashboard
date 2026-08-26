@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.api.date_rules import router as date_rules_router
 from app.api.labor_cost import router as labor_cost_router
 from app.api.movie_events import router as movie_events_router
 from app.api.restricted import router as restricted_router
@@ -34,7 +35,8 @@ from app.core.graph import all_graph, company_graph, person_graph
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
 from app.model import (Account, Entity, ExchangeRate, FinanceEntry, IncomeStream,
-                       LedgerEntry, Notification, ReturnCurve, Snapshot, TimelineEvent)
+                       IngestReport, LedgerEntry, Notification, ReturnCurve, Snapshot,
+                       TimelineEvent)
 
 app = FastAPI(title="Novel Dashboard API", version="0.1")
 app.include_router(ui_ops_router)
@@ -45,6 +47,7 @@ app.include_router(timeline_router)
 app.include_router(source_files_router)
 app.include_router(search_router)
 app.include_router(restricted_router)
+app.include_router(date_rules_router)
 
 # issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
 # 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。
@@ -83,6 +86,7 @@ def health(db: Session = Depends(get_db)):
 @app.get(API_PREFIX + "/entities")
 def list_entities(
     type: Optional[str] = Query(None, description="person|company|asset|family"),
+    status: Optional[str] = Query(None, description="公司/实体状态过滤（§14.2，issue #127）"),
     page: int = Query(1, ge=1, description="页码，从 1 起"),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -90,6 +94,8 @@ def list_entities(
     q = select(Entity)
     if type:
         q = q.where(Entity.entity_type == type)
+    if status:
+        q = q.where(Entity.status == status)
     total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
     rows = db.execute(q.order_by(Entity.id).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     return {
@@ -364,8 +370,12 @@ def import_companies(db: Session = Depends(get_db)):
         stats = run_external_company_import(db)
         db.commit()
     except httpx.HTTPStatusError as e:
-        status = e.response.status_code if e.response is not None else 502
-        raise HTTPException(status_code=status, detail=f"外部 API 请求失败（HTTP {status}）")
+        upstream = e.response.status_code if e.response is not None else None
+        # issue #127：上游状态码不透传（避免与本系统资源语义混叠）；
+        # 凭据/权限类 → 503，其余 → 502，detail 附上游码供排查。
+        mapped = 503 if upstream in (401, 403) else 502
+        raise HTTPException(status_code=mapped,
+                            detail=f"外部系统 API 错误（upstream HTTP {upstream}）")
     except (httpx.RequestError, httpx.TimeoutException):
         raise HTTPException(status_code=502, detail="无法连接外部系统 API（请确认其已启动）")
     return {"stats": stats, "graph": company_graph(db)}
@@ -382,6 +392,27 @@ def graph_all(db: Session = Depends(get_db)):
 
 
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
+
+@app.get(API_PREFIX + "/ingest-reports")
+def list_ingest_reports(
+    level: Optional[str] = Query(None, description="block|warn|error"),
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """导入前冲突/解析失败报告（issue #118 落库 → issue #123「导入状态」屏数据源）。"""
+    q = select(IngestReport).order_by(IngestReport.created_at.desc(), IngestReport.id.desc())
+    if level:
+        q = q.where(IngestReport.level == level)
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {"items": [
+        {"id": r.id, "file": r.file_path, "rule": r.rule, "level": r.level,
+         "line": r.line, "detail": r.detail,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
+        for r in rows],
+        "total": total, "page": page, "page_size": page_size}
+
+
 @app.get(API_PREFIX + "/notifications")
 def list_notifications(unread_only: bool = True, limit: int = Query(20, le=200),
                        db: Session = Depends(get_db)):
@@ -398,15 +429,18 @@ def list_notifications(unread_only: bool = True, limit: int = Query(20, le=200),
 
 
 @app.patch(API_PREFIX + "/notifications/{notif_id}")
-def mark_notification_read(notif_id: int, db: Session = Depends(get_db)):
-    """标记通知已读（DESIGN API 表：PATCH /notifications/{id} → {read_at}）。"""
+def mark_notification_read(notif_id: int, body: Optional[dict] = None,
+                           db: Session = Depends(get_db)):
+    """标记通知已读（§14.2：PATCH /notifications/{id}，body={"read_at":"now"} 可选）。"""
     from datetime import datetime
+    if body is not None and "read_at" in body and body["read_at"] != "now":
+        raise HTTPException(status_code=422, detail='read_at 仅支持 "now"')
     n = db.get(Notification, notif_id)
     if not n:
         raise HTTPException(status_code=404, detail="notification not found")
     n.read_at = datetime.now()
     db.commit()
-    return {"id": n.id, "read": True}
+    return {"id": n.id, "read": True, "read_at": n.read_at.isoformat()}
 
 
 # ---------------- 总量概览 ----------------

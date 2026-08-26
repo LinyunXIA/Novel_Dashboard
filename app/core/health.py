@@ -95,11 +95,19 @@ def check_h3_fx_closure(session: Session) -> list[Finding]:
 
 
 def check_h4_balance_chain(session: Session) -> list[Finding]:
-    """H4 余额连续：ledger 按 account 排序，后一余额 = 前一 + 入 − 出。
+    """H4 余额连续（复利感知，DESIGN §10「复利/杠杆自洽」口径，issue #113 连锁修正）。
 
-    issue #22：从 i=0 起，首条 prev 视为 0（无前余额），单独校验
-    balance == inflow - outflow（不让首条失核逃逸）。
+    与 leverage.recompute_one 的年粒度滚动模型同构：
+    - 年内非末条分录：纯算术连续（后一 = 前一 + 入 − 出；recompute 不触碰这些行）；
+    - 每年最后一条分录：余额 = 年初结转 × (1 + rate_calc) + 该年净流入，
+      rate_calc 与 `_rate_for_account_year` 同源（地区×R级×杠杆）；
+      无收益率的年份退化为 累计 + 净流入。
+    - 首条前无结转 → 视 0（issue #22：不让首条失核逃逸）。
     """
+    from collections import defaultdict
+
+    from app.core.leverage import _rate_for_account_year
+
     finds: list[Finding] = []
     acct_ids = session.execute(select(func.distinct(LedgerEntry.account_id))).scalars().all()
     for aid in acct_ids:
@@ -107,19 +115,58 @@ def check_h4_balance_chain(session: Session) -> list[Finding]:
             select(LedgerEntry).where(LedgerEntry.account_id == aid)
             .order_by(LedgerEntry.date, LedgerEntry.id)
         ).scalars().all()
-        for i, cur in enumerate(entries):
-            prev_bal = 0 if i == 0 else (entries[i - 1].balance or 0)
-            if cur.balance is None:
+        if not entries:
+            continue
+        account = session.get(Account, aid)
+        cur_label = f"account#{aid}({account.currency if account else '?'})"
+
+        by_year: dict[int, list] = defaultdict(list)
+        for e in entries:
+            by_year[e.date.year].append(e)
+
+        carry = 0.0  # 年初结转（上一年的年末校验值）
+        # 按日历年全跨度迭代（含无分录的空年）：recompute 对空年同样复利
+        for y in range(min(by_year), max(by_year) + 1):
+            year_entries = by_year.get(y, [])
+            rate_row = _rate_for_account_year(session, account, y) if account else None
+            rate = float(rate_row) if rate_row is not None else None
+            net_in = sum(float(e.inflow or 0) - float(e.outflow or 0) for e in year_entries)
+
+            if year_entries:
+                # 年内非末条：源值算术连续（这些行不被 recompute 改写）；
+                # 首条基数为年初结转 carry（与上一年年末校验值衔接）
+                run_prev = carry
+                for e in year_entries[:-1]:
+                    if e.balance is None:
+                        continue
+                    expect = run_prev + float(e.inflow or 0) - float(e.outflow or 0)
+                    if abs(float(e.balance) - expect) > 0.01:
+                        finds.append(Finding(
+                            "H4", "crit", f"{cur_label} {e.date}",
+                            f"余额 {e.balance} ≠ 前{run_prev:.2f}+入{e.inflow}-出{e.outflow}={expect:.2f}"))
+                    run_prev = float(e.balance)
+
+            if not year_entries:
+                # 空年：仅滚动复利结转，无分录可核
+                if rate is not None:
+                    carry = carry * (1 + rate)
                 continue
-            expect = prev_bal + (cur.inflow or 0) - (cur.outflow or 0)
-            if abs(cur.balance - expect) > 0.005:
-                acc = session.get(Account, aid)
-                if i == 0:
-                    msg = f"首条余额 {cur.balance} ≠ 入{cur.inflow}-出{cur.outflow}={expect:.2f}"
-                else:
-                    msg = (f"余额 {cur.balance} ≠ 前{prev_bal}+入{cur.inflow}-出{cur.outflow}={expect:.2f}")
-                finds.append(Finding("H4", "crit",
-                                     f"account#{aid}({acc.currency if acc else '?'}) {cur.date}", msg))
+
+            last = year_entries[-1]
+            if last.balance is None:
+                continue
+            if rate is not None:
+                expect = carry * (1 + rate) + net_in
+                formula = f"{carry:.2f}×(1+{rate:.6f})+净流{net_in:.2f}"
+            else:
+                expect = carry + net_in
+                formula = f"{carry:.2f}+净流{net_in:.2f}"
+            if abs(float(last.balance) - expect) > 0.01:
+                msg = f"年末余额 {last.balance} ≠ {formula}={expect:.2f}"
+                if last is entries[0]:
+                    msg = f"首条余额 {last.balance} ≠ {formula}={expect:.2f}"
+                finds.append(Finding("H4", "crit", f"{cur_label} {last.date}", msg))
+            carry = float(last.balance)
     return finds
 
 

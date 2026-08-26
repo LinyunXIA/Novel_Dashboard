@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import CONFIG
@@ -32,4 +32,6 @@ class SearchIndex(Base):
     source_row_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(VectorCompat, nullable=True, comment="pgvector 向量（EMBED_DIM）")
-    updated_at: Mapped[Optional[datetime]] = mapped_column(server_default=func.now())
+    # issue #132：与其他表统一 TIMESTAMPTZ（原 TIMESTAMP 无时区）
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())

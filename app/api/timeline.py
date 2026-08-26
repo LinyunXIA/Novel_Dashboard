@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,9 +18,22 @@ from app.api.deps import get_db
 from app.core.overlay import (_is_user_overlay_row, create_overlay, delete_overlay,
                               diff_overlay, make_key, merge_overlay, restore_overlay,
                               source_as_latest, update_overlay)
+from app.core.recompute import record_recompute_done
+from app.core.snapshot import rebuild_snapshots
 from app.model import TimelineEvent
 
 router = APIRouter(prefix="/api/v1", tags=["timeline-events"])
+
+
+def _after_timeline_write(db: Session, start_year: int) -> None:
+    """§12/issue #120：overlay 变更 → 自条目年起重建快照 + recompute-done 通知。
+
+    时间线事件不参与余额链，但按 §12「merge 后触发增量重算（起点=条目年份）」
+    固化口径，保证派生视图与编年史游标一致。
+    """
+    rebuild_snapshots(db, from_year=start_year)
+    record_recompute_done(db, start_year, reason="timeline-overlay")
+    db.commit()
 
 
 class TimelineCreate(BaseModel):
@@ -60,15 +73,27 @@ def _row(t: TimelineEvent, *, overlay_status=None, editable=False, system=False,
 @router.get("/timeline-events")
 def list_timeline_events(
     year: Optional[int] = None, decade: Optional[str] = None,
-    page: int = 1, page_size: int = 200,
+    as_of: Optional[date] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    """编年史合并视图：按 (event_year, title) 每 key 恰一行——用户覆盖行优先，源行标 has_source。"""
+    """编年史合并视图：按 (event_year, title) 每 key 恰一行——用户覆盖行优先，源行标 has_source。
+
+    issue #127：page/page_size 加 Query 校验（page=0 曾致负 OFFSET → DB 500），
+    默认 page_size 对齐 §14.1 的 50；补文档承诺的 ?as_of（截至该日的已发生事件）。
+    """
     q = select(TimelineEvent).order_by(TimelineEvent.event_year, TimelineEvent.id)
     if year is not None:
         q = q.where(TimelineEvent.event_year == year)
     if decade:
         q = q.where(TimelineEvent.decade == decade)
+    if as_of is not None:
+        # 已发生：有具体日期的按日期；仅年份粒度的按年 ≤ as_of 年
+        from sqlalchemy import or_
+        q = q.where(or_(
+            TimelineEvent.event_date <= as_of,
+            (TimelineEvent.event_date.is_(None)) & (TimelineEvent.event_year <= as_of.year),
+        ))
     rows = db.execute(q).scalars().all()
     diff = {d["key"]: d["status"] for d in diff_overlay(db)}
 
@@ -118,10 +143,12 @@ def get_timeline_event(event_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/timeline-events", status_code=201)
-def post_timeline(body: TimelineCreate, db: Session = Depends(get_db)):
+def post_timeline(body: TimelineCreate, response: Response,
+                  db: Session = Depends(get_db)):
     r = create_overlay(db, event_year=body.event_year, event_date=body.event_date,
                        title=body.title, note=body.note, decade=body.decade)
     db.commit()
+    _after_timeline_write(db, body.event_year)
     return r
 
 
@@ -135,15 +162,34 @@ def patch_timeline(event_id: int, body: TimelinePatch, db: Session = Depends(get
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     db.commit()
+    _after_timeline_write(db, (body.event_year or t.event_year))
     return r
+
+
+@router.put("/timeline-events/{event_id}")
+def put_timeline(event_id: int, body: TimelineCreate, db: Session = Depends(get_db)):
+    """全量替换（§14.2，issue #127）：仅用户覆盖行；未提供字段清空。
+
+    以 删旧覆盖+重建 实现真全量语义（update_overlay 是 None=保留 的部分更新）。
+    """
+    t = _guard_user_overlay(db, event_id)
+    old_key = make_key(t.event_year, t.title)
+    delete_overlay(db, old_key)
+    r2 = create_overlay(db, event_year=body.event_year, event_date=body.event_date,
+                        title=body.title, note=body.note, decade=body.decade)
+    db.commit()
+    _after_timeline_write(db, body.event_year)
+    return r2
 
 
 @router.delete("/timeline-events/{event_id}")
 def delete_timeline(event_id: int, db: Session = Depends(get_db)):
     t = _guard_user_overlay(db, event_id)
+    year = t.event_year
     key = make_key(t.event_year, t.title)
     r = delete_overlay(db, key)
     db.commit()
+    _after_timeline_write(db, year)
     return {**r, "source_preserved": r["source_preserved"]}
 
 

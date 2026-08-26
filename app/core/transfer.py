@@ -160,15 +160,17 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
 
     session.add(LedgerEntry(
         account_id=source.id, date=at_date, reason=reason_src,
-        outflow=amt, kind=None, note=f"UI {op}·源",     ))
+        outflow=amt, kind=None, note=f"UI 转移·{op}·源",     ))
     session.add(LedgerEntry(
         account_id=target.id, date=at_date, reason=reason_tgt,
-        inflow=target_amount, kind=None, note=f"UI {op}·目标",     ))
+        inflow=target_amount, kind=None, note=f"UI 转移·{op}·目标",     ))
     session.add(TimelineEvent(
         event_year=year, event_date=at_date,
         title=f"{op} {amt} {source.currency} → {target_amount} {target.currency}",
-        note=f"源 #{source.entity_id} → 目标 #{target_entity_id}"
-             if not same_currency else f"划拨 源 #{source.entity_id} → 目标 #{target_entity_id}",
+        note=(f"源 #{source.entity_id} → 目标 #{target_entity_id}"
+              if not same_currency else
+              f"划拨 源 #{source.entity_id} → 目标 #{target_entity_id}")
+             + "（UI 转移）",   # issue #132：统一 §19 定位标签为「UI 转移」前缀
         decade=f"{year // 10 * 10}s", overlay=True,     ))
     return {
         "operation": op, "source_account_id": source.id, "target_account_id": target.id,

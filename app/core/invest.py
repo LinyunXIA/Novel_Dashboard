@@ -34,22 +34,10 @@ from app.model import (
 )
 from app.model.types import SourceKind
 
-# 区域 → 收益曲线国家（return_curve.country）映射（DESIGN §19.1）
-REGION_COUNTRY = {
-    "欧洲": "比利时",
-    "英国": "英国",
-    "美国": "美国",
-    "香港": "中国香港",
-    "中国": "中国大陆",
-}
-# 区域起始年下限（DESIGN §19.3）：UI 选项下限 + serve 校验（422）
-REGION_START_YEAR = {
-    "欧洲": 1947,
-    "英国": 1983,
-    "美国": 1989,
-    "香港": 1999,
-    "中国": 2002,
-}
+# 区域 → 收益曲线国家（return_curve.country）映射 + 起始年下限
+# issue #113：收敛到 app/core/regions.py 单一定义；旧字面量（欧洲→比利时等）
+# 指向 return_curve 中不存在的国家名，真实数据下收益查询恒 422/None。
+from app.core.regions import REGION_COUNTRY, REGION_START_YEAR  # noqa: E402
 
 _ZERO = Decimal(0)
 

@@ -42,6 +42,8 @@ class LaborCpiGrowth(Base):
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     wage_growth_pct: Mapped[Optional[float]] = mapped_column(Numeric, comment="名义工资同比增幅%")
     cpi_pct: Mapped[Optional[float]] = mapped_column(Numeric, comment="CPI 同比通胀%")
+    # issue #132：补 source_file（另两张 labor 基准表均有，溯源口径一致）
+    source_file: Mapped[Optional[str]] = mapped_column(String, comment="来源基准文件")
 
 
 class LaborTaxBenchmark(Base):
