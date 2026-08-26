@@ -60,8 +60,8 @@ export default function App() {
         <span className="mono">{asOf}</span>
       </div>
 
-      {/* issue #122：重算完成非阻断横幅（§9.3 / F-U3） */}
-      <NotificationsBanner />
+      {/* issue #122/#140：重算完成非阻断横幅（§9.3 / F-U3），含「查看影响」入口 */}
+      <NotificationsBanner onShowImpact={() => setActive('health')} />
 
       <nav className="nav">
         {TABS.map(t => (
@@ -96,11 +96,13 @@ export default function App() {
 }
 
 /**
- * 重算通知横幅（issue #122 · DESIGN §9.3 / PRD F-U3）：
+ * 重算通知横幅（issue #122/#140 · DESIGN §9.3 / PRD F-U3）：
  * 轮询 GET /notifications（默认仅未读）→ recompute-done 弹非阻断横幅，
- * 附 payload.health 摘要（issue #120）；「知道了」PATCH 标记已读。
+ * 附 payload.health 摘要（#120）+「查看影响」按钮（跳健康校验屏，§9.3）
+ * + crit 优先的 findings 预览（#140，payload.health_findings）；
+ * 「知道了」PATCH 标记已读。
  */
-function NotificationsBanner() {
+function NotificationsBanner({ onShowImpact }) {
   const [items, setItems] = useState([])
 
   useEffect(() => {
@@ -130,12 +132,26 @@ function NotificationsBanner() {
 
   return (
     <div className="panel banner" role="status">
-      {items.map(n => (
-        <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span>🔔 {n.message}{healthText(n.payload?.health) && ` · ${healthText(n.payload.health)}`}</span>
-          <button className="ghost" onClick={() => ack(n.id)}>知道了</button>
-        </div>
-      ))}
+      {items.map(n => {
+        const findings = n.payload?.health_findings || []
+        const total = n.payload?.health_findings_total ?? findings.length
+        return (
+          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span>🔔 {n.message}{healthText(n.payload?.health) && ` · ${healthText(n.payload.health)}`}</span>
+            <button className="ghost" onClick={() => onShowImpact?.()}>查看影响</button>
+            <button className="ghost" onClick={() => ack(n.id)}>知道了</button>
+            {!!findings.length && (
+              <details style={{ width: '100%' }}>
+                <summary className="note">受影响明细（前 {findings.length} / 共 {total}）</summary>
+                <pre className="mono" style={{ maxHeight: 200, overflow: 'auto', background: '#fff' }}>
+                  {findings.map((f, i) =>
+                    `[${f.rule}/${f.level}] ${f.location}: ${f.detail}`).join('\n')}
+                </pre>
+              </details>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

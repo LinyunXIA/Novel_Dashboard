@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.api.date_rules import router as date_rules_router
+from app.api.jobs import router as jobs_router
 from app.api.labor_cost import router as labor_cost_router
 from app.api.movie_events import router as movie_events_router
 from app.api.restricted import router as restricted_router
@@ -48,6 +49,7 @@ app.include_router(source_files_router)
 app.include_router(search_router)
 app.include_router(restricted_router)
 app.include_router(date_rules_router)
+app.include_router(jobs_router)   # issue #138：异步 job 资源（import-jobs / recompute-jobs）
 
 # issue #30：dist 直连部署时前端跨域失败；PRD §13 本地单机非安全边界，
 # 仅放行 vite dev server 默认端口（5173）的两个本地来源，不允许 * 通配。
@@ -206,7 +208,8 @@ def snapshots(
 
 # ---------------- 财富曲线 ----------------
 @app.get(API_PREFIX + "/wealth")
-def wealth(year_from: int = 1947, year_to: int = 2025, db: Session = Depends(get_db)):
+def wealth(year_from: int = 1947, year_to: int = None, db: Session = Depends(get_db)):
+    """issue #141：year_to 缺省跟随 config 日历上限。"""
     return wealth_series(db, year_from, year_to)
 
 

@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import apply_error, get_db
+from app.config import CALENDAR_MAX_YEAR as _YEAR_MAX  # issue #141
 from app.core.snapshot import rebuild_snapshots
 from app.core.stock_cost import (
     apply_buy, apply_dividend, apply_passive_uplift, apply_sell,
@@ -40,7 +41,7 @@ class AssociateIn(BaseModel):
 class StockActionIn(BaseModel):
     entity_id: int
     company: str
-    date: _date = Field(ge=_date(1947, 1, 1), le=_date(2026, 12, 31))
+    date: _date = Field(ge=_date(1947, 1, 1), le=_date(_YEAR_MAX, 12, 31))
     account_id: Optional[int] = None
     ticker: Optional[str] = None
     unit_price: Optional[float] = None

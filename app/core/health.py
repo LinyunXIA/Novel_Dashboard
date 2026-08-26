@@ -5,6 +5,7 @@ run_report(session) -> list[dict]，每条 = {rule, level, location, detail}。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -28,32 +29,40 @@ class Finding:
         return {"rule": self.rule, "level": self.level, "location": self.location, "detail": self.detail}
 
 
-def check_h1_timeline_alignment(session: Session) -> list[Finding]:
-    """H1 时间线对齐：timeline_event 年份 vs income_stream/return_curve 相关年份差异。"""
+def check_h1_timeline_alignment(session: Session, from_year: int | None = None) -> list[Finding]:
+    """H1 时间线对齐：timeline_event 年份 vs income_stream/return_curve 相关年份差异。
+
+    from_year（issue #140 · §9.2d 范围化）：仅检查该年及以后的时间线条目。
+    """
     finds: list[Finding] = []
     # 时间线事件年份集合 vs income_stream 年份范围：时间线有事件而该年无任何收益流 → warn（可能缺财务）
     income_years = set(session.execute(select(func.distinct(IncomeStream.year))).scalars().all())
-    tl_events = session.execute(select(TimelineEvent.event_year, TimelineEvent.title)).all()
-    for year, title in tl_events:
+    tl_rows = session.execute(select(TimelineEvent.event_year, TimelineEvent.title)).all()
+    for year, title in tl_rows:
+        if from_year is not None and year < from_year:
+            continue
         if income_years and year not in income_years:
             finds.append(Finding("H1", "warn", f"时间线 {year}「{title}」", "该年无对应收益流，可能未对齐"))
     return finds
 
 
-def check_h2_amount_consistency(session: Session) -> list[Finding]:
+def check_h2_amount_consistency(session: Session, from_year: int | None = None) -> list[Finding]:
     """H2 金额一致：income_stream 同 (entity, stream_type, label名, money year) 多来源金额不一致。
 
     用 label（含具体标的，如具体债券名）作为同类唯一键；同 label 同 year 唯一金额，多来源≠才是冲突。
+    from_year（issue #140）：仅统计该年及以后。
     """
     finds: list[Finding] = []
+    q = select(
+        IncomeStream.entity_id, IncomeStream.stream_type, IncomeStream.label,
+        IncomeStream.group_key, IncomeStream.currency, IncomeStream.year,
+        func.count(), func.min(IncomeStream.amount), func.max(IncomeStream.amount),
+    ).group_by(IncomeStream.entity_id, IncomeStream.stream_type, IncomeStream.label,
+               IncomeStream.group_key, IncomeStream.currency, IncomeStream.year)
+    if from_year is not None:
+        q = q.where(IncomeStream.year >= from_year)
     rows = session.execute(
-        select(
-            IncomeStream.entity_id, IncomeStream.stream_type, IncomeStream.label,
-            IncomeStream.group_key, IncomeStream.currency, IncomeStream.year,
-            func.count(), func.min(IncomeStream.amount), func.max(IncomeStream.amount),
-        ).group_by(IncomeStream.entity_id, IncomeStream.stream_type, IncomeStream.label,
-                   IncomeStream.group_key, IncomeStream.currency, IncomeStream.year)
-        .having(func.count() > 1, func.min(IncomeStream.amount) != func.max(IncomeStream.amount))
+        q.having(func.count() > 1, func.min(IncomeStream.amount) != func.max(IncomeStream.amount))
     ).all()
     for eid, st, label, gk, cur, year, cnt, mn, mx in rows:
         ent = session.get(Entity, eid)
@@ -94,7 +103,7 @@ def check_h3_fx_closure(session: Session) -> list[Finding]:
     return finds
 
 
-def check_h4_balance_chain(session: Session) -> list[Finding]:
+def check_h4_balance_chain(session: Session, from_year: int | None = None) -> list[Finding]:
     """H4 余额连续（复利感知，DESIGN §10「复利/杠杆自洽」口径，issue #113 连锁修正）。
 
     与 leverage.recompute_one 的年粒度滚动模型同构：
@@ -103,6 +112,8 @@ def check_h4_balance_chain(session: Session) -> list[Finding]:
       rate_calc 与 `_rate_for_account_year` 同源（地区×R级×杠杆）；
       无收益率的年份退化为 累计 + 净流入。
     - 首条前无结转 → 视 0（issue #22：不让首条失核逃逸）。
+    - from_year（issue #140 · §9.2d 范围化）：结转仍从全史滚出（保证口径一致），
+      但只报告该年及以后的失核。
     """
     from collections import defaultdict
 
@@ -137,6 +148,8 @@ def check_h4_balance_chain(session: Session) -> list[Finding]:
                 # 首条基数为年初结转 carry（与上一年年末校验值衔接）
                 run_prev = carry
                 for e in year_entries[:-1]:
+                    if from_year is not None and e.date.year < from_year:
+                        continue
                     if e.balance is None:
                         continue
                     expect = run_prev + float(e.inflow or 0) - float(e.outflow or 0)
@@ -161,7 +174,8 @@ def check_h4_balance_chain(session: Session) -> list[Finding]:
             else:
                 expect = carry + net_in
                 formula = f"{carry:.2f}+净流{net_in:.2f}"
-            if abs(float(last.balance) - expect) > 0.01:
+            if abs(float(last.balance) - expect) > 0.01 and (
+                    from_year is None or y >= from_year):
                 msg = f"年末余额 {last.balance} ≠ {formula}={expect:.2f}"
                 if last is entries[0]:
                     msg = f"首条余额 {last.balance} ≠ {formula}={expect:.2f}"
@@ -170,18 +184,20 @@ def check_h4_balance_chain(session: Session) -> list[Finding]:
     return finds
 
 
-def check_negative_balance(session: Session) -> list[Finding]:
+def check_negative_balance(session: Session, from_year: int | None = None) -> list[Finding]:
     """issue #22：负余额检查。账户余额为负数极可能是计算错误（DESIGN 数值纪律要求
     账户余额非负；个别场景如短贷可豁免但需 source 注释）。
 
     仅在 balance 列有非 None 值时检查。报 warn（不阻断重算，便于人工复核）。
+    from_year（issue #140）：仅检查该年 1 月 1 日起的余额行。
     """
     finds: list[Finding] = []
+    q = select(LedgerEntry.account_id, LedgerEntry.date, LedgerEntry.balance).where(
+        LedgerEntry.balance < 0)
+    if from_year is not None:
+        q = q.where(LedgerEntry.date >= date(from_year, 1, 1))
     neg_rows = session.execute(
-        select(LedgerEntry.account_id, LedgerEntry.date, LedgerEntry.balance)
-        .where(LedgerEntry.balance < 0)
-        .order_by(LedgerEntry.account_id, LedgerEntry.date)
-    ).all()
+        q.order_by(LedgerEntry.account_id, LedgerEntry.date)).all()
     for aid, dt, bal in neg_rows:
         acc = session.get(Account, aid)
         finds.append(Finding("H4", "warn",
@@ -293,24 +309,28 @@ def check_stock_h2(session: Session) -> list[Finding]:
     return finds
 
 
-def run_report(session: Session) -> list[dict]:
-    """全库健康校验汇总：H1..H5 + H-STOCK。"""
+def run_report(session: Session, from_year: int | None = None) -> list[dict]:
+    """全库健康校验汇总：H1..H5 + H-STOCK。
+
+    from_year（issue #140 · §9.2d）：范围限定——H1/H2/H4/负余额只报告该年及以后；
+    H3/H5/H-STOCK 为全局完整性规则（廉价且天然全局），不受影响。
+    """
     all_finds: list[Finding] = []
-    all_finds += check_h1_timeline_alignment(session)
-    all_finds += check_h2_amount_consistency(session)
+    all_finds += check_h1_timeline_alignment(session, from_year)
+    all_finds += check_h2_amount_consistency(session, from_year)
     all_finds += check_fx_coverage(session)
     all_finds += check_h3_fx_closure(session)
-    all_finds += check_negative_balance(session)
-    all_finds += check_h4_balance_chain(session)
+    all_finds += check_negative_balance(session, from_year)
+    all_finds += check_h4_balance_chain(session, from_year)
     all_finds += check_h5_dangling(session)
     all_finds += check_holding_value(session)
     all_finds += check_stock_h2(session)
     return [f.as_dict() for f in all_finds]
 
 
-def summarize(session: Session) -> dict:
-    """返回每规则计数（供 overview 汇总）。"""
-    report = run_report(session)
+def summarize(session: Session, from_year: int | None = None) -> dict:
+    """返回每规则计数（供 overview 汇总；from_year 语义同 run_report）。"""
+    report = run_report(session, from_year)
     # issue #23 / API 健康视图：预填 H1..H5 即使 0 也有键，前端可稳定读 summary['H1']
     summary: dict[str, dict] = {rule: {"total": 0, "warn": 0, "crit": 0}
                                 for rule in ("H1", "H2", "H3", "H4", "H5", "H-STOCK")}

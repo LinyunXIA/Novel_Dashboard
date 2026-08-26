@@ -73,5 +73,6 @@ def snapshot_as_of(session: Session, as_of_date: date) -> list[dict]:
 
 
 def default_calendar_bounds() -> tuple[int, int]:
-    """日历年范围（DESIGN：1947 最早 – 2026 最晚）。"""
-    return 1947, 2026
+    """日历年范围（issue #141：收敛自 app.config，DESIGN §6.2 的 1947–最晚年）。"""
+    from app.config import CALENDAR_MIN_YEAR, CALENDAR_MAX_YEAR
+    return CALENDAR_MIN_YEAR, CALENDAR_MAX_YEAR

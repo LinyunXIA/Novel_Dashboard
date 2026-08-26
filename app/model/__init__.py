@@ -7,9 +7,9 @@ from app.model.core import (
     Account, Entity, FinanceEntry, HoldingEvent, IncomeStream, InitialAsset, LedgerEntry,
 )
 from app.model.derived import (
-    DateRule, ExchangeRate, IngestReport, Investment, InvestmentAlloc, Notification,
-    RecomputeJob, Relationship, ReturnCurve, Snapshot, SourceFileVersion, TimelineEvent,
-    UserDataOverlay,
+    DateRule, ExchangeRate, ImportJob, IngestReport, Investment, InvestmentAlloc,
+    Notification, RecomputeJob, Relationship, ReturnCurve, Snapshot,
+    SourceFileVersion, TimelineEvent, UserDataOverlay,
 )
 from app.model.labor import LaborCpiGrowth, LaborTaxBenchmark, LaborWageBenchmark
 from app.model.movie_event import MovieEvent
@@ -22,6 +22,7 @@ __all__ = [
     "FinanceEntry", "HoldingEvent",
     "ReturnCurve", "ExchangeRate", "DateRule", "TimelineEvent", "Relationship",
     "UserDataOverlay", "Snapshot", "SourceFileVersion", "RecomputeJob", "Notification",
+    "ImportJob",
     "Investment", "InvestmentAlloc",
     "LaborWageBenchmark", "LaborCpiGrowth", "LaborTaxBenchmark",
     "MovieEvent", "StockEvent", "SearchIndex",

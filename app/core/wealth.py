@@ -68,12 +68,17 @@ def family_total_usd(session: Session, year: int) -> dict:
             "missing_rates": missing}
 
 
-def wealth_series(session: Session, year_from: int = 1947, year_to: int = 2025) -> dict:
+def wealth_series(session: Session, year_from: int = 1947,
+                  year_to: int | None = None) -> dict:
     """逐年 {year: {family_total_usd, accounts, currencies, missing_rates}}。
 
     issue #12：family_total_usd 直接读 family:total 快照（O(1)），
     accounts/currencies 仍按 account:* 快照聚合。missing_rates 从 account:* 快照反推。
+    year_to 缺省 = config 日历上限（issue #141，不再写死 2025）。
     """
+    if year_to is None:
+        from app.config import CALENDAR_MAX_YEAR
+        year_to = CALENDAR_MAX_YEAR
     out: dict[int, dict] = {}
     # 一次性把所有年份的快照取回来（避免逐 year 多次查询）
     all_snaps = session.execute(

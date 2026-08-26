@@ -130,10 +130,11 @@ def _usd_rate(session: Session, currency: str, year: int) -> Decimal | None:
     return usd_rate(session, currency, year)
 
 
-def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
+def rebuild_snapshots(session: Session, years: range = None,
                       from_year: int | None = None) -> dict:
     """重建逐年账户/实体/家族三层快照。
 
+    years 缺省 = config.calendar_years()（issue #141：上限不再写死 2025/2026）；
     from_year=None → 全量重建（1947 起）；
     from_year=N    → 仅重建 [N, end] 年；旧 [1947, N-1] 快照保留（§9.2c 增量）。
 
@@ -142,6 +143,9 @@ def rebuild_snapshots(session: Session, years: range = range(1947, 2026),
 
     返回 {"snapshots": 行数, "accounts": 账户数, "entities": 实体数, "family_years": 家族快照年数}
     """
+    if years is None:
+        from app.config import calendar_years
+        years = calendar_years()
     stats = {"snapshots": 0, "accounts": 0, "entities": 0, "family_years": 0}
     years_list = list(years)
     if not years_list:
