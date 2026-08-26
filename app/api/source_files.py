@@ -63,12 +63,18 @@ def adopt_new_version(vid: int, db: Session = Depends(get_db)):
 
 @router.post("/source-files/{vid}/versions/{v2}/restore")
 def restore_version(vid: int, v2: int, db: Session = Depends(get_db)):
-    """回退到指定版本：复原 source_dir 磁盘文件 + 该版本置 is_current。"""
+    """回退到指定版本：复原 source_dir 磁盘文件 + 该版本置 is_current。
+
+    issue #139：磁盘内容已偏离当前生效版 → 409（前端引导刷新 diff 重决策）。
+    """
     rel = _rel(db, vid)
     try:
         r = versioning.restore_version(db, get_config(), rel, v2)
         db.commit()
         return r
+    except versioning.RestoreConflict as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=e.detail)
     except KeyError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))

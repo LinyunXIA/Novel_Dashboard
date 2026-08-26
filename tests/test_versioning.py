@@ -111,6 +111,37 @@ def test_restore_path_traversal_rejected(db, tmp_path):
     assert not (tmp_path.parent / "escape.md").exists()   # 未写越权
 
 
+def test_restore_blocked_when_disk_diverged_from_current(db, src):
+    """issue #139：磁盘内容已偏离当前生效版 → RestoreConflict，绝不无提示覆盖。"""
+    cfg, tmp = src
+    _seed_version(db, content="OLD v1\n", version=1, current=False)
+    _seed_version(db, content="NEW v2\n", version=2, current=True)
+    (tmp / "a.md").write_text("NEW v2\n", encoding="utf-8")
+    old = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.version == 1)).scalar_one()
+    # 数据调整员在决策期间又手改了磁盘
+    (tmp / "a.md").write_text("THIRD-PARTY EDIT\n", encoding="utf-8")
+    with pytest.raises(versioning.RestoreConflict):
+        restore_version(db, cfg, "a.md", old.id)
+    assert (tmp / "a.md").read_text(encoding="utf-8") == "THIRD-PARTY EDIT\n"   # 未被覆盖
+    v1 = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.version == 1)).scalar_one()
+    assert v1.is_current is False                        # 版本状态未变
+
+
+def test_restore_allowed_when_disk_matches_current(db, src):
+    """issue #139：磁盘与当前版一致（正常回退场景）→ 照常复原。"""
+    cfg, tmp = src
+    _seed_version(db, content="OLD v1\n", version=1, current=False)
+    _seed_version(db, content="NEW v2\n", version=2, current=True)
+    (tmp / "a.md").write_text("NEW v2\n", encoding="utf-8")
+    old = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.version == 1)).scalar_one()
+    r = restore_version(db, cfg, "a.md", old.id)
+    assert r["status"] == "restored"
+    assert (tmp / "a.md").read_text(encoding="utf-8") == "OLD v1\n"
+
+
 def test_adopt_wires_force_import_and_notifies(db, src, monkeypatch):
     cfg, _ = src
     _seed_version(db, content="OLD\n", version=1, current=True)

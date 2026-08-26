@@ -17,13 +17,14 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import CALENDAR_MAX_YEAR
 from app.core.invest import ValidationError
 from app.model import (
     Account, ExchangeRate, LedgerEntry, TimelineEvent,
 )
 
 _ZERO = Decimal(0)
-_MAX_YEAR = 2026  # DESIGN 日历年上限
+_MAX_YEAR = CALENDAR_MAX_YEAR  # issue #141：日历年上限收敛 config 单一来源
 
 
 def primary_account(session: Session, entity_id: int, currency: str) -> Optional[Account]:

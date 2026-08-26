@@ -12,6 +12,21 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# ---- 日历年区间单一来源（issue #141 · DESIGN §6.2）----
+# 此前 2026/2025 上限散落 leverage/transfer/ui_ops/snapshot/main 等十余处，
+# 时间进入上限年即静默停滚。收敛为 config 常量：MIN=1947（最早数据年，固定）；
+# MAX 取 max(2026, 当前年+1) 动态留一年余量（随进程启动日期推进，无需跟版本赛跑）。
+# 各处滚动/重建/校验统一用 range(CALENDAR_MIN_YEAR, CALENDAR_MAX_YEAR + 1)。
+import datetime as _dt
+
+CALENDAR_MIN_YEAR = 1947
+CALENDAR_MAX_YEAR = max(2026, _dt.date.today().year + 1)
+
+
+def calendar_years() -> range:
+    """全日历覆盖区间（含端点），供快照重建/滚动等使用。"""
+    return range(CALENDAR_MIN_YEAR, CALENDAR_MAX_YEAR + 1)
+
 
 def _env_str(key: str, default: str) -> str:
     """LLM 配置环境变量覆盖（DESIGN §18.5）；未设时用缺省值。"""

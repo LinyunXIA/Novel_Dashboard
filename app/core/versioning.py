@@ -27,6 +27,14 @@ from app.model import Notification, SourceFileVersion
 _HASH_RE = re.compile(r"[^0-9a-zA-Z]")
 
 
+class RestoreConflict(Exception):
+    """issue #139：回退前置校验失败——磁盘内容已偏离当前版本，拒绝覆盖（API→409）。"""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
 def _fingerprint(content: str) -> str:
     """内容指纹（与 ingest main._content_fingerprint 同构：归一化空白后）。"""
     return _HASH_RE.sub("", (content or "").strip())
@@ -154,11 +162,28 @@ def _atomic_write(path: Path, content: str):
 
 
 def restore_version(db: Session, config, rel: str, version_id: int) -> dict:
-    """回退到指定版本：写盘复原 source_dir 文件 + 该版本置 is_current（旧失活）+ notification。"""
+    """回退到指定版本：写盘复原 source_dir 文件 + 该版本置 is_current（旧失活）+ notification。
+
+    issue #139 前置校验（§11.3「仍为『待回退』版本」）：写盘前核对磁盘现内容与
+    当前生效版（is_current）一致；已偏离（数据调整员在 diff 决策期间又手改过）→
+    RestoreConflict，绝不无提示覆盖第三方改动。
+    """
     v = db.get(SourceFileVersion, version_id)
     if v is None or v.file_path != rel:
         raise KeyError(f"版本不存在或不属于该文件: {rel}#{version_id}")
     target = _safe_target(config.source_dir, rel)
+    cur = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.file_path == rel,
+        SourceFileVersion.is_current.is_(True))).scalar_one_or_none()
+    if cur is not None and target.exists():
+        try:
+            disk = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            disk = None
+        if disk is None or _fingerprint(disk) != _fingerprint(cur.content or ""):
+            raise RestoreConflict(
+                f"{rel}: 磁盘内容已偏离当前版本 v{cur.version}"
+                f"{'（读取失败）' if disk is None else ''}；请刷新 diff 确认后再决策")
     _atomic_write(target, v.content or "")
     for row in db.execute(select(SourceFileVersion).where(
             SourceFileVersion.file_path == rel)).scalars().all():

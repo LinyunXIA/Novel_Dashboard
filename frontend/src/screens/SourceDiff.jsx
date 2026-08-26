@@ -12,7 +12,9 @@ export default function SourceDiff() {
   const files = useFetch(`/api/v1/source-files?refresh=${refresh}`)
   const [selVid, setSelVid] = useState(null)     // 当前选中文件（用 current_version id 标识）
   const [diffVersion, setDiffVersion] = useState('')
-  const diff = useFetch(selVid ? `/api/v1/source-files/${selVid}/diff${diffVersion ? `?version_id=${diffVersion}` : ''}?refresh=${refresh}` : null)
+  // issue #143：查询串拼接统一用 &（此前 diffVersion 与 refresh 各带一个 ?，产生双问号）
+  const diffQs = diffVersion ? `?version_id=${diffVersion}&refresh=${refresh}` : `?refresh=${refresh}`
+  const diff = useFetch(selVid ? `/api/v1/source-files/${selVid}/diff${diffQs}` : null)
   const versions = useFetch(selVid ? `/api/v1/source-files/${selVid}/versions?refresh=${refresh}` : null)
   const op = useDataOp(() => { setRefresh(r => r + 1); diff.refresh() })
 
@@ -26,7 +28,11 @@ export default function SourceDiff() {
     setDiffVersion('')
   }
   const adopt = (f) => op.submit(`/api/v1/source-files/${f.current_version}/versions`, {})
-  const restore = (f, vid) => op.submit(`/api/v1/source-files/${f.current_version}/versions/${vid}/restore`, {})
+  // issue #139：回退被 409 拒绝（磁盘已偏离当前版）时同样刷新 diff，引导重新决策
+  const restore = async (f, vid) => {
+    const res = await op.submit(`/api/v1/source-files/${f.current_version}/versions/${vid}/restore`, {})
+    if (!res.ok) { setRefresh(r => r + 1); diff.refresh() }
+  }
 
   const renderDiff = (s) => {
     if (!s) return <p className="note">选择文件查看 diff</p>

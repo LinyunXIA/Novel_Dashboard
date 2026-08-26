@@ -50,7 +50,8 @@ def _backfill_wealth(db: Session, question: str) -> list[str]:
     lines: list[str] = []
     from app.model import Snapshot
     for y in sorted({int(x) for x in re.findall(r"(?:19|20)\d{2}", question)}):
-        if not 1947 <= y <= 2026:
+        from app.config import CALENDAR_MIN_YEAR, CALENDAR_MAX_YEAR  # issue #141
+        if not CALENDAR_MIN_YEAR <= y <= CALENDAR_MAX_YEAR:
             continue
         row = db.execute(
             select(Snapshot.value, Snapshot.currency).where(

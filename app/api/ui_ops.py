@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import apply_error, get_db
+from app.config import CALENDAR_MAX_YEAR as _YEAR_MAX  # issue #141
 from app.core.demand import accrue_demand_interest
 from app.core.invest import (
     create_investment, redeem_investment, region_start_years, unlock_investment,
@@ -34,7 +35,7 @@ class AllocIn(BaseModel):
 
 
 class InvestmentIn(BaseModel):
-    year: int = Field(ge=1947, le=2026)
+    year: int = Field(ge=1947, le=_YEAR_MAX)
     region: str
     risk_lvl: str
     start_date: date
@@ -46,7 +47,7 @@ class TransferIn(BaseModel):
     target_entity_id: int
     target_currency: str
     amount: float
-    year: int = Field(ge=1947, le=2026)
+    year: int = Field(ge=1947, le=_YEAR_MAX)
 
 
 _apply_error = apply_error   # issue #132：收敛到 deps 共享
@@ -188,7 +189,7 @@ def returns_regions():
 
 
 class DemandInterestIn(BaseModel):
-    year: int = Field(ge=1947, le=2026)
+    year: int = Field(ge=1947, le=_YEAR_MAX)
 
 
 @router.post("/demand-interest")

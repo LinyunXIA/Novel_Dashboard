@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.config import CALENDAR_MAX_YEAR as _YEAR_MAX  # issue #141
 from app.core.overlay import (_is_user_overlay_row, create_overlay, delete_overlay,
                               diff_overlay, make_key, merge_overlay, restore_overlay,
                               source_as_latest, update_overlay)
@@ -37,7 +38,7 @@ def _after_timeline_write(db: Session, start_year: int) -> None:
 
 
 class TimelineCreate(BaseModel):
-    event_year: int = Field(ge=1947, le=2026)
+    event_year: int = Field(ge=1947, le=_YEAR_MAX)
     event_date: Optional[date] = None
     title: str = Field(min_length=1)
     note: Optional[str] = None
@@ -45,7 +46,7 @@ class TimelineCreate(BaseModel):
 
 
 class TimelinePatch(BaseModel):
-    event_year: Optional[int] = Field(default=None, ge=1947, le=2026)
+    event_year: Optional[int] = Field(default=None, ge=1947, le=_YEAR_MAX)
     event_date: Optional[date] = None
     title: Optional[str] = None
     note: Optional[str] = None
@@ -149,6 +150,10 @@ def post_timeline(body: TimelineCreate, response: Response,
                        title=body.title, note=body.note, decade=body.decade)
     db.commit()
     _after_timeline_write(db, body.event_year)
+    # issue #142：201 统一带 Location（#127 契约；此前声明 response 未用）
+    new_id = r.get("timeline_event_id") if isinstance(r, dict) else None
+    if new_id is not None:
+        response.headers["Location"] = f"/api/v1/timeline-events/{new_id}"
     return r
 
 

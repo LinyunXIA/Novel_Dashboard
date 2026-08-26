@@ -18,6 +18,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import CALENDAR_MAX_YEAR
 from app.core.regions import (
     CURRENCY_REGION, DEFAULT_RISK_LVL, REGION_COUNTRY,
     entity_region_override, entity_risk_override,
@@ -134,7 +135,7 @@ def recompute_one(session: Session, account_id: int, from_year: int) -> dict:
             year_in[e.date.year] += Decimal(e.inflow) if e.inflow is not None else _ZERO
             year_out[e.date.year] += Decimal(e.outflow) if e.outflow is not None else _ZERO
 
-    for y in range(from_year, 2026):
+    for y in range(from_year, CALENDAR_MAX_YEAR + 1):
         net_inflow = year_in.get(y, _ZERO) - year_out.get(y, _ZERO)
         rate = _rate_for_account_year(session, account, y)
         if rate is not None:

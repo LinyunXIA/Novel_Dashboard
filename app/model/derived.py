@@ -249,3 +249,26 @@ class InvestmentAlloc(Base):
 
 # forward import to satisfy .entity relationship type
 from app.model.core import Entity  # noqa: E402  isort:skip
+
+class ImportJob(Base):
+    """外部导入异步任务（issue #138 · DESIGN §14.2 import-jobs）。
+
+    provider ∈ {'company-info','labor-cost'}；payload 为该 provider 的请求参数
+    （company-info: {}；labor-cost: {year, company_ids?}）。status 走与
+    recompute_job 相同的 pending→running→done/failed 生命周期。
+    """
+    __tablename__ = "import_job"
+    __table_args__ = (
+        CheckConstraint("provider IN ('company-info','labor-cost')", name="ck_import_provider"),
+        CheckConstraint("status IN ('pending','running','done','failed')", name="ck_import_status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSONBCompat, default=dict)
+    status: Mapped[Optional[str]] = mapped_column(String, default="pending")
+    result: Mapped[Optional[dict]] = mapped_column(JSONBCompat)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
