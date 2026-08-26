@@ -11,6 +11,7 @@ import LaborCost from './screens/LaborCost'
 import Movies from './screens/Movies'
 import Stock from './screens/Stock'
 import Search from './screens/Search'
+import SourceDiff from './screens/SourceDiff'
 import Timeline from './screens/Timeline'
 import Health from './screens/Health'
 import ImportStatus from './screens/ImportStatus'
@@ -28,6 +29,7 @@ const TABS = [
   { key: 'companies', label: '公司图谱' },
   { key: 'graphall', label: '全图谱' },
   { key: 'timeline', label: '编年史' },
+  { key: 'diff', label: '版本/diff' },
   { key: 'search', label: '搜索' },
   { key: 'health', label: '健康校验' },
   { key: 'imports', label: '导入状态' },
@@ -81,8 +83,11 @@ export default function App() {
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
+        {active === 'movies' && <Movies />}
+        {active === 'stock' && <Stock />}
         {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} />}
         {active === 'search' && <Search asOf={asOf} />}
+        {active === 'diff' && <SourceDiff />}
         {active === 'health' && <Health />}
         {active === 'imports' && <ImportStatus />}
       </main>

@@ -25,6 +25,7 @@ from app.api.date_rules import router as date_rules_router
 from app.api.labor_cost import router as labor_cost_router
 from app.api.movie_events import router as movie_events_router
 from app.api.restricted import router as restricted_router
+from app.api.source_files import router as source_files_router
 from app.api.stock_events import router as stock_events_router
 from app.api.search import router as search_router
 from app.api.timeline import router as timeline_router
@@ -43,6 +44,7 @@ app.include_router(labor_cost_router)
 app.include_router(movie_events_router)
 app.include_router(stock_events_router)
 app.include_router(timeline_router)
+app.include_router(source_files_router)
 app.include_router(search_router)
 app.include_router(restricted_router)
 app.include_router(date_rules_router)

@@ -5,6 +5,27 @@
 
 ---
 
+## [Phase 2 · F-P2-06] — 2026-08-25
+
+**文件 diff 回退：版本 diff → UI 决策「采纳新版本」/「回退」（DB+磁盘复原）**（DESIGN §11）
+
+- `app/core/versioning.py`：
+  - `list_tracked`：被跟踪文件 + 当前磁盘 vs is_current 状态（new/unchanged/changed）+ 近期版本。
+  - `file_diff`：unified diff（difflib）磁盘 vs is_current / 任意两历史版本（含 +/- 行数）。
+  - `adopt_current`：采纳新版本 → **复用 `import_all(force_files={该文件})`** 真正重导入该文件
+    （`import_all`/`_skip_by_state` 加 `force_files` 参数，命中文件即便 unchanged 也强制导入）
+    → 记新版为 is_current + notification(kind='file-updated')。避免"只改 is_current 不落库新记录"的坑。
+  - `restore_version`：回退 → §11.3 安全写盘（resolve 下 `is_relative_to(source_dir)` 防越权 +
+    原子写 tmp→os.replace）复原 source_dir 文件 + 该版本置 is_current + notification。
+- `app/api/source_files.py`：`GET /source-files`、`GET/{vid}/versions`、`GET/{vid}/diff?version_id=`、
+  `POST/{vid}/versions`(采纳)、`POST/{vid}/versions/{v2}/restore`(回退)；普通 UI 放行。
+- 前端「版本/diff」屏（SourceDiff.jsx）：文件列表 + 状态徽标 + diff 渲染(加减高亮) + 采纳/回退按钮。
+- **写盘目标偏离（明示）**：本仓库实际 ingest 直接读 `source_dir`（Design_Folder，gitignored 真数据），
+  无独立 input_dir 流 → F-P2-06 回退写回 source_dir，是对 §11.3「写 input_dir」语言的有意偏离（否则磁盘无从复原）。
+- 11 新单测（versioning 6 / source_files_api 4 / force-import 1）；全量 **369 passed**。
+
+---
+
 ## [Phase 2 · F-P2-05] — 2026-08-25
 
 **时间线/编年史 UI 编辑：overlay 增改删 + 差异/重置回源/以源为最新**（DESIGN §12/§6.4）
