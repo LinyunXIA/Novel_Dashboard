@@ -206,7 +206,8 @@ def transfer(session: Session, *, source_account_id: int, target_entity_id: int,
              + "（UI 转移）",   # issue #132：统一 §19 定位标签为「UI 转移」前缀
         decade=f"{year // 10 * 10}s", overlay=True,     ))
     return {
-        "operation": op, "source_account_id": source.id, "target_account_id": target.id,
+        "operation": op, "skipped": False,
+        "source_account_id": source.id, "target_account_id": target.id,
         "source_currency": source.currency, "target_currency": target.currency,
         "amount": float(amt), "target_amount": float(target_amount), "year": year,
     }

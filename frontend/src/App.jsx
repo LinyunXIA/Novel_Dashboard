@@ -155,7 +155,7 @@ function NotificationsBanner({ onShowImpact }) {
             {!!findings.length && (
               <details style={{ width: '100%' }}>
                 <summary className="note">受影响明细（前 {findings.length} / 共 {total}）</summary>
-                <pre className="mono" style={{ maxHeight: 200, overflow: 'auto', background: '#fff' }}>
+                <pre className="mono" style={{ maxHeight: 200, overflow: 'auto', background: 'var(--surface-1)' }}>
                   {findings.map((f, i) =>
                     `[${f.rule}/${f.level}] ${f.location}: ${f.detail}`).join('\n')}
                 </pre>

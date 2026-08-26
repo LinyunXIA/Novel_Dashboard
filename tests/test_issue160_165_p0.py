@@ -303,3 +303,78 @@ class TestClosedAccountGate:
                 "unit_price": 2.0, "shares": 10, "event_id": "ui-closed-1",
                 "account_id": acc.id})
             assert r.status_code == 422 and "关池" in r.json()["detail"]
+
+
+# ---- 八轮审计 #189：transfer nonce 幂等 API 链路可达 ----
+class TestTransferNonceIdempotent:
+    def _seed(self, db):
+        # 目标用另一实体（同实体同币种会被 primary_account 解析回源账户自身）
+        e_src = Entity(entity_type="person", name="T189s")
+        e_dst = Entity(entity_type="person", name="T189d")
+        db.add_all([e_src, e_dst]); db.flush()
+        src = Account(entity_id=e_src.id, currency="EUR")
+        dst = Account(entity_id=e_dst.id, currency="EUR")   # 同币种=划拨路径，无需汇率
+        db.add_all([src, dst]); db.flush()
+        db.add(LedgerEntry(account_id=src.id, date=date(1999, 6, 1),
+                           reason="期初", inflow=1000, balance=1000, kind="income"))
+        db.commit()
+        return e_dst, src, dst
+
+    def test_same_nonce_replay_skipped_no_double_entry(self, db):
+        """同 nonce 双提交：第二次 skipped 且 ledger 仅一对分录。"""
+        from app.core.transfer import transfer
+        e_target, src, dst = self._seed(db)   # e_target=目标实体
+        r1 = transfer(db, source_account_id=src.id, target_entity_id=e_target.id,
+                      target_currency="EUR", amount=100, year=1999,
+                      nonce="abc123def456")
+        assert r1["skipped"] is not True
+        r2 = transfer(db, source_account_id=src.id, target_entity_id=e_target.id,
+                      target_currency="EUR", amount=100, year=1999,
+                      nonce="abc123def456")
+        assert r2["skipped"] is True
+        # 仅一对分录（源 outflow + 目标 inflow 各一笔）
+        n_src = len(db.execute(select(LedgerEntry).where(
+            LedgerEntry.account_id == src.id)).scalars().all())
+        n_dst = len(db.execute(select(LedgerEntry).where(
+            LedgerEntry.account_id == dst.id)).scalars().all())
+        assert n_src == 2 and n_dst == 1   # 源=期初+转出；目标=转入
+
+    def test_different_nonce_both_post(self, db):
+        """不同 nonce（新操作）正常各自入账——幂等不误伤。"""
+        from app.core.transfer import transfer
+        e_target, src, dst = self._seed(db)   # e_target=目标实体
+        for i, nc in enumerate(["aaa111", "bbb222"]):
+            r = transfer(db, source_account_id=src.id, target_entity_id=e_target.id,
+                         target_currency="EUR", amount=10, year=1999, nonce=nc)
+            assert r["skipped"] is not True
+        n_dst = len(db.execute(select(LedgerEntry).where(
+            LedgerEntry.account_id == dst.id)).scalars().all())
+        assert n_dst == 2
+
+    def test_api_nonce_passthrough_and_skipped_shortcircuit(self, db):
+        """API 层透传客户端 nonce；skipped 不产生 recompute-done（short-circuit）。"""
+        from fastapi.testclient import TestClient
+        from app.model import Notification
+        e_src = Entity(entity_type="person", name="T189api")
+        e_dst = Entity(entity_type="person", name="T189apiD")
+        db.add_all([e_src, e_dst]); db.flush()
+        src = Account(entity_id=e_src.id, currency="EUR")
+        db.add(Account(entity_id=e_dst.id, currency="EUR"))   # 目标主体需有该币种账户
+        db.add(src); db.flush()
+        db.add(LedgerEntry(account_id=src.id, date=date(1999, 6, 1),
+                           reason="期初", inflow=500, balance=500, kind="income"))
+        db.commit()
+        body = {"source_account_id": src.id, "target_entity_id": e_dst.id,
+                "target_currency": "EUR", "amount": 50, "year": 1999,
+                "nonce": "replay999999"}
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as c:
+                r1 = c.post("/api/v1/transfers", json=body)
+                assert r1.status_code == 200 and r1.json()["status"] == "ok"
+                n_after_first = len(db.query(Notification).all())
+                r2 = c.post("/api/v1/transfers", json=body)   # 同 nonce 重放
+                assert r2.status_code == 200 and r2.json()["status"] == "skipped"
+            assert len(db.query(Notification).all()) == n_after_first   # 无新通知
+        finally:
+            app.dependency_overrides.pop(get_db, None)
