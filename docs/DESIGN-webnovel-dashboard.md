@@ -620,6 +620,12 @@ class Importer(Protocol):
 - 配置 provider + 凭据（本地）；结果出现在「导入状态」屏；失败进入需人工处理。
 - **凭据存放**：外部 API 凭据放本地 `secrets.local.yaml`（**不入 git、不入 DB**）；adapter 只通过配置键读取，不在日志或 notification 中泄露。
 - **实现（API① · F-P1-05）**：`app/ingest/importers/company_info.py`（login→fetch `/public/companies`→按 `(entity_type='company', name)` 只增不减 upsert，source=`external-api`；股权结构→公司/自然人股东建实体 + `rel_type='holds'` 边；开停业日期/外部ID/持股比落 `entity.fields` JSONB）。凭据 `secrets.local.yaml` + 环境变量覆盖，URL per-env 默认 dev/test 7273、prod 7274。触发 `POST /api/v1/graph/companies/import`。
+- **外部 API v2.6 适配（2026-08-26）**：① `/public/companies` 新增 `tax_zone_id/tax_zone_label`
+  （公司↔税区一对一，内部成本口径键）随 fields 落库备查；② `/public/positions` v2.6 R2
+  「计算权移交第三方」与现架构一致（外部只给明细、本地基准自算成本），新增
+  `unknown_levels` 统计防未知 level 静默 0% 低估；③ `/public/levels` 字典端点暂不接入
+  （LEVEL_PCT 为本方费率映射表，外部字典仅编码展示）；④ 403 权限语义/429 限流由既有
+  upstream 错误映射覆盖。
 - **实现（API② 用工成本 · F-P1-10）**：`app/core/labor_cost.py`（本地基准 + 税率公式执行器 + 逐岗位成本；Level/外包/晋级规则表，也是「加薪规则」屏数据源）+ `app/ingest/importers/positions.py`（`GET /public/positions?year=` 拉流入岗岗位 → 逐岗位算成本 → 每公司×年 `finance_entry(entity_kind='company', kind='expense')` 落账）。基准三表 `labor_wage_benchmark / labor_cpi_growth / labor_tax_benchmark`（`python -m app.ingest.main labor-baseline`）。税率公式细节只在后台（含说明文字隐藏项：比利时 CP200 十三薪/双倍假期、英国学徒税 >£3m、日本固定奖金 3 月等）；UI 只展示加薪规则。端点 `POST /labor-cost/compute`、`GET /labor-cost/rules|results`。
 
 ---

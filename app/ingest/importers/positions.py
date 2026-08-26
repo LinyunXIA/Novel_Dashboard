@@ -130,13 +130,20 @@ def run_labor_cost(db: Session, year: int, company_ids: list[int] | None = None,
     token = login_and_token(url, username, password, client=client)
     positions = fetch_positions(url, token, year, company_ids, client=client)
     costs = []
+    unknown_levels: list[str] = []
     for p in positions:
         if not _in_post(p, year):
             continue
+        lvl = p.get("level")
+        if lvl and lvl not in LC.LEVEL_PCT:
+            # 外部 API v2.6 /public/levels 字典对齐提示：未知 level 会按 0% 费率计成本
+            # （静默低估）——计入返回统计供调用方察觉，必要时以 public.levels 对齐编码
+            unknown_levels.append(str(lvl))
         c = LC.compute_position_cost(db, p, year)
         costs.append(c)
     agg = aggregate_to_finance(db, costs, year)
-    return {"year": year, "companies_computed": agg, "positions_fetched": len(positions)}
+    return {"year": year, "companies_computed": agg, "positions_fetched": len(positions),
+            "unknown_levels": sorted(set(unknown_levels))}
 
 
 __all__ = ["run_labor_cost", "fetch_positions", "login_and_token",

@@ -221,3 +221,35 @@ def test_rules_payload_hides_levy_details():
     payload = L.rules_payload()
     blob = str(payload)
     assert "学徒" not in blob and "levy" not in blob.lower()
+
+
+# ---- 外部 API v2.6 /public/levels 对齐：unknown level 统计（防静默 0% 低估）----
+def test_run_reports_unknown_levels(db, monkeypatch):
+    """岗位 level 不在 LEVEL_PCT → 计入返回 unknown_levels（仍按 0% 计成本但可见）。"""
+    from app.ingest.importers import positions as P
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"year": 1982, "company_filter": None, "total": 1, "items": [
+                dict(_pos(), level="Z99"),      # 未知级别
+                dict(_pos(), position_name="B8b岗"),
+            ]}
+    class FakeClient:
+        def __init__(self): self.calls = []
+        def close(self): pass
+        def get(self, url, params=None, headers=None):
+            self.calls.append(url)
+            return FakeResp()
+        def post(self, url, json=None):
+            class R:
+                def raise_for_status(self): pass
+                def json(self): return {"access_token": "t"}
+            return R()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(P.httpx, "Client", lambda timeout=30: FakeClient())
+    _seed_be(db)
+    out = P.run_labor_cost(db, year=1982)
+    assert out["unknown_levels"] == ["Z99"]
