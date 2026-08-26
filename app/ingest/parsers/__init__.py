@@ -154,7 +154,6 @@ def _parse_fx_wide_table(lines: list[str]) -> list[dict]:
         if any(h in _FX_WIDE_HEADERS or _cn_cur(h) for h in hl):
             header = hl
             # 从 i+1 起扫数据行
-            cur_year = None
             recs: list[dict] = []
             for data_line in lines[i + 1:]:
                 ds = data_line.strip()

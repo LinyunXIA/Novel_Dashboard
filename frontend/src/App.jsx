@@ -82,8 +82,10 @@ export default function App() {
         {active === 'dashboard' && <Dashboard asOf={asOf} />}
         {/* issue #121：数据屏以 asOf 作 key——游标变动即重挂载重新拉取，全 App 联动。
             投资/划拨为写操作表单，有意不随游标联动（#143 备案，见各屏 docstring） */}
-        {active === 'invest' && <Invest asOf={asOf} />}
-        {active === 'transfer' && <Transfer asOf={asOf} />}
+        {/* 五轮审计 #177：死传参 asOf 改为 calMax（写操作年份上限动态收敛，#152 收尾） */}
+        {active === 'invest' && <Invest calMax={Number(calRange.max.slice(0, 4))} />}
+        {active === 'transfer' && <Transfer calMax={Number(calRange.max.slice(0, 4))} />}
+
         {active === 'returns' && <Returns key={`r-${asOf}`} asOf={asOf} />}
         {active === 'finance' && <Finance key={`f-${asOf}`} asOf={asOf} />}
         {active === 'labor' && <LaborCost />}
@@ -92,7 +94,7 @@ export default function App() {
         {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
         {active === 'companies' && <CompanyGraph />}
         {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
-        {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} />}
+        {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} calMax={Number(calRange.max.slice(0, 4))} />}
         {active === 'search' && <Search asOf={asOf} />}
         {active === 'diff' && <SourceDiff />}
         {active === 'health' && <Health />}
@@ -129,7 +131,10 @@ function NotificationsBanner({ onShowImpact }) {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ read_at: 'now' }),
-  }).finally(() => setItems(xs => xs.filter(x => x.id !== id)))
+  }).then(r => {
+    // 五轮审计 #177：仅成功才移除（失败保留，等下轮轮询重试），避免复活闪烁
+    if (r.ok) setItems(xs => xs.filter(x => x.id !== id))
+  }).catch(() => {})
 
   const healthText = (h) => {
     if (!h) return ''

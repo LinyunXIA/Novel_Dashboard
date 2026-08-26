@@ -46,6 +46,11 @@ def db():
         engine.dispose()
 
 
+def _client(db):
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app)
+
+
 # ---- #160 PDF 中文字体 ----
 class TestPdfCjk:
     def test_pdf_registers_cjk_font(self):
@@ -240,3 +245,61 @@ class TestSameCurrencyLink:
 def db_ledger(db, account_id):
     return db.execute(select(LedgerEntry).where(
         LedgerEntry.account_id == account_id)).scalars().all()
+
+
+# ---- 五轮审计 #175/#176 回归 ----
+class TestReverseNegativeRate:
+    def test_reverse_negative_rate_row_rejected(self, db):
+        """反向行 rate=-40 → 取倒数仍非法 → 422（修复前 -1/40 负流水入账）。"""
+        from app.core.invest import ValidationError
+        from app.core.transfer import transfer
+        e = Entity(entity_type="person", name="T175")
+        db.add(e); db.flush()
+        src = Account(entity_id=e.id, currency="EUR")
+        db.add(src); db.flush()
+        db.add(LedgerEntry(account_id=src.id, date=date(1999, 6, 1),
+                           reason="期初", inflow=100, balance=100, kind="income"))
+        # 仅反向行：BEF→EUR rate=-40；请求方向 EUR→BEF
+        db.add(ExchangeRate(fx_from="BEF", fx_to="EUR", year=1999, rate=-40))
+        db.commit()
+        with pytest.raises(ValidationError):
+            transfer(db, source_account_id=src.id, target_entity_id=e.id,
+                     target_currency="BEF", amount=10, year=1999)
+
+    def test_available_pairs_excludes_nonpositive(self, db):
+        from app.core.transfer import available_fx_pairs
+        db.add(ExchangeRate(fx_from="AAA", fx_to="BBB", year=1999, rate=0))
+        db.add(ExchangeRate(fx_from="CCC", fx_to="DDD", year=1999, rate=-5))
+        db.add(ExchangeRate(fx_from="EEE", fx_to="FFF", year=1999, rate=2))
+        db.commit()
+        pairs = available_fx_pairs(db, 1999)
+        assert ("EEE", "FFF") in pairs
+        assert ("AAA", "BBB") not in pairs and ("CCC", "DDD") not in pairs
+
+
+class TestClosedAccountGate:
+    def test_movie_link_to_closed_account_422(self, db):
+        e = Entity(entity_type="person", name="C176a")
+        db.add(e); db.flush()
+        acc = Account(entity_id=e.id, currency="USD", status="closed",
+                      closed_on=date(2003, 1, 1))
+        db.add(acc)
+        m = MovieEvent(title="closed测试", currency="USD",
+                       investment_date=date(1995, 6, 1), investment_total=50.0)
+        db.add(m); db.commit()
+        with _client(db) as c:
+            r = c.post(f"/api/v1/movie-events/{m.id}/link", json={"account_id": acc.id})
+            assert r.status_code == 422 and "关池" in r.json()["detail"]
+
+    def test_stock_buy_on_closed_account_422(self, db):
+        e = Entity(entity_type="person", name="C176b")
+        db.add(e); db.flush()
+        acc = Account(entity_id=e.id, currency="USD", status="closed",
+                      closed_on=date(2003, 1, 1))
+        db.add(acc); db.commit()
+        with _client(db) as c:
+            r = c.post("/api/v1/stock-events/buy", json={
+                "entity_id": e.id, "company": "X", "date": "2018-05-07",
+                "unit_price": 2.0, "shares": 10, "event_id": "ui-closed-1",
+                "account_id": acc.id})
+            assert r.status_code == 422 and "关池" in r.json()["detail"]

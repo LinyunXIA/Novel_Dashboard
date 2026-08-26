@@ -1,15 +1,17 @@
 import { useFetch } from './useDataOp'
+import { ErrorBox } from './ui'
 
 const RULES = ['H1', 'H2', 'H3', 'H4', 'H5', 'H-STOCK']
 
 /** F-U4 健康校验屏（issue #123）：H1–H5/H-STOCK 汇总 + 问题清单（文件/行/规则/明细）。 */
 export default function Health() {
-  const { data } = useFetch('/api/v1/health')
+  const { data, err } = useFetch('/api/v1/health')
   const summary = data?.summary || {}
   const findings = data?.findings || []
 
   return (
     <div className="cols2">
+      <ErrorBox error={err} />
       <div className="panel">
         <h3>健康校验汇总（H1–H5 · H-STOCK）</h3>
         <p className="note">GET /api/v1/health · 导入/UI 改动后重算完成时会自动复核（摘要随通知推送）</p>

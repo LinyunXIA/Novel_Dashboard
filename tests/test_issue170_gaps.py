@@ -143,20 +143,28 @@ class TestAdminCleanG5:
 
 class TestWealthEndpointG6:
     def test_wealth_series_and_missing_rates_shape(self, db):
+        """五轮审计 #177 补强：missing_rates 语义实质断言（此前仅断 dict 类型=假绿）。"""
         e = Entity(entity_type="person", name="W人")
         db.add(e); db.flush()
         acc = Account(entity_id=e.id, currency="XYZ")   # 无汇率的币种
         db.add(acc); db.flush()
         db.add(LedgerEntry(account_id=acc.id, date=date(1990, 12, 30),
                            reason="期初", inflow=500, balance=500, kind="income"))
-        db.add(Snapshot(as_of_year=1990, as_of_date=None, scope="family:total",
-                        value=0, currency="USD"))
         db.commit()
+        # wealth_series 读预计算快照 → 先重建（含 missing_rates 反推所需的 account:* 行）
+        from app.core.snapshot import rebuild_snapshots
+        rebuild_snapshots(db)
         with _client(db) as c:
             r = c.get("/api/v1/wealth?year_from=1989&year_to=1991")
             assert r.status_code == 200
             body = r.json()
-            assert isinstance(body, dict) and body
+            # 1990 年有 XYZ 账户余额但无汇率 → 该年 missing_rates 必含 XYZ
+            y1990 = body.get("1990") or {}
+            assert "XYZ" in (y1990.get("missing_rates") or []), \
+                f"missing_rates 未反映 XYZ 汇率缺失: {y1990}"
+            # 1989（无流水年）不误报 XYZ
+            y1989 = body.get("1989") or {}
+            assert "XYZ" not in (y1989.get("missing_rates") or [])
 
 
 class TestPoolInTransitCrossYearG8:

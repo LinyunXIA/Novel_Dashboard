@@ -196,6 +196,16 @@ def _event_nonce_applied(db: Session, entity_id: int, event_id: str) -> bool:
         HoldingEvent.source_file == event_id).limit(1)).scalar_one_or_none() is not None
 
 
+def _require_open_account(db: Session, account_id: int) -> None:
+    """五轮审计 #176：关池（closed）账户只读终态（§6.6），拒新流水——
+    手动 buy/sell/dividend 与事件关联共用同一防线（ValueError → API 层 422）。"""
+    from app.model import Account
+    acc = db.get(Account, account_id) if account_id else None
+    if acc is not None and acc.status == "closed":
+        raise ValueError(f"账户 #{account_id}（{acc.currency}）已于 {acc.closed_on} "
+                         f"关池，只读终态不可记新流水（§6.6）")
+
+
 def apply_buy(db: Session, *, entity_id: int, company: str, ticker: str | None = None,
               date, unit_price: float, shares: float, event_id: str, account_id: int) -> dict:
     """买入建仓：写 holding_event(batch) + ledger(现金移出，kind=investment)。
@@ -205,6 +215,7 @@ def apply_buy(db: Session, *, entity_id: int, company: str, ticker: str | None =
     if _event_nonce_applied(db, entity_id, event_id):
         return {"event_id": event_id, "entity_id": entity_id, "company": company,
                 "batch_id": None, "shares": shares, "cost_basis": 0.0, "skipped": True}
+    _require_open_account(db, account_id)   # 五轮审计 #176：关池拒新流水
     if not (account_id and unit_price and shares > 0):
         raise ValueError("apply_buy 需 account_id / unit_price>0 / shares>0")
     batch_id = next(_next_batch_ids(db, 1))
@@ -233,6 +244,7 @@ def apply_sell(db: Session, *, entity_id: int, company: str, date, shares: float
         return {"event_id": event_id, "company": company, "sold_shares": shares,
                 "cost_basis": 0.0, "proceeds": 0.0, "realized_pnl": 0.0,
                 "accepted": [], "skipped": True}
+    _require_open_account(db, account_id)   # 五轮审计 #176
     if not account_id or shares <= 0:
         raise ValueError("apply_sell 需 account_id / shares>0")
     rows = db.execute(select(HoldingEvent).where(
@@ -289,6 +301,7 @@ def apply_dividend(db: Session, *, entity_id: int, company: str, date, per_share
     if existing is not None:
         return {"event_id": event_id, "company": company, "holding_shares": 0.0,
                 "dividend": 0.0, "skipped": True}
+    _require_open_account(db, account_id)   # 五轮审计 #176
     holding = sum(b["shares"] for b in _open_batches(db, entity_id, company))
     amount = round(holding * per_share, 6)
     db.add(LedgerEntry(account_id=account_id, date=date, reason=f"股票分红·{company}",

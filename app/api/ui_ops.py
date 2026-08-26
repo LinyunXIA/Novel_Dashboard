@@ -17,7 +17,8 @@ from app.api.deps import apply_error, get_db
 from app.config import CALENDAR_MAX_YEAR as _YEAR_MAX  # issue #141
 from app.core.demand import accrue_demand_interest
 from app.core.invest import (
-    create_investment, redeem_investment, region_start_years, unlock_investment,
+    InvestmentError, create_investment, redeem_investment, region_start_years,
+    unlock_investment,
 )
 from app.core.recompute import recompute_all, record_recompute_done
 from app.core.snapshot import rebuild_snapshots
@@ -111,9 +112,12 @@ def post_investment(body: InvestmentIn, response: Response, db: Session = Depend
         inv = create_investment(db, year=body.year, region=body.region,
                                 risk_lvl=body.risk_lvl, start_date=body.start_date,
                                 allocs=allocs)
-    except Exception as e:  # noqa: BLE001 —— 业务校验统一映射
+    except InvestmentError as e:   # 业务校验族 → 422/409（五轮审计 #177：收窄捕获面）
         db.rollback()
         _apply_error(e)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
     _after_ui_write(db, body.year, f"投资 {body.region} R{body.risk_lvl} {body.year}")
     response.headers["Location"] = f"/api/v1/investments/{inv.id}"   # §14.1（issue #127）
     return {"id": inv.id, "status": "created", "year": body.year, "region": body.region}
@@ -127,9 +131,12 @@ def post_redeem(investment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="investment not found")
     try:
         out = redeem_investment(db, inv)
-    except Exception as e:  # noqa: BLE001
+    except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
     _after_ui_write(db, inv.year, f"赎回投资 {inv.region} R{inv.risk_lvl} {inv.year}")
     return {"id": inv.id, **out}
 
@@ -158,9 +165,12 @@ def patch_investment(investment_id: int, body: InvestmentPatch,
     # 解锁（locked=false）：抹除旧写入，恢复 as-of
     try:
         inv = unlock_investment(db, inv)
-    except Exception as e:  # noqa: BLE001
+    except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
     _after_ui_write(db, inv.year, f"解锁投资 {inv.region} {inv.year}")
     return _inv_dict(inv, db.execute(
         select(InvestmentAlloc).where(InvestmentAlloc.investment_id == inv.id)
@@ -175,9 +185,12 @@ def post_transfer(body: TransferIn, db: Session = Depends(get_db)):
                        target_entity_id=body.target_entity_id,
                        target_currency=body.target_currency,
                        amount=body.amount, year=body.year)
-    except Exception as e:  # noqa: BLE001
+    except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
     _after_ui_write(db, body.year, f"{out['operation']} {body.year}")
     return {"status": "ok", **out}
 
@@ -201,8 +214,11 @@ def post_demand_interest(body: DemandInterestIn, db: Session = Depends(get_db)):
     """
     try:
         out = accrue_demand_interest(db, body.year)
-    except Exception as e:  # noqa: BLE001
+    except InvestmentError as e:   # 五轮审计 #177：业务族 → 422/409
         db.rollback()
         _apply_error(e)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="操作失败：服务内部错误，请查看服务日志")
     _after_ui_write(db, body.year, f"活期结息 {body.year}")
     return {"status": "ok", **out}

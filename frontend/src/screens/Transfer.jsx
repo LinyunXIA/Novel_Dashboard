@@ -5,7 +5,7 @@ import { ErrorBox, Field } from './ui'
 /** F-P1-03/09 划拨/换汇屏：同币=划拨、跨币=换汇（需该年汇率），转出向后全链不破负。
  *  #143 备案：本屏为写操作表单，**有意**不随全局日历游标（asOf）联动——
  *  划拨年份由表单显式输入；余额校验以服务端该年 as-of 口径为准。 */
-export default function Transfer() {
+export default function Transfer({ calMax = 2026 }) {
   const accounts = useFetch('/api/v1/accounts?page_size=200')
   const entities = useFetch('/api/v1/entities?page_size=200')
   const op = useDataOp()
@@ -53,7 +53,7 @@ export default function Transfer() {
         <div className="form">
           <div className="row">
             <Field label="年份">
-              <input type="number" min={1947} max={2026} value={form.year}
+              <input type="number" min={1947} max={calMax} value={form.year}
                 onChange={e => set('year', Number(e.target.value))} />
             </Field>
           </div>
