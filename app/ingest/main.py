@@ -1,11 +1,11 @@
 """Ingest CLI（DESIGN §3/§6）。
 
 用法：
-    python -m app.ingest.main --env dev            # 默认
-    python -m app.ingest.main --env prod --full    # 全量重建
+    python -m app.ingest.main --env dev ingest     # 落库主链路
     python -m app.ingest.main ping                 # DB 连通自检
 
 F-P0-01：骨架（config/db/CLI）；F-P0-02..06 落库链路。
+（issue #144：删除无实现的 run --full 死参数与旧用法示例。）
 
 设计要点（issue #3）：每个子命令的 session 由 `--env` 显式构造（make_sessionmaker），
 不再走导入期绑定的模块 SessionLocal，杜绝「打印 prod 实际写入 dev」的脱节。
@@ -49,7 +49,6 @@ def ping(env: str = typer.Option(None, "--env")):
 @app.command()
 def run(
     env: str = typer.Option(None, "--env"),
-    full: bool = typer.Option(False, "--full", help="全量重建"),
 ):
     """扫描输入目录 → detect → parse → 输出报告（F-P0-02；不落库）。"""
     cfg = get_config(env)
@@ -167,6 +166,12 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             log(f"   ⏭ {r.file}: 股票台账解析成功（{len(r.records)} 组基本信息/"
                 f"{sum(len(x.get('events') or []) for x in r.records)} 条明细），"
                 f"持仓/事件落库属 Phase 2（§19.6），本次跳过")
+            continue
+        if r.category in ("event_movie", "event_stock") and r.records:
+            # issue #144：Phase2 事件由 events-movie/events-stock CLI 显式导入；
+            # 主扫描链显式跳过并说明（与 stock_tx 对称），不再静默白解析
+            log(f"   ⏭ {r.file}: Phase2 事件素材已解析（{len(r.records)} 条），"
+                f"落库请用 events-movie / events-stock CLI（§19.6）；本次跳过")
             continue
         if r.category == "character" and r.records:
             imported_rs.append(r)
@@ -336,6 +341,18 @@ def _select_model_by_source(model, source_file: str):
     return select(model).where(model.source_file == source_file)
 
 
+def _coerce_line(v) -> int | None:
+    """issue #144：problem.line 形态不一（行号/年份/dict/文本）——尽力取结构化行号，
+    取不到落 None（§11.4「文件/行」四要素尽量不缺）。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().isdigit():
+        return int(v.strip())
+    return None
+
+
 def _record_findings(session, file_path: str, crep) -> None:
     """冲突报告落库（issue #118 · §11.4）：problems→block、warnings→warn。
 
@@ -346,12 +363,12 @@ def _record_findings(session, file_path: str, crep) -> None:
     for p in crep.problems:
         session.add(IngestReport(
             file_path=file_path, rule=p.get("rule"), level="block",
-            line=p.get("line") if isinstance(p.get("line"), int) else None,
+            line=_coerce_line(p.get("line")),
             detail=str(p.get("detail", ""))))
     for w in crep.warnings:
         session.add(IngestReport(
             file_path=file_path, rule=w.get("rule"), level="warn",
-            line=w.get("line") if isinstance(w.get("line"), int) else None,
+            line=_coerce_line(w.get("line")),
             detail=str(w.get("detail", ""))))
 
 
@@ -566,17 +583,23 @@ def snapshot(env: str = typer.Option(None, "--env"),
 
 @app.command()
 def labor_baseline(env: str = typer.Option(None, "--env"),
-                   office: str = typer.Option("", "--office", help="仅采集指定税率 office（缺省全部）")):
+                   office: str = typer.Option("", "--office",
+                                              help="仅采集指定税率 office（缺省全部；"
+                                                   "支持中文或 ISO 缩写 be/lu/nl/dk/se/uk）")):
     """用工成本基准落库（API② · F-P1-10）：工资(10区)+CPI(10区)+税率(12 office)。
 
     从 Design_Folder 解析三份基准 → labor_wage_benchmark/labor_cpi_growth/labor_tax_benchmark。
     """
     from app.config import get_config
     from app.ingest.labor_baseline import import_labor_baseline, import_wage, import_cpi, import_tax
+    # issue #144：ISO 缩写映射（源文件 office 键为中文；此前 --office be 静默 skipped）
+    _OFFICE_ALIAS = {"be": "比利时", "lu": "卢森堡", "nl": "荷兰", "dk": "丹麦",
+                     "se": "瑞典", "uk": "英国", "gb": "英国"}
     cfg = get_config(env)
     with _session_for(env) as s:
         if office:
-            r = import_tax(s, cfg.source_dir, log=typer.echo, office_list=[office])
+            office_key = _OFFICE_ALIAS.get(office.strip().lower(), office.strip())
+            r = import_tax(s, cfg.source_dir, log=typer.echo, office_list=[office_key])
         else:
             r = import_labor_baseline(s, cfg.source_dir, log=typer.echo)
         s.commit()

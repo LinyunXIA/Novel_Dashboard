@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -51,7 +51,8 @@ def list_rules(db: Session = Depends(get_db)):
 
 
 @router.post("", status_code=201)
-def create_rule(body: DateRuleIn, db: Session = Depends(get_db)):
+def create_rule(body: DateRuleIn, response: Response,
+                db: Session = Depends(get_db)):
     _validate(body)
     dup = db.execute(select(DateRule).where(DateRule.pattern == body.pattern)).scalar_one_or_none()
     if dup is not None:
@@ -61,6 +62,9 @@ def create_rule(body: DateRuleIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(row)
     _reload(db)
+    # issue #142：201 统一带 Location（#127 契约）
+    if response is not None:
+        response.headers["Location"] = f"/api/v1/date-rules/{row.id}"
     return {"id": row.id, "pattern": row.pattern, "resolve": row.resolve, "note": row.note}
 
 

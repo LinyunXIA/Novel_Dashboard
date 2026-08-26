@@ -60,15 +60,16 @@ class TestPrefixOrdering:
         assert is_skip_category("SKIP_PARAM")
 
     def test_phase2_event_still_skipped(self):
-        """回归：原有的 PHASE2_EVENT 映射不被破坏（现细化为 event_stock/event_movie）。"""
+        """回归：事件目录细分映射（event_stock/event_movie）+ 散文件 SKIP 兜底（#144）。"""
         d = detect("基准/事件/股票/腾讯.md")
-        assert d.category in ("PHASE2_EVENT", "event_stock", "event_movie")
+        assert d.category in ("SKIP_PHASE2_EVENT", "event_stock", "event_movie")
         assert d.phase2 is True
         # 细分后应命中 event_stock
         assert detect("基准/事件/股票/腾讯.md").category == "event_stock"
         assert detect("基准/事件/电影/泰坦尼克.md").category == "event_movie"
-        # 通用兜底仍为 PHASE2_EVENT
-        assert detect("基准/事件/其他.md").category == "PHASE2_EVENT"
+        # 通用兜底：issue #144 起改归 SKIP_PHASE2_EVENT（§6.1「直接跳过」语义，不再报解析器缺失）
+        assert detect("基准/事件/其他.md").category == "SKIP_PHASE2_EVENT"
+        assert is_skip_category("SKIP_PHASE2_EVENT") is True
 
 
 class TestParseOneSkipCategory:

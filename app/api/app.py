@@ -154,6 +154,76 @@ def get_account(account_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.get(API_PREFIX + "/entities/{entity_id}/relationships")
+def entity_relationships(entity_id: int, db: Session = Depends(get_db)):
+    """实体的关系列表（§14.2，issue #142 补端点；此前仅经 /graph/* 视图输出）。"""
+    if db.get(Entity, entity_id) is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    from app.model import Relationship
+    rows = db.execute(
+        select(Relationship).where(
+            (Relationship.from_entity_id == entity_id)
+            | (Relationship.to_entity_id == entity_id))
+        .order_by(Relationship.id)).scalars().all()
+    return {"items": [{
+        "id": r.id, "from_entity_id": r.from_entity_id,
+        "to_entity_id": r.to_entity_id, "rel_type": r.rel_type,
+        "since_year": r.since_year, "until_year": r.until_year,
+        "direction": "out" if r.from_entity_id == entity_id else "in",
+    } for r in rows], "total": len(rows)}
+
+
+@app.get(API_PREFIX + "/ledger-entries/{entry_id}")
+def get_ledger_entry(entry_id: int, db: Session = Depends(get_db)):
+    """单条台账流水详情（§14.2，issue #142 补端点）。"""
+    e = db.get(LedgerEntry, entry_id)
+    if e is None:
+        raise HTTPException(status_code=404, detail="ledger entry not found")
+    return {"id": e.id, "account_id": e.account_id, "date": e.date.isoformat(),
+            "reason": e.reason, "kind": e.kind,
+            "inflow": float(e.inflow) if e.inflow is not None else None,
+            "outflow": float(e.outflow) if e.outflow is not None else None,
+            "balance": float(e.balance) if e.balance is not None else None,
+            "note": e.note, "source_file": e.source_file}
+
+
+@app.get(API_PREFIX + "/holding-events")
+def list_holding_events(
+    entity_id: Optional[int] = Query(None),
+    company: Optional[str] = Query(None),
+    open_only: bool = Query(False, description="仅未结清批次（shares>0 且无 closed_on）"),
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """股票持仓事件列表（§14.2 原表资源，issue #142 补端点）。
+
+    此前持仓数据经 /stock-events/events|positions 输出（命名偏离已备案）；
+    本端点按设计提供 holding_event 原始事件视图。
+    """
+    from app.model import HoldingEvent
+    q = select(HoldingEvent)
+    if entity_id:
+        q = q.where(HoldingEvent.entity_id == entity_id)
+    if company:
+        q = q.where(HoldingEvent.company == company)
+    if open_only:
+        q = q.where(HoldingEvent.shares > 0, HoldingEvent.closed_on.is_(None))
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
+    rows = db.execute(q.order_by(HoldingEvent.date, HoldingEvent.id)
+                      .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {
+        "items": [{"id": h.id, "entity_id": h.entity_id, "company": h.company,
+                   "ticker": h.ticker, "date": h.date.isoformat(),
+                   "event_type": h.event_type, "batch_id": h.batch_id,
+                   "shares": float(h.shares) if h.shares is not None else None,
+                   "unit_price": float(h.unit_price) if h.unit_price is not None else None,
+                   "amount": float(h.amount) if h.amount is not None else None,
+                   "closed_on": h.closed_on.isoformat() if h.closed_on else None}
+                  for h in rows],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
 @app.get(API_PREFIX + "/accounts/{account_id}/ledger-entries")
 def account_ledger(
     account_id: int,
@@ -444,6 +514,16 @@ def mark_notification_read(notif_id: int, body: Optional[dict] = None,
     n.read_at = datetime.now()
     db.commit()
     return {"id": n.id, "read": True, "read_at": n.read_at.isoformat()}
+
+
+@app.delete(API_PREFIX + "/notifications/{notif_id}", status_code=204)
+def delete_notification(notif_id: int, db: Session = Depends(get_db)):
+    """忽略/删除通知（§14.2，issue #142 补端点）。"""
+    n = db.get(Notification, notif_id)
+    if not n:
+        raise HTTPException(status_code=404, detail="notification not found")
+    db.delete(n)
+    db.commit()
 
 
 # ---------------- 总量概览 ----------------

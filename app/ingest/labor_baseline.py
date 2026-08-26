@@ -171,6 +171,8 @@ def import_cpi(session: Session, source_dir: Path, log=None) -> dict:
     stats = {"rows": 0, "skipped": 0, "regions": set()}
     if not path.exists():
         stats["skipped"] += 1
+        # issue #144：缺文件早退时归一为 int，避免上层打印 set()
+        stats["regions"] = 0
         return stats
     for r in parse_cpi_file(path):
         dup = session.execute(select(LaborCpiGrowth.id).where(

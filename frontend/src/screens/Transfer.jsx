@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react'
 import { useDataOp, useFetch } from './useDataOp'
 import { ErrorBox, Field } from './ui'
 
-/** F-P1-03/09 划拨/换汇屏：同币=划拨、跨币=换汇（需该年汇率），转出向后全链不破负。 */
+/** F-P1-03/09 划拨/换汇屏：同币=划拨、跨币=换汇（需该年汇率），转出向后全链不破负。
+ *  #143 备案：本屏为写操作表单，**有意**不随全局日历游标（asOf）联动——
+ *  划拨年份由表单显式输入；余额校验以服务端该年 as-of 口径为准。 */
 export default function Transfer() {
   const accounts = useFetch('/api/v1/accounts?page_size=200')
   const entities = useFetch('/api/v1/entities?page_size=200')

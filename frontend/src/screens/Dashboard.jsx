@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 
-/** P0-2/#124 序列选择：family=家族合计(USD)；BEF…=分币种合计；account:* =单账户。 */
+/** P0-2/#124 序列选择：family=家族合计(USD)；BEF…=分币种合计；account:* =单账户。
+ *  #143：序列支持多选叠加对比（同一标尺归一化渲染），不再只是单选切换。 */
 export default function Dashboard({ asOf }) {
   const [ov, setOv] = useState(null)
   const [wealth, setWealth] = useState(null)
   const [snaps, setSnaps] = useState(null)
-  const [series, setSeries] = useState('family')
+  const [seriesSel, setSeriesSel] = useState(['family'])
 
   const year = Number(asOf.split('-')[0])
 
@@ -51,12 +52,25 @@ export default function Dashboard({ asOf }) {
     return [...set].sort()
   }, [wealth])
 
-  const seriesData = useMemo(() => {
-    if (!wealth) return null
-    if (series === 'family') return years.map(y => wealth[y]?.family_total_usd ?? 0)
-    if (currencyKeys.includes(series)) return years.map(y => wealth[y]?.currencies?.[series] ?? 0)
-    return years.map(y => wealth[y]?.accounts?.[series] ?? 0)
-  }, [wealth, series, years, currencyKeys])
+  // #143：多选序列 → 每序列一条折线，共用同一 min/max 标尺
+  const seriesValues = useMemo(() => {
+    if (!wealth) return {}
+    const val = (key) => {
+      if (key === 'family') return years.map(y => wealth[y]?.family_total_usd ?? 0)
+      if (currencyKeys.includes(key)) return years.map(y => wealth[y]?.currencies?.[key] ?? 0)
+      return years.map(y => wealth[y]?.accounts?.[key] ?? 0)
+    }
+    const out = {}
+    for (const k of seriesSel) out[k] = val(k)
+    return out
+  }, [wealth, seriesSel, years, currencyKeys])
+
+  const seriesLabelFor = (k) => k === 'family' ? '家族合计（USD）'
+    : currencyKeys.includes(k) ? `币种 ${k}（本币合计）`
+      : `账户 ${k}（本币）`
+
+  const toggleSeries = (k) => setSeriesSel(list =>
+    list.includes(k) ? list.filter(x => x !== k) : [...list, k])
 
   const missingRates = useMemo(() => {
     const s = new Set()
@@ -78,35 +92,41 @@ export default function Dashboard({ asOf }) {
 
       <div className="grid cols2">
         <div className="panel">
-          <h3>家族财富随时间（多序列）</h3>
-          <p className="note">wealth API · 近 {year >= 1947 ? Math.min(10, year - 1947) + 1 : 1} 年 · issue #124 单/多序列对比</p>
-          <div className="row" style={{ alignItems: 'center', marginBottom: 6 }}>
-            <select value={series} onChange={e => setSeries(e.target.value)}>
-              <option value="family">家族合计（展示折USD）</option>
-              {currencyKeys.length > 0 && (
-                <optgroup label="分币种合计（本币）">
-                  {currencyKeys.map(c => <option key={c} value={c}>{c}</option>)}
-                </optgroup>
-              )}
-              {accountKeys.length > 0 && (
-                <optgroup label="单账户（本币）">
-                  {accountKeys.map(a => <option key={a} value={a}>{a}</option>)}
-                </optgroup>
-              )}
-            </select>
-            <span className="note">{seriesLabel}</span>
+          <h3>家族财富随时间（多序列叠加）</h3>
+          <p className="note">wealth API · 近 {year >= 1947 ? Math.min(10, year - 1947) + 1 : 1} 年 · 点击序列切换叠加（#124/#143）</p>
+          <div className="row" style={{ alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+            <button key="family" className={`ghost ${seriesSel.includes('family') ? 'primary' : ''}`}
+              onClick={() => toggleSeries('family')}>家族合计</button>
+            {currencyKeys.map(c => (
+              <button key={c} className={`ghost ${seriesSel.includes(c) ? 'primary' : ''}`}
+                onClick={() => toggleSeries(c)}>{c}</button>
+            ))}
+            {accountKeys.slice(0, 12).map(a => (
+              <button key={a} className={`ghost ${seriesSel.includes(a) ? 'primary' : ''}`}
+                onClick={() => toggleSeries(a)} style={{ fontSize: 11 }}>{a}</button>
+            ))}
+          </div>
+          <div className="row" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
+            {Object.keys(seriesValues).map((k, i) => (
+              <span key={k} className="note" style={{ color: PALETTE[i % PALETTE.length] }}>
+                ■ {seriesLabelFor(k)}
+              </span>
+            ))}
+            {!seriesSel.length && <span className="note">未选任何序列（点击上方按钮添加）</span>}
           </div>
           {missingRates.length > 0 && (
             <div className="warn">汇率缺失未计入 USD 合计：{missingRates.join('、')}</div>
           )}
           <div className="plot">
-            {seriesData && seriesData.length > 1 && (
+            {Object.keys(seriesValues).length > 0 && years.length > 1 && (
               <svg viewBox="0 0 600 200" preserveAspectRatio="none">
-                <Polyline data={seriesData} />
+                <MultiPolyline datasets={seriesValues} />
               </svg>
             )}
             <span className="ph">
-              {seriesData && seriesData.length > 1 ? `共 ${seriesData.length} 年` : '财富曲线（数据不足）'}
+              {Object.keys(seriesValues).length && years.length > 1
+                ? `共 ${years.length} 年 · ${Object.keys(seriesValues).length} 序列`
+                : '财富曲线（数据不足）'}
             </span>
           </div>
         </div>
@@ -142,25 +162,31 @@ function Stat({ label, value }) {
   )
 }
 
-function Polyline({ data }) {
-  if (!data || data.length < 2) return null
+const PALETTE = ['#4f8ef7', '#e67e22', '#27ae60', '#9b59b6', '#e74c3c', '#16a085',
+  '#f39c12', '#34495e', '#d35400', '#7f8c8d']
+
+/** #143：多序列叠加折线——全部序列共用同一 min/max 标尺，颜色按 PALETTE 轮转。 */
+function MultiPolyline({ datasets }) {
   const w = 600, h = 200, pad = 20
-  const vals = data.map(Number)
-  const max = Math.max(...vals), min = Math.min(...vals)
+  const keys = Object.keys(datasets)
+  if (!keys.length) return null
+  const all = keys.flatMap(k => datasets[k].map(Number))
+  if (!all.length) return null
+  const max = Math.max(...all), min = Math.min(...all)
   const range = max - min || 1
-  const pts = vals.map((v, i) => {
-    const x = pad + (i / (vals.length - 1)) * (w - 2 * pad)
-    const y = h - pad - ((v - min) / range) * (h - 2 * pad)
-    return `${x},${y}`
-  }).join(' ')
-  return (
-    <polyline
-      points={pts}
-      fill="none"
-      stroke="var(--s1)"
-      strokeWidth="2.5"
-    />
-  )
+  return keys.map((k, idx) => {
+    const vals = datasets[k].map(Number)
+    if (vals.length < 2) return null
+    const pts = vals.map((v, i) => {
+      const x = pad + (i / (vals.length - 1)) * (w - 2 * pad)
+      const y = h - pad - ((v - min) / range) * (h - 2 * pad)
+      return `${x},${y}`
+    }).join(' ')
+    return (
+      <polyline key={k} points={pts} fill="none"
+        stroke={PALETTE[idx % PALETTE.length]} strokeWidth="2.5" />
+    )
+  })
 }
 
 function formatNum(n) {
