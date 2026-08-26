@@ -178,8 +178,7 @@ def rebuild_snapshots(session: Session, years: range = None,
         holding_by_year[y] = {eid: Decimal(str(v))
                               for eid, v in portfolio_breakdown(session, date(y, 12, 30)).items()}
 
-    # 1) 清旧：仅清 from_year 起（含）的 account/entity/family 三种 scope 行
-    scope_prefixes = ("account:", "entity:", "family:")
+    # 1) 清旧：仅清 from_year 起（含）的三种 scope 行
     session.execute(
         delete(Snapshot).where(
             Snapshot.as_of_year >= start,

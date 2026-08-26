@@ -77,7 +77,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 账务本金记账、展示层才折算 USD；BEF/LUF/NLG 2002 关池转 EUR；收益文件模块化挂账。
 - 开发进度以 `docs/DESIGN-webnovel-dashboard.md` §20 功能清单（编号 `F-P0-xx`/`F-P1-xx`/`F-P2-xx`，状态图例 ⬜/🟨/✅）为准，完成一项勾一项，在需求/任务/commit 中以此编号引用。
 
-**启动 / 运行 Dashboard（F-P0-01..14，Phase 1 P0 已实现）**：
+**启动 / 运行 Dashboard（Phase 1 P0×14 + P1×10 + Phase 2 P2×01-07 全部 ✅；F-P3-01 暂缓——进度以 DESIGN §20 为准）**：
 
 前置（一次性）：
 1. **Postgres**：本机 `Postgres.app`（PostgreSQL 18），端口 `5432`；需已有三库 `novel_dev` / `novel_test` / `novel_prod`（同名库已建，缺失可用 `createdb` 补）。免密 trust 即可；若设了密码，导出 `export POSTGRES_PASSKEY=...`。

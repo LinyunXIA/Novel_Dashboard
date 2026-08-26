@@ -64,7 +64,7 @@ def check_h2_amount_consistency(session: Session, from_year: int | None = None) 
     rows = session.execute(
         q.having(func.count() > 1, func.min(IncomeStream.amount) != func.max(IncomeStream.amount))
     ).all()
-    for eid, st, label, gk, cur, year, cnt, mn, mx in rows:
+    for eid, st, label, _gk, cur, year, cnt, mn, mx in rows:
         ent = session.get(Entity, eid)
         finds.append(Finding("H2", "crit", f"{ent.name if ent else '?'} {st} {cur} {year} [{label}]",
                              f"{cnt}条 金额 {mn} ≠ {mx}"))
@@ -258,7 +258,7 @@ def check_holding_value(session: Session) -> list[Finding]:
                HoldingEvent.entity_id, HoldingEvent.shares, HoldingEvent.unit_price)
         .where(HoldingEvent.shares > 0, HoldingEvent.closed_on.is_(None))
     ).all()
-    for hid, company, hdate, eid, shares, up in rows:
+    for hid, company, hdate, eid, _shares, up in rows:
         if up is None or float(up) == 0:
             finds.append(Finding("H-STOCK", "warn", f"holding_event#{hid} {company} {hdate}",
                                  f"shares>0 但 unit_price 缺失（无法估值）"))

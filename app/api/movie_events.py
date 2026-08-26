@@ -27,7 +27,8 @@ class LinkIn(BaseModel):
 
 
 def _require_same_currency(db: Session, event_currency: str | None, account_id: int):
-    """PRD §6.8 第3类铁律（四轮审计 #164）：同币种才连、不换算；不符则不可关联。"""
+    """PRD §6.8 第3类铁律（四轮审计 #164）：同币种才连、不换算；不符则不可关联。
+    五轮审计 #176：关池（closed）账户只读终态（§6.6），拒攰流水。"""
     acc = db.get(Account, account_id)
     if not acc:
         raise HTTPException(404, "account not found")
@@ -35,6 +36,10 @@ def _require_same_currency(db: Session, event_currency: str | None, account_id: 
     if acc.currency != ev_cur:
         raise HTTPException(
             422, f"同币种才可关联（不换算）：事件 {ev_cur} ≠ 账户 {acc.currency}")
+    if acc.status == "closed":
+        raise HTTPException(
+            422, f"账户 #{acc.id}（{acc.currency}）已于 {acc.closed_on} 关池，"
+                 f"只读终态不可收新流水（§6.6）")
     return acc
 
 

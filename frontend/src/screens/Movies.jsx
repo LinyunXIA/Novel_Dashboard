@@ -38,11 +38,11 @@ export default function Movies() {
             <span className="note">选择关联账户（同币种 {linking.currency || 'USD'} · PRD §6.8）：</span>
             <select value={accSel} onChange={e => setAccSel(e.target.value)}>
               <option value="">— 选账户 —</option>
-              {(accounts.data?.items || []).filter(a => a.currency === (linking.currency || 'USD')).map(a => (
+              {(accounts.data?.items || []).filter(a => a.currency === (linking.currency || 'USD') && a.status !== 'closed').map(a => (
                 <option key={a.id} value={a.id}>acct#{a.id} {a.currency}{a.status === 'closed' ? ' (已关)' : ''}</option>
               ))}
             </select>
-            {(accounts.data?.items || []).every(a => a.currency !== (linking.currency || 'USD')) &&
+            {!(accounts.data?.items || []).some(a => a.currency === (linking.currency || 'USD') && a.status !== 'closed') &&
               <span className="warn">无同币种 active/closed 账户可关联</span>}
             <button className="primary" disabled={!accSel || op.busy} onClick={doLink}>确认关联</button>
             <button className="ghost" onClick={() => { setLinking(null); setAccSel('') }}>取消</button>
@@ -73,7 +73,7 @@ export default function Movies() {
             {linkedItems.map(m => (
               <tr key={m.id}>
                 <td>{m.title}</td><td>acct#{m.linked_account_id}</td><td>{FMT(m.dividends_total)}</td>
-                <td><button className="ghost" onClick={() => op.submit(`/api/v1/movie-events/${m.id}/unlink`, {})}>解关联</button></td>
+                <td><button className="ghost" disabled={op.busy} onClick={() => op.submit(`/api/v1/movie-events/${m.id}/unlink`, {})}>解关联</button></td>
               </tr>
             ))}
             {!linkedItems.length && <tr><td colSpan="4" className="note">无已关联事件</td></tr>}

@@ -70,7 +70,7 @@ export default function SourceDiff() {
                     <button className="primary" disabled={op.busy} onClick={() => adopt(f)}>采纳新版本</button>
                   )}
                   {(f.current_version && f.current_version > 1) && (
-                    <button className="ghost" onClick={() => restore(f, f.current_version - 1)}>回退上一版</button>
+                    <button className="ghost" disabled={op.busy} onClick={() => restore(f, f.current_version - 1)}>回退上一版</button>
                   )}
                 </td>
               </tr>

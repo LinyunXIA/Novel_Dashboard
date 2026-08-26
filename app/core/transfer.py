@@ -63,16 +63,23 @@ def _fx_rate(session: Session, fx_from: str, fx_to: str, year: int) -> Optional[
             ExchangeRate.year == year,
         ).limit(1)
     ).first()
-    if rrow is not None and rrow[0] is not None and Decimal(str(rrow[0])) != 0:
-        return Decimal(1) / Decimal(str(rrow[0]))
+    if rrow is not None and rrow[0] is not None:
+        rate = Decimal(str(rrow[0]))
+        if rate > 0:                     # 五轮审计 #175：与正向对称，负值取倒数仍非法
+            return Decimal(1) / rate
     return None
 
 
 def available_fx_pairs(session: Session, year: int) -> list[tuple[str, str]]:
-    """该年在库的直接货币对方向（issue #87-1：供错误提示/前端可用方向下拉）。"""
+    """该年在库的**有效**直接货币对方向（issue #87-1：供错误提示/前端可用方向下拉）。
+
+    五轮审计 #175：0/负汇率行不可用于换汇（_fx_rate 拒绝），提示列表同步过滤，
+    避免展示可选但提交必 422 的方向。
+    """
     return session.execute(
         select(ExchangeRate.fx_from, ExchangeRate.fx_to)
-        .where(ExchangeRate.year == year, ExchangeRate.rate.isnot(None))
+        .where(ExchangeRate.year == year,
+               ExchangeRate.rate.isnot(None), ExchangeRate.rate > 0)
         .order_by(ExchangeRate.fx_from, ExchangeRate.fx_to)
         .distinct()
     ).all()

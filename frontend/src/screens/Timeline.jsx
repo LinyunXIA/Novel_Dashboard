@@ -6,7 +6,7 @@ import { ErrorBox, Field } from './ui'
  * 编年史屏（F-P2-05 · §12/§6.4）：overlay 增改删 + 差异/重置回源/以源为最新。
  * 用户覆盖行可编辑；系统行（投资/划拨 overlay）只读；源行可发起覆盖编辑。
  */
-export default function Timeline({ asOf }) {
+export default function Timeline({ asOf, calMax = 2026 }) {
   const [refresh, setRefresh] = useState(0)
   // issue #121：全局日历游标接入（§14.2 ?as_of= 已发生事件）
   const asOfQ = asOf ? `&as_of=${asOf}` : ''
@@ -38,19 +38,20 @@ export default function Timeline({ asOf }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  const save = () => {
+  const save = async () => {
     const body = {
       event_year: Number(form.event_year), event_date: form.event_date || null,
       title: form.title, note: form.note || null, decade: form.decade || null,
     }
+    // 五轮审计 #177：await 结果，仅成功才关闭表单（失败保留编辑内容供修正重提）
+    let res
     if (editingKey === 'new') {
-      op.submit('/api/v1/timeline-events', body)
+      res = await op.submit('/api/v1/timeline-events', body)
     } else {
-      // 用标题/year 反查覆盖行 id → PATCH
       const row = items.find(r => r.editable && `${r.event_year}:${r.title}` === editingKey)
-      if (row) op.submit(`/api/v1/timeline-events/${row.id}`, body, { method: 'PATCH' })
+      if (row) res = await op.submit(`/api/v1/timeline-events/${row.id}`, body, { method: 'PATCH' })
     }
-    cancel()
+    if (res?.ok) cancel()
   }
 
   return (
@@ -64,7 +65,7 @@ export default function Timeline({ asOf }) {
           <div className="form">
             <h4>{editingKey === 'new' ? '新增覆盖条目' : `编辑覆盖条目 ${editingKey}`}</h4>
             <div className="row">
-              <Field label="年份"><input type="number" min={1947} max={2026} value={form.event_year}
+              <Field label="年份"><input type="number" min={1947} max={calMax} value={form.event_year}
                 onChange={e => set('event_year', Number(e.target.value))} /></Field>
               <Field label="日期"><input type="date" value={form.event_date}
                 onChange={e => set('event_date', e.target.value)} /></Field>
@@ -104,9 +105,9 @@ export default function Timeline({ asOf }) {
                     {isUser ? (
                       <>
                         <button className="ghost" onClick={() => startEdit(r)}>编辑</button>
-                        <button className="ghost" onClick={() => op.submit(`/api/v1/timeline-events/${r.id}/overlay/restore`, {})}>重置回源</button>
-                        <button className="ghost" onClick={() => op.submit(`/api/v1/timeline-events/${r.id}/overlay/source-as-latest`, {})}>以源为最新</button>
-                        <button className="ghost" onClick={() => op.submit(`/api/v1/timeline-events/${r.id}`, {}, { method: 'DELETE' })}>删除</button>
+                        <button className="ghost" disabled={op.busy} onClick={() => op.submit(`/api/v1/timeline-events/${r.id}/overlay/restore`, {})}>重置回源</button>
+                        <button className="ghost" disabled={op.busy} onClick={() => op.submit(`/api/v1/timeline-events/${r.id}/overlay/source-as-latest`, {})}>以源为最新</button>
+                        <button className="ghost" disabled={op.busy} onClick={() => op.submit(`/api/v1/timeline-events/${r.id}`, {}, { method: 'DELETE' })}>删除</button>
                       </>
                     ) : !r.system ? (
                       <button className="ghost" onClick={() => startCreate(r)}>覆盖编辑</button>

@@ -179,6 +179,11 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         if r.category == "return_table" and r.records:
             imported_rs.append(r)
             rcur += writer.import_return_curves(session, r.records)["n"]
+        if r.category == "return_table" and not r.records and r.warnings:
+            # 五轮审计 #177：零条告警达主链路（此前只进 run stdout，ingest 静默）——
+            # 落 ingest_report(warn) + 日志，供数据调整员察觉 catch-all 误归档
+            _record_parse_warning(session, r.file, "; ".join(r.warnings))
+            log(f"   ⚠ {r.file}: {r.warnings[0]}")
         if r.category == "fx" and r.records:
             fx_files.append(r)        # 收集，权威优先 + 冲突检测在下方统一处理
         if r.category == "timeline" and r.records:
@@ -394,6 +399,21 @@ def _record_parse_error(session, file_path: str, category: str, error: str | Non
     else:
         session.add(IngestReport(file_path=file_path, rule=category or None,
                                  level="error", line=None, detail=detail))
+
+def _record_parse_warning(session, file_path: str, detail: str) -> None:
+    """五轮审计 #177：解析层 warning 落库主链路（level='warn'，同键幂等）。"""
+    from sqlalchemy import select as _s
+    from app.model import IngestReport
+    existing = session.execute(_s(IngestReport).where(
+        IngestReport.file_path == file_path,
+        IngestReport.rule.is_(None),
+        IngestReport.level == "warn").limit(1)).scalar_one_or_none()
+    if existing is not None:
+        existing.detail = detail
+    else:
+        session.add(IngestReport(file_path=file_path, rule=None,
+                                 level="warn", line=None, detail=detail))
+
 
 def _log_soft(log, file: str, crep) -> int:
     """输出软警告（§11.4「标」：入库但高亮），返回条数（issue #72）。"""

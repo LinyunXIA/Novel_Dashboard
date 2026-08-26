@@ -5,6 +5,31 @@
 
 ---
 
+## [Audit Round 3+4+5 · #151-#179] — 2026-08-26
+
+**三轮/四轮/五轮对照审计修复批**（跟踪索引 #157/#172/#179；DESIGN §21.7–§21.9）
+
+- **三轮（PR #158，#151-#156）**：Dashboard 渲染崩溃死代码、CLI 快照动态上限收尾
+  （calendar_years 全链路）、overlay 三端点补重算、§14.2 两端点补齐
+  （snapshots/{date}、source-files 单版本内容）、英国学徒税 levy 公式、docs 回写。
+- **F-P2-07 导出落地（PR #159）**：`app/export/` md 六节档案 + csv 五 scope（RFC4180）
+  + reportlab PDF 报告（CJK 字体内嵌）；`/api/v1/exports`×3；「导入状态」屏导出中心；
+  F-P2-08 移入 Phase 3（F-P3-01）。
+- **四轮（PR #173 P0 + PR #174 P1-P3，#160-#171）**：PDF 中文 CJK 字体注册、换汇正向
+  零汇率防御、bank 节标题币种配对识别、return_table 复合年化封盘、事件关联同币种铁律、
+  .gitignore data/** 重写、event_stock 日期归一、前端 useFetch r.ok+防乱序、ingest 卫生九项、
+  core/API 健壮性十五项、测试缺口 G 系列、§21.9 回写。
+- **五轮（本批，#175-#178）**：换汇反向负汇率穿透修复 + available_fx_pairs 过滤非法行；
+  closed 关池账户全通道拒新流水（movie link/stock 动作/_require_open_account 防线 +
+  前端过滤）；ui_ops 五端点异常收窄（业务族 422/409、其余 500 通用文案）；
+  NotificationsBanner ack 校验；Timeline save 失败保留编辑 + 行级按钮 busy；
+  年份输入上限动态化（calMax prop）；Health 屏错误上屏；G6 missing_rates 实质断言；
+  return_table 零条告警达主链路（ingest_report 落库）；死变量/未用导入清理。
+
+最终验证：pytest **531 passed**；vite build 通过。
+
+---
+
 ## [Phase 2 · F-P2-06] — 2026-08-25
 
 **文件 diff 回退：版本 diff → UI 决策「采纳新版本」/「回退」（DB+磁盘复原）**（DESIGN §11）

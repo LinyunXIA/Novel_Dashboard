@@ -92,7 +92,6 @@ HP_CSC_DXC_EXPECTED = [
 ]
 
 #: 主链 unasserted 处理：HPQ 为父保留腿，由子链另验证（informational）
-HP_CSC_DXC_UNASSERTED = ["HPQ"]
 
 #: 只读 verify 子链（steps=[]，不重复 buy/分割；只复验主链已建头寸）
 HP_CSC_HPINC = {

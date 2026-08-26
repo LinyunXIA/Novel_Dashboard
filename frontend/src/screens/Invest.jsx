@@ -7,7 +7,7 @@ const RISK = ['R1', 'R2', 'R3', 'R4', 'R5']
 /** F-P1-01/02/09 投资屏：一年一投、R 级计息、年末赎回、失败整体拒绝（useDataOp）。
  *  #143 备案：本屏为写操作表单，**有意**不随全局日历游标（asOf）联动重挂载——
  *  投资年份/发生日由表单显式输入；余额校验以服务端 start_date 的 as-of 口径为准。 */
-export default function Invest() {
+export default function Invest({ calMax = 2026 }) {
   const regions = useFetch('/api/v1/returns/regions')
   const ents = useFetch('/api/v1/entities?page_size=200')
   const accts = useFetch('/api/v1/accounts?page_size=500')      // issue #87-2：币种下拉
@@ -86,7 +86,7 @@ export default function Invest() {
         <p className="note">DESIGN §19.1–19.4 · UI 派生通道 · 失败整体拒绝（表单保留不变）</p>
         <div className="form">
           <div className="row">
-            <Field label="年份"><input type="number" min={1947} max={2026} value={form.year}
+            <Field label="年份"><input type="number" min={1947} max={calMax} value={form.year}
               onChange={e => setYear(Number(e.target.value))} /></Field>
             <Field label="风险级">
               <select value={form.risk_lvl} onChange={e => set('risk_lvl', e.target.value)}>
@@ -138,7 +138,7 @@ export default function Invest() {
           <h3 style={{ marginTop: 22 }}>活期结息（§19.2 · 2% 年化按日折）</h3>
           <p className="note">对全部 active 账户按台账逐日余额加权计息，当年 12-30 入账；同年重跑幂等覆盖</p>
           <div className="row">
-            <Field label="结息年份"><input type="number" min={1947} max={2026} value={demandYear}
+            <Field label="结息年份"><input type="number" min={1947} max={calMax} value={demandYear}
               onChange={e => setDemandYear(Number(e.target.value))} /></Field>
             <button className="primary" disabled={demand.busy} style={{ alignSelf: 'flex-end' }}
               onClick={() => demand.submit('/api/v1/demand-interest', { year: Number(demandYear) })}>

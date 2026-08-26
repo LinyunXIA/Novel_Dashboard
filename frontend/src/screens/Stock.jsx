@@ -88,9 +88,9 @@ export default function Stock() {
               </select>
               <select value={accSel} onChange={e => setAccSel(e.target.value)}>
                 <option value="">— 账户 —</option>
-                {accts.filter(a => a.currency === evCur).map(a => <option key={a.id} value={a.id}>acct#{a.id} {a.currency}</option>)}
+                {accts.filter(a => a.currency === evCur && a.status !== 'closed').map(a => <option key={a.id} value={a.id}>acct#{a.id} {a.currency}</option>)}
               </select>
-              {accts.length > 0 && accts.every(a => a.currency !== evCur) &&
+              {accts.length > 0 && !accts.some(a => a.currency === evCur && a.status !== 'closed') &&
                 <span className="warn">无同币种账户可关联</span>}
               <button className="primary" disabled={!entSel || !accSel || op.busy} onClick={doAssociate}>确认关联</button>
               <button className="ghost" onClick={() => { setAssocId(null); setEntSel(''); setAccSel('') }}>取消</button>
