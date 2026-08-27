@@ -34,16 +34,33 @@ export default function Graph({ url, emptyHint, action }) {
   const title = isAll ? TYPE_LABEL.family
     : (url.startsWith('/api/v1/graph/persons') ? TYPE_LABEL.person : TYPE_LABEL.company)
 
+  // #199 放射/星型布局：主角（或度最大节点）居中，其余按与中心的 BFS 边深度分布同心环
   const layout = useMemo(() => {
     if (!nodes.length) return {}
+    const adj = new Map(nodes.map(n => [n.id, new Set()]))
+    for (const e of edges) { adj.get(e.from)?.add(e.to); adj.get(e.to)?.add(e.from) }
+    const proto = nodes.find(n => ['Stijn Peeters', '夏LY'].includes(n.name))
+    const centerId = (proto || nodes.reduce(
+      (a, b) => (adj.get(a.id).size >= adj.get(b.id).size ? a : b), nodes[0])).id
+    // BFS 深度（未达节点兜底深度 1，保证都环绕中心不丢失）
+    const depth = new Map([[centerId, 0]])
+    const q = [centerId]
+    while (q.length) { const c = q.shift(); for (const nb of adj.get(c) || []) if (!depth.has(nb)) { depth.set(nb, depth.get(c) + 1); q.push(nb) } }
+    let maxD = 1
+    for (const n of nodes) { if (depth.get(n.id) === undefined) depth.set(n.id, 1); maxD = Math.max(maxD, depth.get(n.id)) }
+    const R = Math.min(CX, CY) - 80
+    const layers = new Map()
+    for (const n of nodes) { const d = depth.get(n.id) ?? 1; if (!layers.has(d)) layers.set(d, []); layers.get(d).push(n.id) }
     const pos = {}
-    const R = Math.min(CX, CY) - 90
-    nodes.forEach((n, i) => {
-      const ang = (i / nodes.length) * Math.PI * 2 - Math.PI / 2
-      pos[n.id] = { x: CX + R * Math.cos(ang), y: CY + R * Math.sin(ang) }
-    })
-    return { pos, R }
-  }, [nodes])
+    let offset = -Math.PI / 2
+    for (const [d, ids] of [...layers.entries()].sort((a, b) => a[0] - b[0])) {
+      const r = d === 0 ? 0 : R * (d / maxD)
+      const step = Math.PI * 2 / Math.max(1, ids.length)
+      ids.forEach((id, i) => { pos[id] = { x: CX + r * Math.cos(offset + step * i), y: CY + r * Math.sin(offset + step * i) } })
+      offset += step / 2                       // 相邻环错开半格，减少连线重叠
+    }
+    return { pos, R, centerId }
+  }, [nodes, edges])
   const pos = layout.pos || {}
   const nodeName = id => (nodes.find(n => n.id === id) || {}).name || `#${id}`
 
@@ -159,7 +176,7 @@ export default function Graph({ url, emptyHint, action }) {
               const style = (isAll && TYPE_STYLE[n.type]) || { fill: 'var(--s1)', shape: 'circle' }
               return (
                 <g key={n.id} style={{ cursor: 'pointer' }} onClick={ev => { ev.stopPropagation(); onNode(n.id) }}>
-                  {renderShape(p, n, style)}
+                  {renderShape(p, n, style, n.id === layout.centerId)}
                   <text x={p.x} y={p.y} fontSize="9" fill={selected === n.id ? '#000' : '#fff'}
                     textAnchor="middle" dominantBaseline="central" pointerEvents="none"
                     fontWeight={selected === n.id ? 700 : 400}>{String(n.id)}</text>
@@ -221,14 +238,14 @@ function assetSections(d) {
   )
 }
 
-function renderShape(p, n, style) {
+function renderShape(p, n, style, isCenter) {
   const fill = style.fill
-  const stroke = 'var(--page)', sw = 2
+  const stroke = isCenter ? 'var(--warn)' : 'var(--page)', sw = isCenter ? 3 : 2
   if (style.shape === 'rect') {
     return <rect x={p.x - 18} y={p.y - 12} width={36} height={24} rx={3} fill={fill} opacity="0.9" stroke={stroke} strokeWidth={sw} />
   }
   if (style.shape === 'diamond') {
     return <polygon points={`${p.x},${p.y - 16} ${p.x + 16},${p.y} ${p.x},${p.y + 16} ${p.x - 16},${p.y}`} fill={fill} opacity="0.9" stroke={stroke} strokeWidth={sw} />
   }
-  return <circle cx={p.x} cy={p.y} r={16} fill={fill} opacity="0.85" stroke={stroke} strokeWidth={sw} />
+  return <circle cx={p.x} cy={p.y} r={isCenter ? 22 : 16} fill={fill} opacity="0.85" stroke={stroke} strokeWidth={sw} />
 }
