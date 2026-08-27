@@ -110,7 +110,8 @@ def import_characters(session: Session, records: list[dict], source_file: str | 
     """
     stats: dict = {"imported": 0, "rels": 0, "warnings": []}
     for rec in records:
-        ent = upsert_entity(session, "person", rec["name"], fields=rec.get("fields"),
+        ent = upsert_entity(session, "person", rec["name"], display_name=rec.get("display_name"),
+                            fields=rec.get("fields"),
                             source_file=rec.get("source_file") or source_file)
         stats["imported"] += 1
         for rel_key, rel_val in rec.get("relations") or []:
