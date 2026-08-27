@@ -67,7 +67,8 @@ Novel_Dashboard/
    ├─ config.py              # 环境(dev/test/prod)取库/路径/输入目录
    ├─ db.py                  # SQLAlchemy 引擎/会话；迁移入口
    ├─ ingest/
-   │  ├─ main.py             # CLI: python -m app.ingest.main
+   │  ├─ main.py             # CLI: python -m app.ingest.main（含 reset 清库重建子命令）
+   │  ├─ manifest.py         # prod 激活清单 import_files.yaml 门控（dev/test 不读，§11.1）
    │  ├─ detect.py           # 文件→类别(银行/股票/收益表/汇率/人物/时间线；基准/事件 排除)
    │  ├─ parsers/
    │  │  ├─ bank.py          # 银行台账
@@ -97,6 +98,10 @@ Novel_Dashboard/
 - `input_dir`：数据调整员放置待导入文件的目录（新增/更新都先落到这里）。
 - `overlay_dir`：用户数据 md 覆盖层（编年史）。
 
+**prod 运维文件（位于 gitignored 的 `Design_Folder`，不入 git）**：
+- `Design_Folder/import_files.yaml` —— **激活清单**（严格白名单）：枚举 Design_Folder 全部 `.md`（含 `基准/事件` 电影/股票及子目录、`基准/公司/用工成本/` 与 `税率/`、模版/设计文件等），仅 `active:true` 的源文件才会在 **prod** 被 ingest/events-movie/events-stock/labor-baseline 导入；dev/test 不读本清单、维持全量导入（§11.1/§16）。
+- `Design_Folder/start_dashboard.sh` —— 启动脚本：`APP_ENV=prod` 起后端 FastAPI(8001) 与前端 Vite(5173)，仅启服务（不含重置/导入）。
+
 ---
 
 ## 4. 配置与环境
@@ -113,7 +118,9 @@ ENV = {
 - 三环境代码同源，仅 DSN 与数据目录（`input_dir`/`overlay_dir`）不同；`input_dir` 各自独立，避免 test 抽样与 dev 全量导入互相污染。
 - **本地 LLM（搜索，§18.5）**：`LLM_URL`/`LLM_MODEL`、`EMBED_URL`/`EMBED_MODEL` 走 `omlx-server`（`http://127.0.0.1:8000`，无鉴权），三环境共用同一本地推理，不入 DSN。
 - dev/test 均指向真实数据；test 可抽样（如每文件取 2/30 行精度校验）。
-- 初始化：`alembic upgrade head && python -m app.ingest.main --full`，无 UI 向导。
+- 初始化：`alembic upgrade head && python -m app.ingest.main ingest`，无 UI 向导。
+- **prod 导入门控（Phase 2+ 运维）**：`Design_Folder/import_files.yaml` 为激活清单（严格白名单），prod 的 `ingest`/`events-movie`/`events-stock`/`labor-baseline` **只导入 `active:true`** 的源文件，未激活一律跳过（manifest.py `require_active_files`）；dev/test 不读清单、全量导入现状。新增源文件需先在清单登记并激活。
+- **清库重建（不可逆）**：`reset --env prod`（`--yes` 跳过确认）——删 `novel_prod` **全部 public 表**（保留 pgvector 扩展、库本体、DSN）→ `alembic upgrade head` 重建空 schema。
 
 ---
 
@@ -536,10 +543,11 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 ## 11. 文件变更流与回退
 
 ### 11.1 新增文件（数据调整员）
-1. 放入 `source_dir` → 运行 `python -m app.ingest.main ingest --env <env>`
-   （typer 必须带子命令；`--force` 跳过指纹 gate 重浇灌四类收益文件，issue #114）。
-2. detect → parse → normalize → 事务导入 → 增量重算 → notification。
-3. `source_file_version` 记录 `is_current` 的新版本。
+1. **激活（仅 prod）**：在 `Design_Folder/import_files.yaml` 把该文件置 `active:true`（严格白名单，§16）；dev/test 全量导入、无需登记。
+2. 放入/更新 `source_dir` → 运行 `python -m app.ingest.main ingest --env <env>`
+   （prod 只导入激活项；`--force` 跳过指纹 gate 重浇灌四类收益文件，issue #114）。
+3. detect → parse → normalize → 事务导入 → 增量重算 → notification。
+4. `source_file_version` 记录 `is_current` 的新版本。
 
 ### 11.2 更新已有文件（diff + 决策）
 1. 检测到 `input_dir/某文件` 与 `source_file_version.is_current` 内容不一致。
@@ -771,7 +779,9 @@ class Importer(Protocol):
 ## 16. 三环境 / 迁移（Phase 2）
 
 - 三库独立；Alembic 迁移共用。
-- Phase 2 需求：跨环境数据同步/迁移（如把 test 修正同步回 prod），按使用情况再设计（目前仅说明意图，不实现）。
+- **prod 门控**：`Design_Folder/import_files.yaml` 激活清单仅控 prod 导入（strict allowlist），dev/test 全量。
+- **清库**：`reset --env prod` 删全部 public 表 → `alembic upgrade head` 重建空 schema（保留 pgvector / 库本体 / DSN，不可逆）。
+- Phase 2 需求：跨环境数据同步/迁移（如把 test 修正同步回 prod）仍未引入；2026-08-27 起当前阶段为 **Phase 2+：加强 Phase 2 实际使用体验与排错**（激活清单门控、reset 清库、启动脚本、事件/股票 UI 交互等运维/实战收尾）。
 
 ---
 
@@ -945,11 +955,22 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 
 > 推进原则：先 P0 工程骨架打通 ingest→快照→曲线→健康；再 P1 各交互操作；Phase 2 事件/增强。跨 P0/P1 共用 §6.8 四类操作模板，避免重复实现。
 
+### Phase 2+ —— 运维 / 实战排错（2026-08-27 起）
+
+> 当前阶段：聚焦 **Phase 2 实际使用体验与排错**——生产库由数据整理员按激活清单逐块导入、可清库重建、一键起服务，事件/股票等 Phase2 交互收尾。
+
+| 编号 | 模块 | 功能 | 关键章节 | 状态 |
+|---|---|---|---|---|
+| F-P2+-01 | **prod 激活清单门控** | `Design_Folder/import_files.yaml` 枚举 Design_Folder 全部 `.md`（含 `基准/事件` 电影/股票及子目录、`基准/公司/用工成本/` 与 `税率/`、模版/设计文件），仅 `active:true` 才经 `ingest`/`events-movie`/`events-stock`/`labor-baseline` 入库（prod 严格白名单）；dev/test 不读清单、全量导入。新文件需登记并激活。已实现 `app/ingest/manifest.py`（load_active_files / require_active_files），四入口接入 prod 门控 | §11.1/§16/§4 | ✅ |
+| F-P2+-02 | **清库重建** | `reset --env prod`（`--yes` 跳过确认）：删 `novel_prod` 全部 public 表（保留 pgvector/库本体/DSN）→ `alembic upgrade head` 重建空 schema（不可逆） | §16/§4 | ✅ |
+| F-P2+-03 | **启动脚本** | `Design_Folder/start_dashboard.sh`：`APP_ENV=prod` 起动后端 FastAPI(8001) + 前端 Vite(5173)，仅启服务（不含重置/导入） | §4 | ✅ |
+
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
 | 编号 | 模块 | 功能 | 关键章节 | 状态 |
 |---|---|---|---|---|
 | F-P3-01（原 F-P2-08） | **统一搜索增强** | 搜索数据质量达标后再评估是否需要 LLM 判文件兜底｜编号沿用原 F-P2-08 以便引用追溯 | §18.5 | ⬜ |
+| F-P3-02（原 Phase 2「视使用情况」项） | **环境间数据迁移/同步** | 跨环境数据同步/迁移（如把 test 修正同步回 prod）——按使用情况再评估，目前未引入，仅说明意图 | §16 | ⬜ |
 
 ---
 
@@ -1173,6 +1194,23 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - **level 空串静默修复**（九轮 N3）：`positions` 中 `lvl` 为 `None/""` 的岗位此前双重静默（既按 0% 计成本又不进 `unknown_levels`），现显式记为 `(empty)` 入统计可见化。
 - **死代码清理**（九轮 N3）：`Transfer.jsx:57-58` 不可达 `else if (skipped)` 分支移除；`currency._direct_rate/_pair_rate` 旧 SQL 点查路径删除（已由 `_load_pairs` + `_direct_from/_pair_from` 批量路径完全替代）；相关 `or_` 导入清理。
 - **外部 API v2.6 适配**（#193，PR #194）：见 §13.3 注记；`tax_zone` 条件写入同上。
+
+### 21.12 Phase 2+ 运维回写：数据整理员 prod 工作流（2026-08-27）
+
+> 数据整理员以激活清单逐块控制生产库导入；与前文冲突处以本节为准。对应 §20 Phase 2+（F-P2+-01~03）与 §11.1/§16。
+
+- **激活清单门控**（F-P2+-01）：`Design_Folder/import_files.yaml` 为 prod 严格白名单（`manifest.py`）；
+  `require_active_files(env,cfg)` 仅 prod 必读（缺清单报错退出防误全量），dev/test 返回 `None` 全量。
+  四个落库入口均按激活集过滤：`ingest`（import_all 过滤 `rep.results`）、`events-movie`/`events-stock`
+  （glob 候选按相对路径过滤）、`labor-baseline`（import_wage/import_cpi/import_tax 各文件按激活集过滤）。
+  清单枚举 Design_Folder 全部 `.md`（含 `基准/事件` 与 `基准/公司/用工成本/税率`、模版/设计文件），默认 `active:false`。
+- **清库重建**（F-P2+-02）：`reset --env <env> [--yes]` 删 **public 全部表**（保留 pgvector 扩展/库本体/DSN）
+  → 设 `APP_ENV` 后程序化 `alembic upgrade head`（migrations/env.py 按 APP_ENV 解析 DSN）；`alembic_version` 随表删除，
+  `upgrade head` 自 baseline 整链重建。CLI 清单由 14 个增至 **15 个**。
+- **启动脚本**（F-P2+-03）：`Design_Folder/start_dashboard.sh`（`chmod +x`）`APP_ENV=prod` 起后端 8001 + 前端 5173，
+  trap 回收后端；仅启服务，不含重置/导入。
+- **入库存放**：`import_files.yaml` 与 `start_dashboard.sh` 位于 gitignored 的 `Design_Folder/`，**不入 git**
+  （与创作素材同域；工程线代码仍走版本库）。
 
 ---
 
