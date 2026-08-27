@@ -829,5 +829,21 @@ def events_stock(env: str = typer.Option(None, "--env")):
                f"；阻塞文件 {blocked}")
 
 
+@app.command()
+def timeline_defaults(env: str = typer.Option(None, "--env"),
+                      rebuild: bool = typer.Option(False, "--rebuild",
+                                                   help="先清除已生成的默认事件再重建（不触碰手工/overlay 行）")):
+    """F-P2+-04 时间线默认事件：按导入数据生成（只加首次投资/发生 + 每年 R1-5 投资）。
+
+    `Design_Folder/时间线.md` 已清空为占位；时间线改由本命令据 DB 自动生成默认事件。
+    独立命令，数据整理员在每次导入后手动运行；幂等合并（重跑只并集）。
+    """
+    from app.core.timeline_defaults import derive_default_timeline
+    with _session_for(env) as s:
+        r = derive_default_timeline(s, rebuild=rebuild, log=typer.echo)
+        s.commit()
+    typer.echo(f"[{_resolved_env(env)}] 时间线默认事件：新增 {r['inserted']} / 跳过 {r['skipped']}（共 {r['total']}）")
+
+
 if __name__ == "__main__":
     app()
