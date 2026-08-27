@@ -22,6 +22,7 @@ from app.config import get_config
 from app.db import check_connection_for, make_sessionmaker
 from app.ingest.parse import run_ingest
 from app.ingest import conflict, writer
+from app.ingest.manifest import require_active_files
 
 app = typer.Typer(help="Novel Dashboard ingest")
 
@@ -79,10 +80,56 @@ def ingest(
     Session 严格按 `--env` 构造（issue #3）；核心循环见 import_all。
     """
     cfg = get_config(env)
+    manifest_active = require_active_files(cfg.env, cfg)   # prod 门控；dev/test 返回 None
     with _session_for(env) as s:
-        stats = import_all(s, cfg.source_dir, log=typer.echo, force=force)
+        stats = import_all(s, cfg.source_dir, log=typer.echo, force=force,
+                           manifest_active=manifest_active)
         s.commit()          # issue #68：import_all 只 flush；commit 由命令层负责（勿丢）
     typer.echo(f"[{cfg.env}] {stats['summary']}")
+
+
+@app.command()
+def reset(env: str = typer.Option(None, "--env"),
+          yes: bool = typer.Option(False, "--yes",
+                                   help="跳过确认（脚本/CI 用；非交互下必加）")):
+    """清空并重建某环境 schema（危险！删除全部数据表后 alembic upgrade head）。
+
+    只删 public schema 的**表**（保留 pgvector 扩展、库本体、DSN），随后程序化把
+    `alembic` 迁到 head 重建空表。用于数据整理员清库后的逐块导入。不可逆。
+    """
+    cfg = get_config(env)
+    typer.secho(
+        f"[{cfg.env}] 危险！即将删除 {cfg.env} 库全部数据表并 alembic 重建到 head（不可逆）",
+        fg=typer.colors.RED)
+    if not yes and not typer.confirm(f"确认清空 {cfg.env} 数据库？"):
+        raise typer.Exit("已取消")
+    from app.db import make_engine
+    eng = make_engine(env)
+    drop_all = """
+    DO $$ DECLARE r RECORD; BEGIN
+      FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP
+        EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE';
+      END LOOP;
+    END $$;
+    """
+    with eng.begin() as conn:
+        conn.exec_driver_sql(drop_all)
+    typer.echo(f"[{cfg.env}] 已删除全部 public 表，正在 alembic upgrade head ...")
+    import os
+    from app.config import PROJECT_ROOT
+    from alembic import command as _al_command
+    from alembic.config import Config as _AlConfig
+    prev = os.environ.get("APP_ENV")
+    os.environ["APP_ENV"] = cfg.env            # migrations/env.py 按 APP_ENV 解析 DSN
+    try:
+        _al_command.upgrade(_AlConfig(str(PROJECT_ROOT / "alembic.ini")), "head")
+    finally:
+        if prev is None:
+            os.environ.pop("APP_ENV", None)
+        else:
+            os.environ["APP_ENV"] = prev
+    typer.secho(f"[{cfg.env}] schema 已重建（head），可开始清单导入。",
+                fg=typer.colors.GREEN)
 
 
 def _reload_date_rules(session) -> int:
@@ -121,7 +168,8 @@ def _earliest_affected_year(r) -> int | None:
     return None  # salary/household 等结构未逐年暴露 → 保守全量
 
 
-def import_all(session, source_dir, log=None, force: bool = False, force_files=None) -> dict:
+def import_all(session, source_dir, log=None, force: bool = False, force_files=None,
+               manifest_active: set | None = None) -> dict:
     """扫描 source_dir → 解析 → 冲突检测 → 落库 → 重算快照（F-P0-02..06 主链路）。
 
     issue #68 抽取自原 ingest 命令体以便测试；幂等语义：
@@ -146,6 +194,13 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     job: dict = {}
     fx_files = []
     rep = run_ingest(source_dir)
+    # prod 激活清单门控（import_files.yaml）：仅导入 active:true 的文件，未激活一律跳过。
+    if manifest_active is not None:
+        inactive = sorted({r.file for r in rep.results} - manifest_active)
+        rep.results = [r for r in rep.results if r.file in manifest_active]
+        if inactive:
+            log(f"   ⏭ {len(inactive)} 个文件未在 import_files.yaml 激活，已跳过"
+                f"（例：{inactive[:3]}）")
     # DESIGN §6.5 摄入顺序锁死：人物(entity) 先入 → 初始资产 → 收益/薪资/支出 → 银行。
     # 收益挂账依赖 entity_id，不能按文件名字典序处理（issue #68）。
     _ORDER = ("character", "return_table", "timeline", "initial_asset",
@@ -632,12 +687,15 @@ def labor_baseline(env: str = typer.Option(None, "--env"),
     _OFFICE_ALIAS = {"be": "比利时", "lu": "卢森堡", "nl": "荷兰", "dk": "丹麦",
                      "se": "瑞典", "uk": "英国", "gb": "英国"}
     cfg = get_config(env)
+    manifest_active = require_active_files(cfg.env, cfg)   # prod 门控；dev/test 返回 None
     with _session_for(env) as s:
         if office:
             office_key = _OFFICE_ALIAS.get(office.strip().lower(), office.strip())
-            r = import_tax(s, cfg.source_dir, log=typer.echo, office_list=[office_key])
+            r = import_tax(s, cfg.source_dir, log=typer.echo, office_list=[office_key],
+                           manifest_active=manifest_active)
         else:
-            r = import_labor_baseline(s, cfg.source_dir, log=typer.echo)
+            r = import_labor_baseline(s, cfg.source_dir, log=typer.echo,
+                                      manifest_active=manifest_active)
         s.commit()
     for k, v in r.items():
         if isinstance(v, dict):
@@ -711,12 +769,15 @@ def events_movie(env: str = typer.Option(None, "--env")):
     from app.ingest.parsers.event_movie import parse_event_movie
     from app.ingest.writer import import_movie_events
     cfg = get_config(env)
+    active = require_active_files(cfg.env, cfg)   # prod 门控；dev/test 返回 None
     base = cfg.source_dir / "基准" / "事件" / "电影"
     if not base.exists():
         typer.echo(f"[{_resolved_env(env)}] 无电影事件目录: {base}")
         return
     all_records = []
     for f in sorted(base.glob("*.md")):
+        if active is not None and f.relative_to(cfg.source_dir).as_posix() not in active:
+            continue
         all_records.extend(parse_event_movie(f))
     with _session_for(env) as s:
         r = import_movie_events(s, all_records)
@@ -734,12 +795,15 @@ def events_stock(env: str = typer.Option(None, "--env")):
     from app.ingest.parsers.event_stock import parse_event_stock
     from app.ingest.writer import import_stock_events
     cfg = get_config(env)
+    active = require_active_files(cfg.env, cfg)   # prod 门控；dev/test 返回 None
     base = cfg.source_dir / "基准" / "事件" / "股票"
     if not base.exists():
         typer.echo(f"[{_resolved_env(env)}] 无股票事件目录: {base}")
         return
     all_records = []
     for f in sorted(base.glob("*.md")):   # 仅顶层否（收购/英国/香港 子目录本轮跳过）
+        if active is not None and f.relative_to(cfg.source_dir).as_posix() not in active:
+            continue
         all_records.extend(parse_event_stock(f))
     # §11.4 冲突检测：按 source_file 分组，逐文件跑 stock 冲突，blocked 文件不入库（F-P2-04）
     from app.ingest import conflict
