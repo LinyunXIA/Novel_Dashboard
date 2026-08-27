@@ -35,6 +35,7 @@ from app.api.search import router as search_router
 from app.api.timeline import router as timeline_router
 from app.api.ui_ops import router as ui_ops_router
 from app.core.calendar import snapshot_as_of
+from app.core.snapshot import account_live_at, account_status_effective
 from app.core.graph import all_graph, company_graph, person_graph
 from app.core.health import run_report, summarize
 from app.core.wealth import wealth_series
@@ -125,11 +126,12 @@ def get_entity(entity_id: int, db: Session = Depends(get_db)):
 def list_accounts(
     entity_id: Optional[int] = None,
     currency: Optional[str] = None,
+    as_of: Optional[date] = Query(None, description="按日历 as-of 折算有效状态（#203 关池为时间事件）"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """issue #23：补分页（与 entities 对齐）。"""
+    """issue #23：补分页（与 entities 对齐）；#203：status 随 as_of 折算。"""
     q = select(Account)
     if entity_id:
         q = q.where(Account.entity_id == entity_id)
@@ -139,21 +141,23 @@ def list_accounts(
     rows = db.execute(q.order_by(Account.id).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     return {
         "items": [{"id": a.id, "entity_id": a.entity_id, "currency": a.currency,
-                   "status": a.status, "closed_on": a.closed_on,
+                   "status": account_status_effective(a, as_of), "closed_on": a.closed_on,
                    "migrate_to": a.migrate_to_currency} for a in rows],
         "total": total, "page": page, "page_size": page_size,
     }
 
 
 @app.get(API_PREFIX + "/accounts/{account_id}")
-def get_account(account_id: int, db: Session = Depends(get_db)):
-    """issue #23：补账户详情（含开户行/状态/关池日）。"""
+def get_account(account_id: int,
+                as_of: Optional[date] = Query(None, description="按日历 as-of 折算有效状态（#203）"),
+                db: Session = Depends(get_db)):
+    """issue #23：补账户详情（含开户行/状态/关池日）；#203：status 随 as_of 折算。"""
     a = db.get(Account, account_id)
     if not a:
         raise HTTPException(status_code=404, detail="account not found")
     return {
         "id": a.id, "entity_id": a.entity_id, "currency": a.currency,
-        "status": a.status, "closed_on": a.closed_on,
+        "status": account_status_effective(a, as_of), "closed_on": a.closed_on,
         "migrate_to": a.migrate_to_currency, "bank": a.bank,
     }
 
@@ -178,21 +182,26 @@ def entity_relationships(entity_id: int, db: Session = Depends(get_db)):
 
 
 @app.get(API_PREFIX + "/entities/{entity_id}/assets")
-def entity_assets(entity_id: int, db: Session = Depends(get_db)):
-    """#197 点人看资产：账户(末余额)/初始资产/股票持仓/收益流 全聚合。"""
+def entity_assets(entity_id: int,
+                  as_of: Optional[date] = Query(None, description="按日历 as-of 折算账户有效状态（#203）"),
+                  db: Session = Depends(get_db)):
+    """#197 点人看资产：账户(末余额+有效状态)/初始资产/股票持仓/收益流 全聚合。"""
     if db.get(Entity, entity_id) is None:
         raise HTTPException(status_code=404, detail="entity not found")
-    from app.model import HoldingEvent, InitialAsset, Relationship  # noqa: F401
+    from app.model import HoldingEvent, InitialAsset  # noqa: F401
     accounts = []
     for a in db.execute(
             select(Account).where(Account.entity_id == entity_id)
             .order_by(Account.currency)).scalars().all():
+        # #203：关池/承接为时间事件——as_of 下只显示"存续"账户（2001 只有 BEF，EUR 承接池 2002 起）
+        if as_of is not None and not account_live_at(db, a, as_of):
+            continue
         last = db.execute(
             select(LedgerEntry.balance).where(LedgerEntry.account_id == a.id)
             .order_by(LedgerEntry.date.desc(), LedgerEntry.id.desc()).limit(1)
         ).scalar_one_or_none()
         accounts.append({"id": a.id, "currency": a.currency, "bank": a.bank,
-                         "status": a.status,
+                         "status": account_status_effective(a, as_of), "closed_on": a.closed_on,
                          "balance": float(last) if last is not None else None})
     initial = [{
         "asset_type": x.asset_type, "name": x.name, "currency": x.currency,

@@ -91,9 +91,9 @@ export default function App() {
         {active === 'labor' && <LaborCost />}
         {active === 'movies' && <Movies />}
         {active === 'stock' && <Stock />}
-        {active === 'persons' && <Graph url="/api/v1/graph/persons" />}
-        {active === 'companies' && <CompanyGraph />}
-        {active === 'graphall' && <Graph url="/api/v1/graph/all" />}
+        {active === 'persons' && <Graph key={`p-${asOf}`} asOf={asOf} url="/api/v1/graph/persons" />}
+        {active === 'companies' && <CompanyGraph asOf={asOf} />}
+        {active === 'graphall' && <Graph key={`g-${asOf}`} asOf={asOf} url="/api/v1/graph/all" />}
         {active === 'timeline' && <Timeline key={`t-${asOf}`} asOf={asOf} calMax={Number(calRange.max.slice(0, 4))} />}
         {active === 'search' && <Search asOf={asOf} />}
         {active === 'diff' && <SourceDiff />}
@@ -173,7 +173,7 @@ function NotificationsBanner({ onShowImpact }) {
  * 异步资源——POST /api/v1/import-jobs{provider:'company-info'} 建任务 → 轮询
  * GET /api/v1/import-jobs/{id} 至 done/failed → done 取 result.stats 刷新图谱。
  */
-function CompanyGraph() {
+function CompanyGraph({ asOf }) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [stats, setStats] = useState(null)
   const [jobId, setJobId] = useState(null)
@@ -210,8 +210,9 @@ function CompanyGraph() {
 
   return (
     <Graph
-      key={refreshKey}
+      key={`${refreshKey}-${asOf}`}
       url="/api/v1/graph/companies"
+      asOf={asOf}
       action={
         <>
           <button className="ghost" disabled={busy || !!jobId}

@@ -50,6 +50,36 @@ def account_balance_at(session: Session, account_id: int, cutoff) -> Decimal:
     return Decimal(tin or 0) - Decimal(tout or 0)
 
 
+def account_status_effective(acc: Account, as_of) -> str:
+    """账户按日历 as-of 的有效状态（#203 · 关池为时间事件）。
+
+    关池（BEF/LUF/NLG → EUR，DESIGN §6.6）在 closed_on（2002-01-01）生效：
+    日历 as_of **未到** closed_on → 视为 active（未关池）；as_of 未给 or 已到/过 → 用存储 status。
+    """
+    if acc.status == "closed" and acc.closed_on is not None \
+            and as_of is not None and as_of < acc.closed_on:
+        return "active"
+    return acc.status
+
+
+def account_live_at(session, acc, as_of) -> bool:
+    """账户在 as_of 是否"存续"（#203 关池/承接为时间事件，BEF/EUR 先后非并行）。
+
+    - 已关账户：as_of >= closed_on → 关池后不再存续（不可见；如 BEF 2002 起隐藏）。
+    - 承接池（如 EUR，首笔在同一关池日 2002-01-01 承接）：as_of < 首笔日期 → 尚未承接，
+      不可见（2002 前只有源币种池）。
+    """
+    if as_of is not None and acc.closed_on is not None and as_of >= acc.closed_on:
+        return False
+    if as_of is not None:
+        first = session.execute(
+            select(func.min(LedgerEntry.date)).where(LedgerEntry.account_id == acc.id)
+        ).scalar()
+        if first is not None and as_of < first:
+            return False
+    return True
+
+
 def _close_year_of(acc: Account) -> int | None:
     """账户关池年：closed 且有关池日 → closed_on.year，否则 None（DESIGN §6.6）。"""
     if acc.status == "closed" and acc.closed_on is not None:
