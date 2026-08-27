@@ -285,6 +285,7 @@ def parse_character(path: Path) -> list[dict]:
     fields: dict = {}
     rels: list[tuple[str, str]] = []
     name = path.stem
+    display_name: str | None = None
     for line in _lines(path):
         m = re.match(r"^\s*[-*]\s*([^:：]{1,20})[:：]\s*(.+?)\s*$", line)
         if not m:
@@ -295,11 +296,17 @@ def parse_character(path: Path) -> list[dict]:
         kn = key.replace(" ", "")
         if kn == "姓名" and val:
             name = val.split("/")[0].strip()
+        elif kn in ("显示名", "显示名字", "display_name") and val:
+            display_name = val.split("/")[0].strip()
         elif kn in ("与主角的关系", "关系") and val:
             rels.append((key, val))
+            # #197：主称谓落 entity.fields，供图谱亲缘推理；重导 upsert merge 即回填
+            if kn == "与主角的关系" and "与主角的关系" not in fields:
+                fields["与主角的关系"] = val
         else:
             fields[key] = val
-    return [{"name": name, "fields": fields, "relations": rels, "source_file": path.name}]
+    return [{"name": name, "display_name": display_name, "fields": fields,
+             "relations": rels, "source_file": path.name}]
 
 
 # ---------------- timeline（时间线） ----------------

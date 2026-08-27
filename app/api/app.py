@@ -17,6 +17,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -174,6 +175,54 @@ def entity_relationships(entity_id: int, db: Session = Depends(get_db)):
         "since_year": r.since_year, "until_year": r.until_year,
         "direction": "out" if r.from_entity_id == entity_id else "in",
     } for r in rows], "total": len(rows)}
+
+
+@app.get(API_PREFIX + "/entities/{entity_id}/assets")
+def entity_assets(entity_id: int, db: Session = Depends(get_db)):
+    """#197 点人看资产：账户(末余额)/初始资产/股票持仓/收益流 全聚合。"""
+    if db.get(Entity, entity_id) is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    from app.model import HoldingEvent, InitialAsset, Relationship  # noqa: F401
+    accounts = []
+    for a in db.execute(
+            select(Account).where(Account.entity_id == entity_id)
+            .order_by(Account.currency)).scalars().all():
+        last = db.execute(
+            select(LedgerEntry.balance).where(LedgerEntry.account_id == a.id)
+            .order_by(LedgerEntry.date.desc(), LedgerEntry.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        accounts.append({"id": a.id, "currency": a.currency, "bank": a.bank,
+                         "status": a.status,
+                         "balance": float(last) if last is not None else None})
+    initial = [{
+        "asset_type": x.asset_type, "name": x.name, "currency": x.currency,
+        "face_value": float(x.face_value) if x.face_value is not None else None,
+        "pct": float(x.pct) if x.pct is not None else None, "group_key": x.group_key,
+    } for x in db.execute(select(InitialAsset).where(
+        InitialAsset.entity_id == entity_id)).scalars().all()]
+    holdings = [{
+        "company": h.company, "ticker": h.ticker, "event_type": h.event_type,
+        "date": h.date.isoformat(),
+        "shares": float(h.shares) if h.shares is not None else None,
+        "unit_price": float(h.unit_price) if h.unit_price is not None else None,
+        "amount_wusd": float(h.amount) if h.amount is not None else None,
+        "pct": float(h.pct) if h.pct is not None else None,
+    } for h in db.execute(select(HoldingEvent).where(
+        HoldingEvent.entity_id == entity_id).order_by(HoldingEvent.date)).scalars().all()]
+    income = [{
+        "stream_type": x.stream_type, "group_key": x.group_key, "currency": x.currency,
+        "year": x.year, "amount": float(x.amount) if x.amount is not None else None,
+        "label": x.label,
+    } for x in db.execute(select(IncomeStream).where(
+        IncomeStream.entity_id == entity_id).order_by(IncomeStream.year)).scalars().all()]
+    return {"entity_id": entity_id, "name": e_name(entity_id, db),
+            "accounts": accounts, "initial_assets": initial,
+            "holdings": holdings, "income": income}
+
+
+def e_name(entity_id: int, db: Session) -> str:
+    e = db.get(Entity, entity_id)
+    return e.name if e else f"#{entity_id}"
 
 
 @app.get(API_PREFIX + "/ledger-entries/{entry_id}")
@@ -486,6 +535,72 @@ def graph_all(db: Session = Depends(get_db)):
     可视化（前端按 entity_type 着色）。
     """
     return all_graph(db)
+
+
+# ---------------- 图谱关系编辑（#197 · 普通 UI 放行） ----------------
+class _RelBody(BaseModel):
+    from_id: int
+    to_id: int
+    rel_type: str
+
+
+@app.post(API_PREFIX + "/graph/relationships")
+def graph_add_relationship(body: _RelBody, db: Session = Depends(get_db)):
+    """#197 UI 建显式关系（实线）。两端实体须存在。"""
+    for eid, label in ((body.from_id, "from"), (body.to_id, "to")):
+        if db.get(Entity, eid) is None:
+            raise HTTPException(status_code=404, detail=f"entity({label}) not found")
+    rel_type = body.rel_type.strip()
+    if not rel_type:
+        raise HTTPException(status_code=422, detail="rel_type 不能为空")
+    from app.ingest.writer import upsert_relationship
+    r = upsert_relationship(db, body.from_id, body.to_id, rel_type, source_file="ui")
+    db.commit()
+    return {"ok": True, "id": r.id if r else None}
+
+
+@app.delete(API_PREFIX + "/graph/relationships/{rid}")
+def graph_delete_relationship(rid: int, db: Session = Depends(get_db)):
+    """#197 删除显式关系行。"""
+    from app.model import Relationship
+    r = db.get(Relationship, rid)
+    if r is None:
+        raise HTTPException(status_code=404, detail="relationship not found")
+    db.delete(r)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post(API_PREFIX + "/graph/suppress")
+def graph_suppress_inferred(body: _RelBody, db: Session = Depends(get_db)):
+    """#197 UI 删除推理边 → 写抑制标记（隐藏、不复活）。"""
+    from app.core.graph import SUPPRESS_SRC
+    from app.model import Relationship
+    exists = db.execute(select(Relationship).where(
+        Relationship.from_entity_id == body.from_id,
+        Relationship.to_entity_id == body.to_id,
+        Relationship.rel_type == body.rel_type,
+        Relationship.source_file == SUPPRESS_SRC).limit(1)).scalar_one_or_none()
+    if exists is None:
+        db.add(Relationship(from_entity_id=body.from_id, to_entity_id=body.to_id,
+                            rel_type=body.rel_type, source_file=SUPPRESS_SRC))
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete(API_PREFIX + "/graph/suppress")
+def graph_unsuppress_inferred(body: _RelBody, db: Session = Depends(get_db)):
+    """#197 移除抑制标记 → 恢复推理边。"""
+    from app.core.graph import SUPPRESS_SRC
+    from app.model import Relationship
+    for r in db.execute(select(Relationship).where(
+            Relationship.from_entity_id == body.from_id,
+            Relationship.to_entity_id == body.to_id,
+            Relationship.rel_type == body.rel_type,
+            Relationship.source_file == SUPPRESS_SRC)).scalars().all():
+        db.delete(r)
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
