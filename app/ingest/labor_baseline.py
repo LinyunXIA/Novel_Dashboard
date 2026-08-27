@@ -127,13 +127,19 @@ def parse_wage_file(path: Path, region: str) -> list[dict]:
     return out
 
 
-def import_wage(session: Session, source_dir: Path, log=None) -> dict:
+def import_wage(session: Session, source_dir: Path, log=None,
+                manifest_active: set[str] | None = None) -> dict:
     stats = {"region": 0, "rows": 0, "skipped": 0}
     base = source_dir / "基准" / "公司" / "用工成本"
     for region in WAGE_REGIONS:
         path = base / f"{region}.md"
         if not path.exists():
             if log: log(f"  [wage] 缺文件: {region}.md")
+            stats["skipped"] += 1
+            continue
+        if manifest_active is not None and \
+                path.relative_to(source_dir).as_posix() not in manifest_active:
+            if log: log(f"  [wage] 未激活: {region}.md")
             stats["skipped"] += 1
             continue
         recs = parse_wage_file(path, region)
@@ -166,12 +172,19 @@ def parse_cpi_file(path: Path) -> list[dict]:
     return out
 
 
-def import_cpi(session: Session, source_dir: Path, log=None) -> dict:
+def import_cpi(session: Session, source_dir: Path, log=None,
+               manifest_active: set[str] | None = None) -> dict:
     path = source_dir / "基准" / "CPI工资.md"
     stats = {"rows": 0, "skipped": 0, "regions": set()}
     if not path.exists():
         stats["skipped"] += 1
         # issue #144：缺文件早退时归一为 int，避免上层打印 set()
+        stats["regions"] = 0
+        return stats
+    if manifest_active is not None and \
+            path.relative_to(source_dir).as_posix() not in manifest_active:
+        if log: log("  [cpi] 未激活: CPI工资.md")
+        stats["skipped"] += 1
         stats["regions"] = 0
         return stats
     for r in parse_cpi_file(path):
@@ -249,13 +262,19 @@ def parse_tax_file(path: Path, office: str, country_or_region: str) -> list[dict
 
 
 def import_tax(session: Session, source_dir: Path, log=None,
-               office_list: Iterable[str] | None = None) -> dict:
+               office_list: Iterable[str] | None = None,
+               manifest_active: set[str] | None = None) -> dict:
     stats = {"office": 0, "rows": 0, "skipped": 0}
     base = source_dir / "基准" / "公司" / "用工成本" / "税率"
     for office in (office_list or TAX_OFFICES):
         path = base / f"{office}.md"
         if not path.exists():
             if log: log(f"  [tax] 缺文件: {office}.md")
+            stats["skipped"] += 1
+            continue
+        if manifest_active is not None and \
+                path.relative_to(source_dir).as_posix() not in manifest_active:
+            if log: log(f"  [tax] 未激活: {office}.md")
             stats["skipped"] += 1
             continue
         for r in parse_tax_file(path, office, office):
@@ -271,10 +290,11 @@ def import_tax(session: Session, source_dir: Path, log=None,
     return stats
 
 
-def import_labor_baseline(session: Session, source_dir: Path, log=None) -> dict:
+def import_labor_baseline(session: Session, source_dir: Path, log=None,
+                          manifest_active: set[str] | None = None) -> dict:
     """三块基准一体落库（幂等，不含 commit；由命令层 commit）。"""
     return {
-        "wage": import_wage(session, source_dir, log),
-        "cpi": import_cpi(session, source_dir, log),
-        "tax": import_tax(session, source_dir, log),
+        "wage": import_wage(session, source_dir, log, manifest_active),
+        "cpi": import_cpi(session, source_dir, log, manifest_active),
+        "tax": import_tax(session, source_dir, log, None, manifest_active),
     }

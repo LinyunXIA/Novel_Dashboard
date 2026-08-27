@@ -107,11 +107,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   npm run dev                   # 默认 http://localhost:5173
   ```
 
-CLI 全清单（14 个子命令，均支持 `--env dev/test/prod`，缺省回落 `APP_ENV`）：
+CLI 全清单（15 个子命令，均支持 `--env dev/test/prod`，缺省回落 `APP_ENV`）：
 ```bash
 .venv/bin/python -m app.ingest.main ping                    # 连通自检（打印实际 env/DSN）
 .venv/bin/python -m app.ingest.main run                     # 扫描+解析报告（不落库）
 .venv/bin/python -m app.ingest.main ingest [--force]        # 落库主链路；--force 重浇灌四类收益文件(#114/#135 已修复)
+.venv/bin/python -m app.ingest.main reset --env prod [--yes] # 危险！删全部数据表→alembic upgrade head 重建（不可逆；--yes 跳过确认）
 .venv/bin/python -m app.ingest.main health                  # H1-H5/H-STOCK 健康校验
 .venv/bin/python -m app.ingest.main recompute --from 1947   # 增量重算（杠杆复利仅 compound opt-in 账户）
 .venv/bin/python -m app.ingest.main snapshot --from 1947    # 重建逐年快照
@@ -125,6 +126,25 @@ CLI 全清单（14 个子命令，均支持 `--env dev/test/prod`，缺省回落
 .venv/bin/python -m app.ingest.main merge-alias-persons [--dry-run]  # 职称别名 person 并入规范实体（#136 存量修复，幂等）
 ```
 三环境均同源代码，仅 `APP_ENV` + 库名(`novel_*`) + 数据目录不同；`Design_Folder` 为只读源。
+
+### 数据整理员工作流（生产库 novel_prod）
+
+数据整理员以**激活清单**逐个控制"哪些 Design_Folder 源文件真正入库"：
+
+- **激活清单 `Design_Folder/import_files.yaml`**（**仅 prod 生效；dev/test 不读，维持全量导入现状**）：
+  - 枚举 Design_Folder 下**全部** `.md`（含 Phase2 `基准/事件/` 电影/股票及子目录、`基准/公司/用工成本/` 与 `税率/`、模版/设计文件等），每项 `active: bool`。
+  - `active:true` 才会入库，其余一律跳过（严格白名单）。**新增 .md 文件需在此登记并把 `active` 翻为 `true`**。
+  - 该文件位于 gitignored 的 `Design_Folder`，**不入 git**。
+- **清库（不可逆）**：`python -m app.ingest.main reset --env prod` （`--yes` 跳过确认）——删除 `novel_prod` 全部数据表 → `alembic upgrade head` 重建空 schema（保留 pgvector 扩展、库本体、DSN）。
+- **逐块导入**（prod 各命令仅导激活项，自动 recompute + snapshot）：
+  ```bash
+  .venv/bin/python -m app.ingest.main ingest --env prod       # Phase1 核心（时间线/人物/收益/银行/汇率…）
+  .venv/bin/python -m app.ingest.main events-movie --env prod  # Phase2 电影事件（基准/事件/电影/）
+  .venv/bin/python -m app.ingest.main events-stock --env prod  # Phase2 股票事件（基准/事件/股票/ 顶层）
+  .venv/bin/python -m app.ingest.main labor-baseline --env prod # 用工基准（基准/公司/用工成本/、基准/CPI工资.md）
+  ```
+  幂等：重跑只并入新激活文件，已入库未变文件被指纹 gate 跳过。
+- **启动服务（仅启动，不含重置/导入）**：`Design_Folder/start_dashboard.sh`（APP_ENV=prod，后端 8001、前端 5173）——也位于 gitignored 的 `Design_Folder`。
 
 **仓库与 git**：
 - **入库范围**（Dashboard 工程线全部代码入版本库）：`app/`（FastAPI + ingest + 模型）、`frontend/`（React+Vite）、`migrations/` + `alembic.ini`、`tests/`、`requirements.txt`、`docs/`、`CLAUDE.md`、`.gitignore`、`data/*`（仅 `.gitkeep` 占位）。
