@@ -15,6 +15,7 @@ from app.model.labor import LaborCpiGrowth, LaborTaxBenchmark, LaborWageBenchmar
 from app.model.movie_event import MovieEvent
 from app.model.stock_event import StockEvent
 from app.model.search import SearchIndex
+from app.model.graph_position import GraphNodePosition
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "Investment", "InvestmentAlloc",
     "LaborWageBenchmark", "LaborCpiGrowth", "LaborTaxBenchmark",
     "MovieEvent", "StockEvent", "SearchIndex",
+    "GraphNodePosition",
 ]

@@ -63,6 +63,38 @@ def test_infer_core_roles(session):
     assert len(es) == 3                       # 养父/养母未导入，无父子边
 
 
+def test_person_generation():
+    from app.core.kinship import person_generation
+    assert person_generation(None) == 1
+    assert person_generation("家族领养养子") == 0
+    assert person_generation("养父") == 1
+    assert person_generation("主角的养姐，Karel的双胞胎姐姐") == 1
+    assert person_generation("祖父") == 2
+    assert person_generation("养母的母亲") == 2
+    assert person_generation("家族始祖，主角Stijn的十五世祖") == 3
+
+
+def test_infer_prose_roles(session):
+    """真实称谓带尾部说明/「主角的」前缀：取首分句解析。"""
+    for name, role in [
+        ("Stijn Peeters", None),
+        ("Joren Peeters", "养父"),
+        ("Johanna Peeters", "养母。1974年与Joren Peeters结婚嫁入Peeters家"),
+        ("Maaike Peeters", "主角的养姐，Karel的双胞胎姐姐，家族正统继承人"),
+        ("Karel Peeters", "主角的养兄，Maaike的双胞胎弟弟"),
+    ]:
+        session.add(Entity(entity_type="person", name=name,
+                           fields={} if role is None else {"与主角的关系": role}))
+    session.commit()
+    j = _id(session, "Joren Peeters"); jo = _id(session, "Johanna Peeters")
+    s = _id(session, "Stijn Peeters")
+    m = _id(session, "Maaike Peeters"); k = _id(session, "Karel Peeters")
+    es = _es(infer_person_edges(session))
+    assert (j, jo, "夫妻") in es
+    assert (j, s, "父子") in es and (jo, s, "母女") in es
+    assert (m, s, "兄弟姐妹") in es and (k, s, "兄弟姐妹") in es
+
+
 def test_infer_with_parents(session):
     _seed_core(session)
     session.add(Entity(entity_type="person", name="Joren Peeters", fields={"与主角的关系": "养父"}))

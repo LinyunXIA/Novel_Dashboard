@@ -10,10 +10,27 @@ from __future__ import annotations
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.model import Entity, Relationship
-from app.core.kinship import infer_person_edges
+from app.model import Entity, GraphNodePosition, Relationship
+from app.core.kinship import infer_person_edges, person_generation
 
 SUPPRESS_SRC = "infer-suppressed"
+
+
+def _node_gen(e: Entity) -> int | None:
+    """person 节点代际（多层级星型）；非 person 无 gen。"""
+    if e.entity_type == "person":
+        return person_generation((e.fields or {}).get("与主角的关系"))
+    return None
+
+
+def _positions(session: Session, ents: dict[int, Entity], scope: str) -> dict[str, dict]:
+    """已保存的节点坐标（#201）：{entity_id: {x,y}}，仅节点集内。"""
+    out: dict[str, dict] = {}
+    for r in session.execute(
+            select(GraphNodePosition).where(GraphNodePosition.scope == scope)).scalars().all():
+        if r.entity_id in ents:
+            out[str(r.entity_id)] = {"x": float(r.x), "y": float(r.y)}
+    return out
 
 
 def _merged_edges(session: Session, ents: dict[int, Entity]) -> list[dict]:
@@ -60,27 +77,28 @@ def _merged_edges(session: Session, ents: dict[int, Entity]) -> list[dict]:
     return out
 
 
-def _graph(session: Session, entity_type: str) -> dict:
-    """按 entity_type 聚合 nodes + edges（两端都在该类型集合内的关系）。"""
+def _graph(session: Session, entity_type: str, scope: str) -> dict:
+    """按 entity_type 聚合 nodes（含 gen#201）+ edges + 已保存坐标 positions。"""
     ents = {e.id: e for e in session.execute(
         select(Entity).where(Entity.entity_type == entity_type)).scalars().all()}
     nodes = [
         {"id": e.id, "type": e.entity_type, "name": e.display_name or e.name,
-         "display_name": e.display_name, "status": e.status}
+         "display_name": e.display_name, "status": e.status, "gen": _node_gen(e)}
         for e in ents.values()
     ]
     edges = _merged_edges(session, ents)
-    return {"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)}
+    return {"nodes": nodes, "edges": edges, "node_count": len(nodes),
+            "edge_count": len(edges), "positions": _positions(session, ents, scope)}
 
 
 def person_graph(session: Session) -> dict:
-    """人—人关系图（含亲缘推理边；跨类型边见 /graph/all）。"""
-    return _graph(session, "person")
+    """人—人关系图（含亲缘推理边、代际 gen、拖拽坐标 person 域；跨类型边见 /graph/all）。"""
+    return _graph(session, "person", "person")
 
 
 def company_graph(session: Session) -> dict:
     """公司—公司关系图（显式边；推理边无公司两端自然不出现）。"""
-    return _graph(session, "company")
+    return _graph(session, "company", "company")
 
 
 def all_graph(session: Session) -> dict:
@@ -88,8 +106,9 @@ def all_graph(session: Session) -> dict:
     ents = {e.id: e for e in session.execute(select(Entity)).scalars().all()}
     nodes = [
         {"id": e.id, "type": e.entity_type, "name": e.display_name or e.name,
-         "display_name": e.display_name, "status": e.status}
+         "display_name": e.display_name, "status": e.status, "gen": _node_gen(e)}
         for e in ents.values()
     ]
     edges = _merged_edges(session, ents)
-    return {"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)}
+    return {"nodes": nodes, "edges": edges, "node_count": len(nodes),
+            "edge_count": len(edges), "positions": _positions(session, ents, "all")}
