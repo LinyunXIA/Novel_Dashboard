@@ -23,10 +23,11 @@ const TYPE_LABEL = {
  * - 重置布局：清空该 scope 坐标 → 回自动多层级。
  * - 关系可编辑：虚线=推理建议/实线=人工，✚连线/删边/改称谓；点节点看资产面板。
  */
-export default function Graph({ url, emptyHint, action }) {
+export default function Graph({ url, emptyHint, action, asOf }) {
   const g = useFetch(url)
   const [selected, setSelected] = useState(null)      // 点人看资产
-  const assets = useFetch(selected ? `/api/v1/entities/${selected}/assets` : null)
+  // #203：资产面板按全局日历 as-of 取账户有效状态（关池是时间事件）
+  const assets = useFetch(selected ? `/api/v1/entities/${selected}/assets?as_of=${asOf || ''}` : null)
   const [linkFrom, setLinkFrom] = useState(null)       // 连线起点
   const [edgeSel, setEdgeSel] = useState(null)         // 选中的边
   const [busy, setBusy] = useState(false)
