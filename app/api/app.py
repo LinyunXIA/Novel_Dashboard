@@ -603,6 +603,50 @@ def graph_unsuppress_inferred(body: _RelBody, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ---------------- 图谱节点坐标持久化（#201 · 拖拽后刷新锁定） ----------------
+class _PosBody(BaseModel):
+    scope: str = "person"
+    positions: list[dict] = []                       # [{entity_id, x, y}]
+
+
+@app.get(API_PREFIX + "/graph/positions")
+def graph_positions(scope: str = Query("person"), db: Session = Depends(get_db)):
+    """读取该 scope 已保存的节点坐标。"""
+    from app.model import GraphNodePosition
+    rows = db.execute(select(GraphNodePosition).where(
+        GraphNodePosition.scope == scope)).scalars().all()
+    return {"scope": scope, "positions": [
+        {"entity_id": r.entity_id, "x": float(r.x), "y": float(r.y)} for r in rows]}
+
+
+@app.post(API_PREFIX + "/graph/positions")
+def graph_save_positions(body: _PosBody, db: Session = Depends(get_db)):
+    """保存/覆盖拖拽后的节点坐标（幂等 upsert by entity+scope）。"""
+    from app.model import GraphNodePosition
+    for p in body.positions or []:
+        eid = int(p["entity_id"]); x = float(p["x"]); y = float(p["y"])
+        row = db.execute(select(GraphNodePosition).where(
+            GraphNodePosition.entity_id == eid,
+            GraphNodePosition.scope == body.scope).limit(1)).scalar_one_or_none()
+        if row is not None:
+            row.x, row.y = x, y
+        else:
+            db.add(GraphNodePosition(entity_id=eid, scope=body.scope, x=x, y=y))
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete(API_PREFIX + "/graph/positions")
+def graph_clear_positions(scope: str = Query("person"), db: Session = Depends(get_db)):
+    """清空该 scope 已保存坐标 → 回到自动多层级布局。"""
+    from app.model import GraphNodePosition
+    for r in db.execute(select(GraphNodePosition).where(
+            GraphNodePosition.scope == scope)).scalars().all():
+        db.delete(r)
+    db.commit()
+    return {"ok": True}
+
+
 # ---------------- 通知（非阻断提示；DESIGN §9.3；issue #13） ----------------
 
 @app.get(API_PREFIX + "/ingest-reports")

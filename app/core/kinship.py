@@ -24,7 +24,7 @@ from app.ingest.holders import TITLE_ENTITY
 PROTAGONISTS = {"Stijn Peeters", "夏LY"}
 
 _RE_LINK = re.compile(r"^(.+?)(?:的)?(父亲|母亲)$")   # 「养父的父亲」→(养父,父亲)
-_SIB = ("哥哥", "弟弟", "姐姐", "妹妹")
+_SIB = ("哥哥", "弟弟", "姐姐", "妹妹", "养兄", "养姐", "养弟", "兄长", "姐妹")
 _ANCESTOR = ("始祖", "世祖", "先祖")
 
 # 称谓 → (anchor, sex)。anchor 为相对主角的父/母侧（养父/养母/主角）；父/母互补成夫妻。
@@ -39,27 +39,48 @@ _ROLE_MAP: dict[str, tuple[str, str]] = {
 
 
 def _role_spec(role: str) -> dict | None:
-    """称谓 → 亲缘描述；未知返回 None（调用方兜底连主角）。"""
-    r = (role or "").strip().replace("，", "").replace(" ", "")
-    if not r or "领养养子" in r or "主角" == r:
+    """称谓 → 亲缘描述；未知返回 None（调用方兜底连主角）。
+
+    真实称谓常带尾部说明（「养母。1974年…」「主角的养姐，Karel的双胞胎姐姐…」），
+    取**首个分句**为称谓、去「主角的」文案前缀后匹配。
+    """
+    raw = (role or "").strip()
+    if not raw or "领养养子" in raw or raw == "主角":
         return {"kind": "self"}
-    if any(a in r for a in _ANCESTOR):
+    if any(a in raw for a in _ANCESTOR):
         return {"kind": "ancestor"}
-    if r.startswith("双胞胎"):
-        core = r.replace("双胞胎", "")
-        if core in _SIB or core == "":
-            return {"kind": "sibling"}
-    if r in _SIB:
+    head = re.split(r"[。；;，、（）()：:【】]", raw)[0].strip().replace("主角的", "").strip()
+    if head.startswith("双胞胎") and head.replace("双胞胎", "") in _SIB:
         return {"kind": "sibling"}
-    if r in _ROLE_MAP:
-        anchor, sex = _ROLE_MAP[r]
+    if head in _SIB:
+        return {"kind": "sibling"}
+    if head in _ROLE_MAP:
+        anchor, sex = _ROLE_MAP[head]
         return {"kind": "parent", "anchor": anchor, "sex": sex}
-    m = _RE_LINK.match(r)                       # 「X的父亲/母亲」
+    m = _RE_LINK.match(head)                    # 「X的父亲/母亲」
     if m:
-        anchor = m.group(1)
-        sex = "male" if m.group(2) == "父亲" else "female"
-        return {"kind": "parent", "anchor": anchor, "sex": sex}
+        return {"kind": "parent", "anchor": m.group(1),
+                "sex": "male" if m.group(2) == "父亲" else "female"}
     return None
+
+
+def person_generation(role: str | None) -> int:
+    """相对主角的代际深度（供多层级星型布局）：0=主角,1=父母/兄弟,2=祖辈,3=更远/始祖。"""
+    if not (role or "").strip():
+        return 1                                        # 无角色 → 非主角，落 1 环
+    spec = _role_spec(role)
+    if spec is None:
+        return 1
+    k = spec.get("kind")
+    if k == "self":
+        return 0
+    if k == "sibling":
+        return 1
+    if k == "ancestor":
+        return 3
+    if k == "parent":
+        return 1 if spec.get("anchor") in ("主角", "本人") else 2
+    return 1
 
 
 def _canonical(name: str, by_name_id: dict[str, int]) -> int | None:
