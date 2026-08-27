@@ -933,7 +933,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P1-01 | **投资** | investment + alloc 派生数据、一年一投、R 级计息、年末赎回回银行、手动续投｜core/invest.py，§19.1–19.4 全实现；审计修复：活期 2% 结息 core/demand.py 补齐（§19.2 注记）、批内同池 alloc 累计校验、赎回年末结算日 gate(409)、PATCH 重新锁定 422；issue #93 补 start_date 必须落在 year 年内且 ≤ 12-30 结算日校验 | §19.1–19.4 | ✅ |
 | F-P1-02 | **投资** | 专款池（分币种）走账 + 服务层校验（as-of/R起始年/年度幂等/覆盖连锁拒绝）｜§19.3 校验 422/409 + 划出(kind=investment)/赎回(pool+investment_income) 走账 | §19.3 | ✅ |
 | F-P1-03 | **划拨/换汇** | 划拨(同币)/换汇(按年汇率) + 转出向后全链不破负拒绝 + 编年史同步｜core/transfer.py，同币两笔净0、跨币缺该年汇率 422；破负预检为年末 as-of 口径（issue #93 §19.5 注记） | §19.5 | ✅ |
-| F-P1-04 | **人物图谱** | 人—人/人—公司关系可视化（ECharts graph）｜core/graph.py + SVG 环形静态布局（非 ECharts，交互留待）；issue #84 补 `/graph/all` 全量图谱（节点按 entity_type 形状/颜色区分，跨类型边虚线标出）覆盖 PRD P1-1 | §1/§14 | ✅ |
+| F-P1-04 | **人物图谱** | 人—人/人—公司关系可视化（ECharts graph）｜core/graph.py + SVG 环形布局；issue #84 补 `/graph/all`（按 entity_type 形状/颜色、跨类型边虚线）；**#197 增强**：亲缘**推理边**（app/core/kinship.py，从 entity.fields[「与主角的关系」] 推导夫妻/父子/兄弟/祖先，虚线=建议）+ **图谱内可编辑**（✚ 连线/删/改称谓，删推理写 `infer-suppressed` 标记不复活）+ **点节点看资产**（GET /entities/{id}/assets：账户/初始资产/持仓/收益流） | §1/§14 | ✅ |
 | F-P1-05 | **公司图谱** | 公司—公司关系 + 外部 API①② 导入（只增不减 + status）｜**外部 API① 已实现**（`POST /graph/companies/import`，公司图谱页按钮触发，§13.3）+ **API② 用工成本已实现**（F-P1-10，`labor_cost.py` + `positions.py`，公司图谱/用工成本一体化） | §13 | ✅ |
 | F-P1-06 | **各国收益曲线** | return_curve（R1–R5）对比渲染 + 地区起始年下限｜GET /returns/regions + SVG 五线对比 | §14 | ✅ |
 | F-P1-07 | **财务收支** | finance_entry 各类收入/支出，实体必填、以实体为中心浏览｜真实库验收通过：ingest 后既有 income_stream/家庭支出经 `finance-backfill` 回填 → finance_entry 1485 行（收入1457/支出28，source=file），屏/端点返回正常｜编年史同步口径见 §19 决策备注（issue #86） | §5 | ✅ |
@@ -1228,6 +1228,16 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   数据整理员每次导入后运行；幂等重跑只并集。
 - **编年史语义**：`timeline_event` 即 UI「编年史」屏所读数据——清空 `时间线.md` 后编年史改由默认事件填充，
   用户仍可走 §12 overlay 在屏上增删改（不改默认事件的 source 标记）。
+
+### 21.14 人物图谱亲缘推理 + 可编辑 + 点人资产回写（2026-08-27 · #197）
+
+> 图谱无边根因：`writer.import_characters` 把「与主角的关系」称谓当目标人名精确匹配 → 全失配。修复为「称谓推理 + UI 可编辑」；对应 §20 F-P1-04。
+
+- **称谓持久化**：`parse_character` 把「与主角的关系」写入 `entity.fields["与主角的关系"]`（upsert merge 回填既有实体）。
+- **亲缘推理** `app/core/kinship.py`：`infer_person_edges(session)` 从称谓推导——夫妻(同 anchor 父/母互补、养父↔养母)、父子/母女(「X的父亲/母亲」且 X 在场)、兄弟姐妹、祖先；anchor 经 `TITLE_ENTITY` 解析、主角=Stijn/夏LY；兜底连主角。只推理不写库。
+- **图谱边** `core/graph.py`：返回 显式 `relationship` 行(实线, 带 id) + 推理边(虚线, `inferred:true`)；`source_file="infer-suppressed"` 的抑制标记用于隐藏对应推理边（UI 删除不复活；同键显式行存在则不重复出虚线）。
+- **图谱编辑 API**（普通 UI 放行）：`POST/DELETE /graph/relationships`（建/删显式）、`POST/DELETE /graph/suppress`（隐藏/恢复推理）。`relationship.source_file` 复用为标记（无迁移）。
+- **点人资产**：`GET /api/v1/entities/{id}/assets` 聚合 账户(末余额)/初始资产/股票持仓/收益流；前端 `Graph.jsx` 点节点 → 资产面板 + ✚ 连线/删/改称谓/虚实用例。
 
 ---
 
