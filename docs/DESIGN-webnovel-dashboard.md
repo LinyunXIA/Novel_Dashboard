@@ -964,6 +964,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-01 | **prod 激活清单门控** | `Design_Folder/import_files.yaml` 枚举 Design_Folder 全部 `.md`（含 `基准/事件` 电影/股票及子目录、`基准/公司/用工成本/` 与 `税率/`、模版/设计文件），仅 `active:true` 才经 `ingest`/`events-movie`/`events-stock`/`labor-baseline` 入库（prod 严格白名单）；dev/test 不读清单、全量导入。新文件需登记并激活。已实现 `app/ingest/manifest.py`（load_active_files / require_active_files），四入口接入 prod 门控 | §11.1/§16/§4 | ✅ |
 | F-P2+-02 | **清库重建** | `reset --env prod`（`--yes` 跳过确认）：删 `novel_prod` 全部 public 表（保留 pgvector/库本体/DSN）→ `alembic upgrade head` 重建空 schema（不可逆） | §16/§4 | ✅ |
 | F-P2+-03 | **启动脚本** | `Design_Folder/start_dashboard.sh`：`APP_ENV=prod` 起动后端 FastAPI(8001) + 前端 Vite(5173)，仅启服务（不含重置/导入） | §4 | ✅ |
+| F-P2+-04 | **时间线自动生成默认事件** | `Design_Folder/时间线.md` 清为占位后，时间线改由 `timeline-defaults` CLI 据 DB 自动生成默认事件（`app/core/timeline_defaults.py`）：股票首次建仓(holding_event buy)、影视首次(movie_event)、股票事件首次(stock_event)、每年 R1-5 投资(investment+alloc)；`source_file=derive:timeline-defaults`、overlay=False，幂等合并、`--rebuild` 清旧重建 | §12/§19.1 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1211,6 +1212,22 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   trap 回收后端；仅启服务，不含重置/导入。
 - **入库存放**：`import_files.yaml` 与 `start_dashboard.sh` 位于 gitignored 的 `Design_Folder/`，**不入 git**
   （与创作素材同域；工程线代码仍走版本库）。
+
+### 21.13 Phase 2+ 时间线默认事件回写（2026-08-27）
+
+> 手写时间线改为「由导入数据自动生成默认事件」；对应 §20 Phase 2+（F-P2+-04）与 §12。
+
+- **清空手写时间线**：`Design_Folder/时间线.md` 清为占位（保留标题/账户流水规则 + 说明「由导入数据自动生成」）；
+  原 decade 表与资产快照删除，`timeline` 类别 ingest 不再从它导入事件 → `timeline_event` 空。
+- **生成器 `app/core/timeline_defaults.py`**：`derive_default_timeline(session, rebuild, log)` 据 DB 生成四类默认事件——
+  股票首次建仓（`holding_event` buy 按 entity×company 取 MIN(date)）、影视首次投资（`movie_event` per title）、
+  股票事件首次（`stock_event` per company×event_type）、每年 R1-5 投资（`investment` per 行，note 附 alloc 合计）。
+  事件 `source_file="derive:timeline-defaults"`、`overlay=False`；复用 `writer.import_timeline` 幂等键
+  （event_year,title,source_file）合并；`--rebuild` 先删本标记行再重建（不触手工/overlay 行）。
+- **CLI**：`python -m app.ingest.main timeline-defaults --env prod [--rebuild]` —— 独立命令、读 DB 非清单门控，
+  数据整理员每次导入后运行；幂等重跑只并集。
+- **编年史语义**：`timeline_event` 即 UI「编年史」屏所读数据——清空 `时间线.md` 后编年史改由默认事件填充，
+  用户仍可走 §12 overlay 在屏上增删改（不改默认事件的 source 标记）。
 
 ---
 

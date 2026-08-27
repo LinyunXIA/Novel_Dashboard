@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 内容 |
 |------|------|
-| `时间线.md` | 主时间轴锚点，按 decade 记家族关键事件/投资/资产汇总 |
+| `时间线.md` | 主时间轴锚点（Phase 2+ 起已清为占位；时间线改由 `timeline-defaults` 按导入数据自动生成默认事件，不再手工维护） |
 | `人物/` | 角色档案（`主角.md`、`Peeters 家族/`、`Stijn小家庭/`） |
 | `经济/` | `股票/`、`银行/`（个人/公司，含模版） |
 | `基准/` | 数理底稿：`收益表/`(各国 R1–R5 年化)、`汇率/`、`薪资/`、`初始资产/`、`公司/用工成本/`、`事件/`、`CPI工资.md`、`1974-2001家庭支出.md` |
@@ -49,13 +49,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 达成一致的行为约定
 
 - **先读再改**：改任何数据/档案前，先读对应文件与 `时间线.md`，遵循既有表格格式与数值口径。
-- **改后必同步**：新增/修改后回写 `时间线.md` 对应 decade 与「最后更新」。
+- **时间线自动生成**：`Design_Folder/时间线.md` 已清为占位；时间线由 `timeline-defaults` 按导入数据自动生成默认事件，每次导入后跑 `.venv/bin/python -m app.ingest.main timeline-defaults --env prod` 刷新（编年史屏仍可手动增删改）。
 - 不确定设定是否已有 canon 时先查证，不凭记忆新造。
 
 ## 运行 / 运维（命令集中在独立文件）
 
 - **一键起服务**：`Design_Folder/start_dashboard.sh`（APP_ENV=prod，后端 8001 + 前端 5173）。
-- **完整命令**（前置/迁移/摄入、启动服务、CLI 15 子命令、数据整理员工作流 `import_files.yaml`/`reset`）→ **[docs/运行指南.md](docs/运行指南.md)**。
+- **完整命令**（前置/迁移/摄入、启动服务、CLI 16 子命令、数据整理员工作流 `import_files.yaml`/`reset`/`timeline-defaults`）→ **[docs/运行指南.md](docs/运行指南.md)**。
 - 开发进度皆以 DESIGN §20 为准。
 
 ## 仓库与 git

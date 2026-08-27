@@ -367,11 +367,11 @@ UI 用户可**直接改数据**的操作固化为四类（其余一切走文件�
 | **Phase 1 · P0**（核心可用） | 工程骨架 / 解析入库(bank/股票表/汇率/人物/时间线) / 导入前冲突检测 / 初始资产+收益摄入(租/经营房/祖产债券/开店) / 家庭支出+薪资+2002关池 / DDL / 逐年快照 / 财富曲线 / 日历游标 / 健康校验 / 增量重算 / 基础API / 前端骨架（**F-P0-01~14**） | ✅ 已完成 |
 | **Phase 1 · P1**（完整产品） | 投资+专款池 / 划拨·换汇 / 人物图谱 / 公司图谱+外部API①② / 各国收益曲线 / 财务收支 / 统一搜索 RAG / 四类UI改数据操作 / 用工成本·加薪规则（**F-P1-01~10**） | ✅ 已完成 |
 | **Phase 2**（事件/增强） | 电影事件 / 股票事件 / 分拆并购三形态 / HP_CSC 链 / 时间线·编年史 UI 编辑 / 文件 diff 采纳·回退(含磁盘复原) / 导出(md/CSV/PDF)（**F-P2-01~07**） | ✅ 已完成 |
-| **Phase 2+**（运维/实战排错，**当前阶段**） | prod 激活清单门控(import_files.yaml) / 清库重建(reset) / 启动脚本(start_dashboard.sh)（**F-P2+-01~03**） | ✅ 已完成（持续推进） |
+| **Phase 2+**（运维/实战排错，**当前阶段**） | prod 激活清单门控(import_files.yaml) / 清库重建(reset) / 启动脚本(start_dashboard.sh) / 时间线自动生成默认事件（**F-P2+-01~04**） | ✅ 已完成（持续推进） |
 | **Phase 3**（下阶段，暂缓） | 统一搜索增强（LLM 判文件兜底，F-P3-01）；环境间数据迁移/同步（原 §2.2 视使用情况未做项，F-P3-02） | ⬜ 未做 |
 
 **当前阶段（2026-08-27）· Phase 2+：强化 Phase 2 实际使用体验与排错**
-- 数据整理员按激活清单 `Design_Folder/import_files.yaml` 逐块导入生产库（prod 严格白名单，dev/test 全量）；`reset --env prod` 清库重建（删表→alembic 重建，不可逆）；`Design_Folder/start_dashboard.sh` 一键起服务；事件/股票等 Phase 2 交互收尾。明细见 [DESIGN §20 Phase 2+](DESIGN-webnovel-dashboard.md#20-开发功能清单按优先级供跟踪)。
+- 数据整理员按激活清单 `Design_Folder/import_files.yaml` 逐块导入生产库（prod 严格白名单，dev/test 全量）；`reset --env prod` 清库重建（删表→alembic 重建，不可逆）；`Design_Folder/start_dashboard.sh` 一键起服务；事件/股票等 Phase 2 交互收尾；手写时间线改为 `timeline-defaults` 按导入数据自动生成默认事件。明细见 [DESIGN §20 Phase 2+](DESIGN-webnovel-dashboard.md#20-开发功能清单按优先级供跟踪)。
 
 **未落地 → Phase 3 清单（差距审计）**：逐一比对 PRD 需求与 DESIGN §20，除下列项外均已落地（对应某阶段 ✅）：
 - **环境间数据迁移/同步**（§2.2 非目标 · 原 Phase 2「视使用情况」项）——未引入，归 Phase 3 待排期（DESIGN **F-P3-02**）。
