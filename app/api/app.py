@@ -235,6 +235,29 @@ def e_name(entity_id: int, db: Session) -> str:
     return e.name if e else f"#{entity_id}"
 
 
+# ---- 资产转移（#206：按业务分组把初始资产+收益转给其他个人/公司，普通 UI 可做）----
+class _TransferBody(BaseModel):
+    kind: str
+    to_entity_id: int
+    as_of: Optional[date] = None
+
+
+@app.post(API_PREFIX + "/entities/{entity_id}/assets/transfer")
+def asset_transfer(entity_id: int, body: _TransferBody, db: Session = Depends(get_db)):
+    from app.core.asset_transfer import TransferError, transfer_asset_group
+    from app.core.recompute import recompute_all, record_recompute_done
+    from app.core.snapshot import rebuild_snapshots
+    try:
+        r = transfer_asset_group(db, entity_id, body.kind, body.to_entity_id, body.as_of)
+    except TransferError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    recompute_all(db, 1947)
+    rebuild_snapshots(db, from_year=1947)
+    job = record_recompute_done(db, 1947, reason="asset-transfer")
+    db.commit()
+    return {"ok": True, **r, "notification_id": job["notification_id"]}
+
+
 def _init_asset_kind(x) -> str:
     """初始资产业务分组（#205）：股票债券(祖产同域打包)/惠民租房/经营性房产/现金。"""
     if x.asset_type in ("stock", "bond"):
@@ -248,7 +271,6 @@ def _init_asset_kind(x) -> str:
 
 
 def _income_kind(stream_type: str) -> str:
-    """收益流业务分组（#205），与初始资产 kind 口径一致。"""
     return {"security": "股票债券", "rent": "惠民租房", "property": "经营性房产",
             "shop": "开店", "salary": "薪资"}.get(stream_type, stream_type or "其他")
 

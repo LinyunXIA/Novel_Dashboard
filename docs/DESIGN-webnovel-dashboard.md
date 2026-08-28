@@ -965,6 +965,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-02 | **清库重建** | `reset --env prod`（`--yes` 跳过确认）：删 `novel_prod` 全部 public 表（保留 pgvector/库本体/DSN）→ `alembic upgrade head` 重建空 schema（不可逆） | §16/§4 | ✅ |
 | F-P2+-03 | **启动脚本** | `Design_Folder/start_dashboard.sh`：`APP_ENV=prod` 起动后端 FastAPI(8001) + 前端 Vite(5173)，仅启服务（不含重置/导入） | §4 | ✅ |
 | F-P2+-04 | **时间线自动生成默认事件** | `Design_Folder/时间线.md` 清为占位后，时间线改由 `timeline-defaults` CLI 据 DB 自动生成默认事件（`app/core/timeline_defaults.py`）：股票首次建仓(holding_event buy)、影视首次(movie_event)、股票事件首次(stock_event)、每年 R1-5 投资(investment+alloc)；`source_file=derive:timeline-defaults`、overlay=False，幂等合并、`--rebuild` 清旧重建 | §12/§19.1 | ✅ |
+| F-P2+-05 | **资产转移** | 图谱资产面板按业务分组（股票债券/惠民租房/经营性房产/现金）把该组 `initial_asset` + 对应 `income_stream`（security/rent/property）改归属到目标 person/company（`app/core/asset_transfer.py`）；普通 UI 可做、服务层校验 422、只改存量不迁历史 ledger、记编年史审计、全量重算(1947)+快照+通知；`POST /entities/{id}/assets/transfer` | §6.8/§19 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1238,6 +1239,20 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - **图谱边** `core/graph.py`：返回 显式 `relationship` 行(实线, 带 id) + 推理边(虚线, `inferred:true`)；`source_file="infer-suppressed"` 的抑制标记用于隐藏对应推理边（UI 删除不复活；同键显式行存在则不重复出虚线）。
 - **图谱编辑 API**（普通 UI 放行）：`POST/DELETE /graph/relationships`（建/删显式）、`POST/DELETE /graph/suppress`（隐藏/恢复推理）。`relationship.source_file` 复用为标记（无迁移）。
 - **点人资产**：`GET /api/v1/entities/{id}/assets` 聚合 账户(末余额)/初始资产/股票持仓/收益流；前端 `Graph.jsx` 点节点 → 资产面板 + ✚ 连线/删/改称谓/虚实用例。
+
+### 21.15 资产转移回写（2026-08-27 · #206）
+
+> 图谱资产面板按业务分组把初始资产转给其他个人/公司；对应 PRD §6.8 第 5 类 UI 写操作、DESIGN §20 F-P2+-05。
+
+- **核心 `app/core/asset_transfer.py`**：`transfer_asset_group(session, source_id, kind, to_id, at_date)`——
+  按 kind（股票债券/惠民租房/经营性房产/现金）选源实体该组 `initial_asset` + 对应 `income_stream`
+  （security/rent/property）一并**改归属**到目标（person/company）；只改存量、不迁历史 ledger；
+  写一条编年史审计事件（`overlay=True`「（UI 资产转移）…」）；回退=反向再转。
+- **API** `POST /entities/{id}/assets/transfer`（普通 UI 放行）：`TransferError`→422；成功后
+  `recompute_all(1947)+rebuild_snapshots(1947)+record_recompute_done('asset-transfer')`+commit。
+- **前端**：资产面板每个 kind 分组加「⇄ 转移」→ 填目标 ID → 提交 → 刷新 graph+assets。
+- **边界**：kind 判定与展示一致（`_init_asset_kind`/`_income_kind`）；账面现值不重算历史 ledger，
+  未来派生收益归新主体。
 
 ---
 
