@@ -156,3 +156,37 @@ def test_legacy_rows_without_version_treated_unchanged(session, source_dir):
 def _has_no_sfv(session) -> bool:
     return session.execute(
         select(func.count()).select_from(SourceFileVersion)).scalar() == 0
+
+
+def test_authority_files_record_version(session, tmp_path):
+    """issue #209：character/return_table/timeline 导入成功后须写 source_file_version，
+    否则版本/diff 屏永远判「新增」、采纳新版本也落不了版（与 fx-authority 对齐）。"""
+    root = tmp_path
+    (root / "人物").mkdir(parents=True)
+    (root / "人物" / "Henri Peeters.md").write_text(
+        "- 姓名：Henri Peeters\n- 角色：养祖父\n", encoding="utf-8")
+    (root / "基准" / "收益表").mkdir(parents=True)
+    rt_rel = "基准/收益表/1999-2025 香港R1-R5投资风险分级收益测算表.md"
+    (root / rt_rel).write_text(
+        "#### 1999（测试）\n"
+        "R1：4.35｜R2：6.12｜R3：8.64｜R4：10.0｜R5：12.0\n", encoding="utf-8")
+    (root / "时间线.md").write_text(
+        "| 年份 | 事件 | 备注 |\n|---|---|---|\n| 1990-06-01 | 测试事件 | |\n",
+        encoding="utf-8")
+
+    st = import_all(session, root)
+    assert st["blocked"] == 0, st["summary"]
+    assert st["return_curves"] == 5 and st["characters"] >= 1 and st["timeline"] == 1
+
+    versioned = {v[0] for v in session.execute(
+        select(SourceFileVersion.file_path).where(
+            SourceFileVersion.is_current.is_(True))).all()}
+    assert "人物/Henri Peeters.md" in versioned
+    assert rt_rel in versioned
+    assert "时间线.md" in versioned
+
+    # 幂等：第二轮不新增版本行（同内容 _record_current_version 早退）
+    n1 = session.execute(select(func.count()).select_from(SourceFileVersion)).scalar()
+    import_all(session, root)
+    n2 = session.execute(select(func.count()).select_from(SourceFileVersion)).scalar()
+    assert n1 == n2
