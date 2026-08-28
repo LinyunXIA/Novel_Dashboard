@@ -32,6 +32,20 @@ export default function Graph({ url, emptyHint, action, asOf }) {
   const [edgeSel, setEdgeSel] = useState(null)         // 选中的边
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState({})                 // 拖拽本地覆盖(id->{x,y})
+  // #206：资产转移改面板内下拉选目标（替代 prompt 手输 ID）
+  const [transferKind, setTransferKind] = useState(null) // 正在选目标的业务分组
+  const [transferTo, setTransferTo] = useState('')       // 选中的目标实体 ID
+  const [targets, setTargets] = useState([])             // 可转入的 person/company
+  useEffect(() => {
+    let alive = true
+    Promise.all(['person', 'company'].map(t =>
+      fetch(`/api/v1/entities?type=${t}&page_size=200`).then(r => r.json())))
+      .then(([p, c]) => { if (alive) setTargets([...(p.items || []), ...(c.items || [])]) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+  // 切换查看的实体时收起转移表单
+  useEffect(() => { setTransferKind(null); setTransferTo('') }, [selected])
   const svgRef = useRef(null)
   const dragRef = useRef(null)                         // {id, orig, scaleX, scaleY, startCX, startCY}
   const lastDrag = useRef(null)                        // 最近一次拖到位
@@ -133,6 +147,17 @@ export default function Graph({ url, emptyHint, action, asOf }) {
     setEdgeSel(edgeSel === e ? null : e)
   }
 
+  // #206：把某业务分组资产+收益转给其他个人/公司——面板内下拉选目标（替代手输 ID）
+  // 注意：必须在 return 之前定义（const 不提升初始化，放 return 后会触发 TDZ 白屏）
+  const beginTransfer = kind => { setTransferKind(kind); setTransferTo('') }
+  const confirmTransfer = async () => {
+    if (selected == null || !transferKind || !transferTo) return
+    await api('POST', `/api/v1/entities/${selected}/assets/transfer`,
+      { kind: transferKind, to_entity_id: Number(transferTo), as_of: asOf })
+    setTransferKind(null)
+    assets.refresh()
+  }
+
   const edgeTool = edgeSel && (
     <div className="note" style={{ border: '1px dashed var(--warn)', padding: '4px 8px', borderRadius: 6 }}>
       <b>边：{nodeName(edgeSel.from)} → {nodeName(edgeSel.to)}（{edgeSel.rel_type}）{edgeSel.inferred ? ' · 【推理建议】' : ''}</b>
@@ -207,7 +232,13 @@ export default function Graph({ url, emptyHint, action, asOf }) {
           {selected && (
             <div className="asset-panel" style={{ position: 'absolute', left: 8, top: 8, maxWidth: 300, minWidth: 220, background: 'var(--surface-1)', border: '1px solid var(--border)', borderRadius: 6, padding: 8, maxHeight: 400, overflow: 'auto', fontSize: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><b>{assets.data?.name || nodeName(selected)}</b><button onClick={() => setSelected(null)}>✕</button></div>
-              {assetSections(assets.data)}
+              {assetSections(assets.data, {
+                targets: targets.filter(t => t.id !== selected),
+                activeKind: transferKind, toId: transferTo,
+                onPick: beginTransfer, onTo: setTransferTo,
+                onConfirm: confirmTransfer, onCancel: () => setTransferKind(null),
+                busy,
+              })}
             </div>
           )}
         </div>
@@ -221,7 +252,7 @@ export default function Graph({ url, emptyHint, action, asOf }) {
   }
 }
 
-function assetSections(d) {
+function assetSections(d, tx) {
   if (!d) return <div style={{ color: 'var(--muted)' }}>加载中…</div>
   const sec = (label, rows, fmt) => (
     rows && rows.length ? (
@@ -229,12 +260,42 @@ function assetSections(d) {
         <div>{rows.map((r, k) => <div key={k} style={{ fontSize: 11, color: 'var(--muted)' }}>{fmt(r)}</div>)}</div>
       </div>) : null
   )
+  // #205：初始资产/收益流按业务 kind 分组（股票债券/惠民租房/经营性房产…）
+  const ORDER = ['股票债券', '惠民租房', '经营性房产', '现金', '开店', '薪资']
+  const grouped = rows => {
+    const m = {}
+    for (const r of rows || []) { const k = r.kind || '其他'; (m[k] = m[k] || []).push(r) }
+    return Object.keys(m).sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99)).map(k => ({ k, rows: m[k] }))
+  }
   return (
     <>
       {sec('银行账户', d.accounts, a => `${a.currency}${a.bank ? ' · ' + a.bank : ''}${a.status !== 'active' ? ' [' + a.status + ']' : ''}` + (a.balance != null ? ` — ${Number(a.balance).toLocaleString()} ${a.currency}` : ''))}
-      {sec('初始资产', d.initial_assets, a => `${a.asset_type}${a.name ? ' · ' + a.name : ''}${a.currency ? ' · ' + a.currency : ''}` + (a.face_value != null ? ` ${a.face_value.toLocaleString()}` : '') + (a.pct != null ? `（${a.pct}%）` : ''))}
+      {grouped(d.initial_assets).map(g => (
+        <div key={g.k}>
+          {sec(`初始资产·${g.k}`, g.rows, a => `${a.name || a.asset_type}${a.currency ? ' · ' + a.currency : ''}` + (a.face_value != null ? ` ${a.face_value.toLocaleString()}` : '') + (a.pct != null ? `（${a.pct}%）` : ''))}
+          {tx && (tx.activeKind === g.k ? (
+            <div style={{ marginTop: 4, display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select style={{ fontSize: 11, maxWidth: 180 }} value={tx.toId}
+                onChange={e => tx.onTo(e.target.value)}>
+                <option value="">转给谁…（人物/公司）</option>
+                {['person', 'company'].map(ty => (
+                  <optgroup key={ty} label={ty === 'person' ? '人物' : '公司'}>
+                    {tx.targets.filter(t => t.type === ty).map(t => (
+                      <option key={t.id} value={t.id}>#{t.id} {t.display_name || t.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <button style={{ fontSize: 10 }} disabled={tx.busy || !tx.toId} onClick={tx.onConfirm}>确认转移</button>
+              <button style={{ fontSize: 10 }} disabled={tx.busy} onClick={tx.onCancel}>取消</button>
+            </div>
+          ) : (
+            <button style={{ fontSize: 10, marginTop: 2 }} onClick={() => tx.onPick(g.k)}>⇄ 转移</button>
+          ))}
+        </div>
+      ))}
       {sec('股票持仓', d.holdings, h => `[${h.event_type}] ${h.company}${h.ticker ? ' (' + h.ticker + ')' : ''} ${h.date}` + (h.shares != null ? ` ${Number(h.shares).toLocaleString()} 股` : '') + (h.amount_wusd != null ? `  ${h.amount_wusd.toLocaleString()} 万USD` : '') + (h.pct != null ? ` ${h.pct}%` : ''))}
-      {sec('收益流', d.income, i => `${i.year} ${i.stream_type}${i.group_key ? ' · ' + i.group_key : ''} · ${i.currency} ${Number(i.amount).toLocaleString()}`)}
+      {grouped(d.income).map(g => sec(`收益·${g.k}`, g.rows, i => `${i.year}${i.group_key ? ' · ' + i.group_key : ''} · ${i.currency} ${Number(i.amount).toLocaleString()}`))}
       {!d.accounts?.length && !d.initial_assets?.length && !d.holdings?.length && !d.income?.length ? <div style={{ color: 'var(--muted)', marginTop: 6 }}>暂无资产数据</div> : null}
     </>
   )
