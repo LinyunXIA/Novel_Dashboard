@@ -229,12 +229,23 @@ function assetSections(d) {
         <div>{rows.map((r, k) => <div key={k} style={{ fontSize: 11, color: 'var(--muted)' }}>{fmt(r)}</div>)}</div>
       </div>) : null
   )
+  // #205：初始资产/收益流按业务 kind 分组（股票债券/惠民租房/经营性房产…），kind 由后端给
+  const ORDER = ['股票债券', '惠民租房', '经营性房产', '现金', '开店', '薪资']
+  const grouped = rows => {
+    const m = {}
+    for (const r of rows || []) { const k = r.kind || '其他'; (m[k] = m[k] || []).push(r) }
+    return Object.keys(m).sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99)).map(k => ({ k, rows: m[k] }))
+  }
   return (
     <>
       {sec('银行账户', d.accounts, a => `${a.currency}${a.bank ? ' · ' + a.bank : ''}${a.status !== 'active' ? ' [' + a.status + ']' : ''}` + (a.balance != null ? ` — ${Number(a.balance).toLocaleString()} ${a.currency}` : ''))}
-      {sec('初始资产', d.initial_assets, a => `${a.asset_type}${a.name ? ' · ' + a.name : ''}${a.currency ? ' · ' + a.currency : ''}` + (a.face_value != null ? ` ${a.face_value.toLocaleString()}` : '') + (a.pct != null ? `（${a.pct}%）` : ''))}
+      {grouped(d.initial_assets).map(g => (
+        <div key={g.k}>{sec(`初始资产·${g.k}`, g.rows, a => `${a.name || a.asset_type}${a.currency ? ' · ' + a.currency : ''}` + (a.face_value != null ? ` ${a.face_value.toLocaleString()}` : '') + (a.pct != null ? `（${a.pct}%）` : ''))}</div>
+      ))}
       {sec('股票持仓', d.holdings, h => `[${h.event_type}] ${h.company}${h.ticker ? ' (' + h.ticker + ')' : ''} ${h.date}` + (h.shares != null ? ` ${Number(h.shares).toLocaleString()} 股` : '') + (h.amount_wusd != null ? `  ${h.amount_wusd.toLocaleString()} 万USD` : '') + (h.pct != null ? ` ${h.pct}%` : ''))}
-      {sec('收益流', d.income, i => `${i.year} ${i.stream_type}${i.group_key ? ' · ' + i.group_key : ''} · ${i.currency} ${Number(i.amount).toLocaleString()}`)}
+      {grouped(d.income).map(g => (
+        <div key={g.k}>{sec(`收益·${g.k}`, g.rows, i => `${i.year}${i.group_key ? ' · ' + i.group_key : ''} · ${i.currency} ${Number(i.amount).toLocaleString()}`)}</div>
+      ))}
       {!d.accounts?.length && !d.initial_assets?.length && !d.holdings?.length && !d.income?.length ? <div style={{ color: 'var(--muted)', marginTop: 6 }}>暂无资产数据</div> : null}
     </>
   )

@@ -207,6 +207,7 @@ def entity_assets(entity_id: int,
         "asset_type": x.asset_type, "name": x.name, "currency": x.currency,
         "face_value": float(x.face_value) if x.face_value is not None else None,
         "pct": float(x.pct) if x.pct is not None else None, "group_key": x.group_key,
+        "kind": _init_asset_kind(x),
     } for x in db.execute(select(InitialAsset).where(
         InitialAsset.entity_id == entity_id)).scalars().all()]
     holdings = [{
@@ -221,7 +222,7 @@ def entity_assets(entity_id: int,
     income = [{
         "stream_type": x.stream_type, "group_key": x.group_key, "currency": x.currency,
         "year": x.year, "amount": float(x.amount) if x.amount is not None else None,
-        "label": x.label,
+        "label": x.label, "kind": _income_kind(x.stream_type),
     } for x in db.execute(select(IncomeStream).where(
         IncomeStream.entity_id == entity_id).order_by(IncomeStream.year)).scalars().all()]
     return {"entity_id": entity_id, "name": e_name(entity_id, db),
@@ -232,6 +233,24 @@ def entity_assets(entity_id: int,
 def e_name(entity_id: int, db: Session) -> str:
     e = db.get(Entity, entity_id)
     return e.name if e else f"#{entity_id}"
+
+
+def _init_asset_kind(x) -> str:
+    """初始资产业务分组（#205）：股票债券(祖产同域打包)/惠民租房/经营性房产/现金。"""
+    if x.asset_type in ("stock", "bond"):
+        return "股票债券"
+    if x.asset_type == "property":
+        nm = x.name or ""
+        return "惠民租房" if any(k in nm for k in ("惠民", "出租", "承租", "1/10")) else "经营性房产"
+    if x.asset_type == "cash":
+        return "现金"
+    return x.asset_type or "其他"
+
+
+def _income_kind(stream_type: str) -> str:
+    """收益流业务分组（#205），与初始资产 kind 口径一致。"""
+    return {"security": "股票债券", "rent": "惠民租房", "property": "经营性房产",
+            "shop": "开店", "salary": "薪资"}.get(stream_type, stream_type or "其他")
 
 
 @app.get(API_PREFIX + "/ledger-entries/{entry_id}")
