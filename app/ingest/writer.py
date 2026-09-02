@@ -197,88 +197,32 @@ def _mirror_to_finance(session: Session, *, entity: Entity, cur: str, year: int,
     ))
 
 
-def import_income_security(session: Session, records: list[dict],
-                           years: tuple[int, int] | None = None,
-                           label_prefix: str = "祖产债券票息") -> dict:
-    """祖产债券每券 → 逐年 income_stream（面值 × 票息率）。
+def import_basic_income(session: Session, records: list[dict]) -> dict:
+    """基本收入.md → 逐年 income_stream（issue #211，逐年终值直入）。
 
-    归属 entity = holder；币种按券；逐年票息金额=面值×rate。
-    展开窗口默认取 factors.SECURITY_DEFAULT_YEARS（issue #69：源文件无期限列，
-    全周期固定票息；窗口可参配）。返回 {stream: 生成行}。
+    整合取代旧四类配置推导链路（security 票息展开 / rent·property 分段复利 /
+    shop 时段均值）：parser 已按年份段展开为逐年记录，writer 只做归属归一 +
+    落库 + finance_entry 镜像。记录自带 stream_type/group_key/label/currency/
+    year/amount/source_line；holder 经 TITLE_ENTITY 归一挂规范实体（issue #136）。
+    0 值由 parser 跳过；返回 {stream: 生成行}。
     """
-    from app.core.factors import SECURITY_DEFAULT_YEARS
-    if years is None:
-        years = SECURITY_DEFAULT_YEARS
     stats = {"stream": 0}
     for rec in records:
         holder = rec.get("holder")
-        if not holder:
+        amount = rec.get("amount")
+        if not holder or not amount:
             continue
         ent = _canonical_person(session, holder)
-        rate = rec.get("rate_pct") or 0.0
-        amount = (rec.get("face_value") or 0.0) * rate / 100.0
-        if not amount:
-            continue
-        for y in range(years[0], years[1] + 1):
-            label = f"{label_prefix} · {rec.get('name','')[:20]}"
-            session.add(IncomeStream(
-                entity_id=ent.id, stream_type="security", group_key="祖产债券",
-                currency=rec.get("currency"), year=y, amount=amount,
-                label=label, source_file=rec.get("source_file"),
-            ))
-            _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
-                               year=y, amount=amount, label=label,
-                               source_file=rec.get("source_file"))
-            stats["stream"] += 1
-    return stats
-
-
-def import_income_property(session: Session, records: list[dict],
-                           years: tuple[int, int] = (1974, 2025)) -> dict:
-    """经营性房产 → 逐年营收 income_stream。
-
-    issue #69：逐年 = 属地基准 × 分段复利；涨幅分段外置 app/core/factors.py
-    （数值与源文件说明段一致），writer 不再硬编码。
-    （营收口径，不含人力成本—归 P1 用工成本线。）
-    """
-    from app.core.factors import property_factor
-    stats = {"stream": 0}
-    for rec in records:
-        ent = _canonical_person(session, rec["holder"])
-        base = rec.get("base1974") or 0.0
-        for y in range(years[0], years[1] + 1):
-            if y < 1974:
-                continue
-            amount = round(base * property_factor(y), 2)
-            label = f"经营性房产 · {rec.get('country')}{rec.get('prop')}"
-            session.add(IncomeStream(
-                entity_id=ent.id, stream_type="property", group_key=f"{rec.get('country')}{rec.get('prop')}",
-                currency=rec.get("currency"), year=y, amount=amount, label=label,
-                source_file=rec.get("source_file"),
-            ))
-            _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
-                               year=y, amount=amount, label=label,
-                               source_file=rec.get("source_file"))
-            stats["stream"] += 1
-    return stats
-
-
-def import_income_shop(session: Session, records: list[dict]) -> dict:
-    """开店 → 逐年 income_stream（时段内取 合并税后落袋 均值，挂 Henri Peeters）。"""
-    stats = {"stream": 0}
-    for rec in records:
-        ent = _canonical_person(session, rec["holder"])
-        for y in range(rec["y0"], rec["y1"] + 1):
-            label = "祖父开店 · 合并税后落袋"
-            session.add(IncomeStream(
-                entity_id=ent.id, stream_type="shop", group_key="祖父开店",
-                currency=rec.get("currency"), year=y, amount=rec["amount"], label=label,
-                source_file=rec.get("source_file"),
-            ))
-            _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
-                               year=y, amount=rec["amount"], label=label,
-                               source_file=rec.get("source_file"))
-            stats["stream"] += 1
+        session.add(IncomeStream(
+            entity_id=ent.id, stream_type=rec["stream_type"], group_key=rec["group_key"],
+            currency=rec.get("currency"), year=rec["year"], amount=amount,
+            label=rec.get("label"), source_file=rec.get("source_file"),
+            source_line=rec.get("source_line"),
+        ))
+        _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
+                           year=rec["year"], amount=amount, label=rec.get("label"),
+                           source_file=rec.get("source_file"))
+        stats["stream"] += 1
     return stats
 
 
@@ -581,36 +525,6 @@ def close_2002_currency(session: Session, currencies=("BEF", "LUF", "NLG"),
             inflow=amount, outflow=None, balance=amount, kind="income", note=note,
         ))
         stats["migrated"] += 1
-    return stats
-
-
-def import_income_rent(session: Session, records: list[dict],
-                       years: tuple[int, int] = (1974, 2007)) -> dict:
-    """惠民租房 → 逐年租金 income_stream（单套年租金×套数×分段复利系数）。
-
-    issue #69：分段复利系数外置 app/core/factors.py（数值与源文件说明段一致）。
-    窗口 (1974, 2007) = 惠民租房.md §一.2 明文测算周期「1974 起租至 2007 年末，
-    合计 34 年」（issue #144：口径来源注记，非遗漏）。
-    """
-    from app.core.factors import rent_factor
-    stats = {"stream": 0}
-    for rec in records:
-        ent = _canonical_person(session, rec["holder"])
-        base = (rec.get("unit_rent") or 0.0) * (rec.get("units") or 0.0)
-        for y in range(years[0], years[1] + 1):
-            if y < (rec.get("start") or 1974):
-                continue
-            amount = round(base * rent_factor(y), 2)
-            label = f"惠民租房 · {rec.get('country')}"
-            session.add(IncomeStream(
-                entity_id=ent.id, stream_type="rent", group_key=f"{rec.get('country')}惠民租",
-                currency=rec.get("currency"), year=y, amount=amount, label=label,
-                source_file=rec.get("source_file"),
-            ))
-            _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
-                               year=y, amount=amount, label=label,
-                               source_file=rec.get("source_file"))
-            stats["stream"] += 1
     return stats
 
 

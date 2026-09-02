@@ -47,19 +47,18 @@ def test_recompute_done_notification_carries_health_summary(session):
 
 class TestEarliestAffectedYear:
     def test_global_categories_return_none(self):
-        for cat in ("character", "return_table", "fx", "initial_asset", "income_security"):
+        for cat in ("character", "return_table", "fx", "initial_asset", "basic_income"):
             assert _earliest_affected_year(_rec(cat, [{}])) is None
 
     def test_timeline_min_year(self):
         r = _rec("timeline", [{"event_year": 1995}, {"event_year": 1990}, {}])
         assert _earliest_affected_year(r) == 1990
 
-    def test_shop_y0(self):
-        assert _earliest_affected_year(
-            _rec("income_shop", [{"y0": 1951}, {"y0": 1947}])) == 1947
-
-    def test_property_fixed_1974(self):
-        assert _earliest_affected_year(_rec("income_property", [{}])) == 1974
+    def test_basic_income_global_from_1947(self):
+        """issue #211：基本收入为逐年终值（商业流最早 1947），全局性 → 自 1947 全量重算。"""
+        r = _rec("basic_income", [{"year": 2001, "amount": 1},
+                                  {"year": 1947, "amount": 1}])
+        assert _earliest_affected_year(r) is None
 
     def test_bank_min_row_year(self):
         r = _rec("bank", [{"rows": [{"date": date(1993, 5, 1)}]},

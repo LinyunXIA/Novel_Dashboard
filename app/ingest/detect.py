@@ -28,10 +28,13 @@ _PREFIX_RULES: list[tuple[str, str]] = [
     ("设计文件/", "SKIP_DOC"),                # issue #26：创作约束笔记，不入库
     ("经济/银行/", "bank"),
     ("经济/股票/", "stock_tx"),
-    ("基准/收益表/惠民租房.md", "income_rent"),
-    ("基准/收益表/经营性房产收益.md", "income_property"),
-    ("基准/收益表/祖产股票债券收益.md", "income_security"),
-    ("基准/收益表/祖父开店.md", "income_shop"),
+    # issue #211：五人初始资产逐年收益整合为单文件（股债/房产/商业逐年终值），
+    # 取代下列 4 个配置推导型旧文件；旧文件保留磁盘存档，显式 SKIP（dev/test 全量扫描同样跳过）。
+    ("基准/收益表/基本收入.md", "basic_income"),
+    ("基准/收益表/惠民租房.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/经营性房产收益.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/祖产股票债券收益.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/祖父开店.md", "SKIP_SUPERSEDED"),
     ("基准/收益表/1974-2001家庭支出.md", "household_expense"),
     ("基准/收益表/", "return_table"),
     ("基准/初始资产/", "initial_asset"),

@@ -3,7 +3,7 @@
 合并事故（aaa50bf）：bypass 分支 purge 后 continue 吞掉了冲突检测+导入，
 --force(#114 重浇灌) 与 F-P2-06「采纳新版本」均退化为「只删不补」。
 本文件断言：
-1. --force 对四类收益文件：purge 后行数恢复（不归零）；
+1. --force 对收益文件（issue #211 起为 basic_income 基本收入.md）：purge 后行数恢复（不归零）；
 2. --force 对 salary：整文件跳过、不清场（#114 原约束保留）；
 3. force_files（版本采纳）：同样必须重导恢复。
 """
@@ -18,7 +18,7 @@ from app.ingest.main import import_all
 from app.ingest.parse import IngestReport, ParseResult
 from app.model import FinanceEntry, IncomeStream
 
-SEC_FILE = "基准/收益表/祖产股票债券收益.md"
+BI_FILE = "基准/收益表/基本收入.md"   # issue #211：四类旧收益文件整合为 basic_income
 SAL_FILE = "基准/薪资/养父薪资.md"
 
 
@@ -37,10 +37,12 @@ def session():
 
 
 def _sec_report() -> IngestReport:
-    recs = [{"holder": "养祖父", "name": "测试券", "face_value": 1000.0,
-             "currency": "BEF", "rate_pct": 4.0, "source_file": SEC_FILE}]
+    """basic_income 逐年记录（issue #211 起收益流统一形态）。"""
+    recs = [{"holder": "养祖父", "stream_type": "security", "group_key": "祖产债券",
+             "label": "祖产股票债券 · 债券收益", "currency": "BEF", "year": 1980,
+             "amount": 40.0, "source_line": 12, "source_file": BI_FILE}]
     return IngestReport(results=[
-        ParseResult(file=SEC_FILE, category="income_security", records=recs)])
+        ParseResult(file=BI_FILE, category="basic_income", records=recs)])
 
 
 def _sal_report() -> IngestReport:
@@ -61,7 +63,7 @@ def _mk_src(tmp_path, rel: str):
 
 
 def test_force_reirrigates_after_purge(session, monkeypatch, tmp_path):
-    _mk_src(tmp_path, SEC_FILE)
+    _mk_src(tmp_path, BI_FILE)
     monkeypatch.setattr("app.ingest.main.run_ingest", lambda d: _sec_report())
     import_all(session, tmp_path, log=lambda m: None)
     n1 = _count(session, IncomeStream)
@@ -78,13 +80,13 @@ def test_force_reirrigates_after_purge(session, monkeypatch, tmp_path):
 
 def test_force_files_adopt_reimports(session, monkeypatch, tmp_path):
     """F-P2-06「采纳新版本」走 force_files 路径，同样不得只删不补。"""
-    _mk_src(tmp_path, SEC_FILE)
+    _mk_src(tmp_path, BI_FILE)
     monkeypatch.setattr("app.ingest.main.run_ingest", lambda d: _sec_report())
     import_all(session, tmp_path, log=lambda m: None)
     n1 = _count(session, IncomeStream)
     session.commit()
 
-    import_all(session, tmp_path, log=lambda m: None, force_files={SEC_FILE})
+    import_all(session, tmp_path, log=lambda m: None, force_files={BI_FILE})
     assert _count(session, IncomeStream) == n1 > 0
 
 
