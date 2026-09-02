@@ -68,10 +68,8 @@ _PARSERS = {
     "character": parsers.parse_character,
     "timeline": parsers.parse_timeline,
     "initial_asset": parsers.parse_initial_asset,
-    "income_security": parsers.parse_income_security,
-    "income_rent": parsers.parse_income_rent,
-    "income_property": parsers.parse_income_property,
-    "income_shop": parsers.parse_income_shop,
+    # issue #211：基本收入.md（股债/房产/商业逐年终值）整合取代旧四类 income_* parser
+    "basic_income": parsers.parse_basic_income,
     "salary": parsers.parse_salary,
     "household_expense": parsers.parse_household_expense,
     # Phase2 占位（DESIGN §6.1 / §19.6）：当前 Phase1 跳过，Parser 已就绪供 Phase2 启用

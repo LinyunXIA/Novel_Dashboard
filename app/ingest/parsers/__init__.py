@@ -441,135 +441,172 @@ def parse_initial_asset(path: Path) -> list[dict]:
     return recs
 
 
-# ---------------- income_security（祖产债券收益流） ----------------
-_BUND_HOLDER = {"荷兰": "养外祖父", "丹麦": "养外祖母", "瑞典": "养祖母", "比利时": "养祖父", "卢森堡": "养祖父"}
+# ---------------- basic_income（基本收入.md：五人初始资产逐年收益终值） ----------------
+# issue #211：整合取代旧四类配置推导文件（惠民租房 / 祖产股票债券 / 祖父开店 /
+# 经营性房产收益）。文件按人分节（## 一~四、…），节内子表（### x.1 股债 /
+# x.2 房产 / 4.3 商业）；年份格支持单年（1974）与段（1950–1969，段内每年同值）；
+# 金额为文件终值、逐年直入 income_stream（因子 A「文件终值权威」，issue #114）。
+_BASIC_HOLDER_RULES: tuple[tuple[str, str], ...] = (
+    ("Frederik van Oranje", "Frederik van Oranje"),
+    ("养外祖父", "Frederik van Oranje"),
+    ("Henri Peeters", "Henri Peeters"),
+    ("养外祖母", "养外祖母"),
+    ("养祖母", "养祖母"),
+)
 
 
-def _bund_holder(country: str) -> str:
-    return _BUND_HOLDER.get(country, country)
+def _basic_holder(title: str) -> str | None:
+    """`## ` 人物节标题 → holder；汇总节/未识别 → None（该节表格跳过）。
 
-
-def _next_line_rate(lines: list[str], idx: int) -> float | None:
-    for k in range(idx + 1, min(idx + 4, len(lines))):
-        m = re.search(r"票面?\s*固定\s*([\d.]+)\s*%", lines[k])
-        if m:
-            return parse_number(m.group(1))
+    顺序敏感：养外祖母 显式先于 养祖母，避免职称子串误配。
+    """
+    for kw, holder in _BASIC_HOLDER_RULES:
+        if kw in title:
+            return holder
     return None
 
 
-def parse_income_security(path: Path) -> list[dict]:
-    """祖产股票债券：国家 × 每券 {面值, 固定票息%。币种}。
+def _year_span(cell: str) -> list[int]:
+    """年份格 → 年列表：`1974` → [1974]；`1950–1969`/`1950-1969` → 段内逐年。"""
+    cell = cell.strip()
+    m = re.match(r"^(\d{4})\s*[–-]\s*(\d{4})$", cell)
+    if m:
+        return list(range(int(m.group(1)), int(m.group(2)) + 1))
+    if re.match(r"^\d{4}$", cell):
+        return [int(cell)]
+    return []
 
-    产出"每券"记录；归属 entity + 币种由持有国 → 铁律映射（F-P0-05）。
-    逐年票息 = 面值 × 票息（固定费率，全周期不变；由 writer 生成 income_stream）。
 
-    返回：(records, warnings)
-    - records：每券字典列表
-    - warnings：country 已设但未产出记录的告警列表（如某国家债券节无 `### N.` 子项）
+def _basic_currency(cell: str) -> str | None:
+    """币种格 → ISO 码；`NLG/年` 这类后缀由 _cur 子串别名识别。
 
-    issue #11 修复：面值正则放宽为 [\\d,.]+ 以支持带小数面额（如「4,047.30 BEF」），
-    此前因不含小数点导致整条记录静默丢失。
+    `BEF/LUF` 双币并列（Henri 房产表 1974–2001）返回特殊标记——祖父列 BEF、
+    先祖列 LUF 由列规格 dual_cur 决定（_cur 不支持斜杠并列双币）。
     """
-    from app.ingest.holders import holder_currencies
+    raw = cell.strip()
+    if "BEF" in raw and "LUF" in raw:
+        return "BEF/LUF"
+    # `NLG/年` 这类「码/年」后缀：_cur 精确码集合不识别带后缀串（仅别名表恰有
+    # "nlg" 子串侥幸命中），统一剥掉 `/年` 再识别。
+    return _cur(raw.replace("/年", "").strip())
+
+
+def _basic_table_specs(header: list[str]) -> tuple[list[dict], int | None, int | None]:
+    """按表头列名定位收益列 → (列规格, 币种列下标, 合计列下标)。
+
+    列规格：{idx, stream_type, group_key, label, dual_cur}；dual_cur 仅 Henri
+    房产四列表使用（祖父列固定 BEF、先祖列固定 LUF），单币表为 None。
+    """
+    specs: list[dict] = []
+    cur_col = next((i for i, c in enumerate(header)
+                    if "货币" in c or "币种" in c), len(header) - 1)
+    total_col = next((i for i, c in enumerate(header) if "合计" in c), None)
+    is_split = any("祖父" in c or "先祖" in c for c in header)
+    for i, c in enumerate(header):
+        if "债券收益" in c:
+            specs.append({"idx": i, "stream_type": "security", "group_key": "祖产债券",
+                          "label": "祖产股票债券 · 债券收益", "dual_cur": None})
+        elif "股票收益" in c:
+            specs.append({"idx": i, "stream_type": "security", "group_key": "祖产股票",
+                          "label": "祖产股票债券 · 股票收益", "dual_cur": None})
+        elif "税后落袋" in c:
+            specs.append({"idx": i, "stream_type": "shop", "group_key": "祖父开店",
+                          "label": "祖父开店 · 合并税后落袋", "dual_cur": None})
+        elif "惠民" in c:
+            if is_split and ("祖父" in c or "先祖" in c):
+                role = "祖父" if "祖父" in c else "先祖"
+                region = "比利时" if role == "祖父" else "卢森堡"
+                specs.append({"idx": i, "stream_type": "rent",
+                              "group_key": f"惠民租房·{role}",
+                              "label": f"惠民租房 · {role}（{region}）",
+                              "dual_cur": "BEF" if role == "祖父" else "LUF"})
+            elif not is_split:
+                specs.append({"idx": i, "stream_type": "rent", "group_key": "惠民租房",
+                              "label": "惠民租房", "dual_cur": None})
+        elif "经营性" in c:
+            if is_split and ("祖父" in c or "先祖" in c):
+                role = "祖父" if "祖父" in c else "先祖"
+                region = "比利时" if role == "祖父" else "卢森堡"
+                specs.append({"idx": i, "stream_type": "property",
+                              "group_key": f"经营性房产·{role}",
+                              "label": f"经营性房产 · {role}（{region}）",
+                              "dual_cur": "BEF" if role == "祖父" else "LUF"})
+            elif not is_split:
+                specs.append({"idx": i, "stream_type": "property",
+                              "group_key": "经营性房产", "label": "经营性房产",
+                              "dual_cur": None})
+    return specs, cur_col, total_col
+
+
+def parse_basic_income(path: Path) -> tuple[list[dict], list[str]]:
+    """基本收入.md → 逐年收益记录（issue #211，取代旧四类 income_* 文件）。
+
+    记录字段：holder / stream_type(security|rent|property|shop) / group_key /
+    label / currency / year / amount / source_line。0 值不产记录（issue #28
+    零值跳过纪律，惠民租房 2008 起记 0 即自然无行）。`## 五、汇总` 节跳过；
+    `合计` 列作对账校验（分量和 ≠ 合计，容差 1 → warning）。
+    """
     lines = _lines(path)
     recs: list[dict] = []
     warnings: list[str] = []
-    country = None
-    country_had_records: dict[str, bool] = {}
-    for idx, line in enumerate(lines):
-        cm = re.match(r"^##\s*(荷兰|丹麦|瑞典|比利时|卢森堡)债券", line)
-        if cm:
-            country = cm.group(1)
-            country_had_records.setdefault(country, False)
+    holder: str | None = None
+    specs: list[dict] | None = None
+    cur_col: int | None = None
+    total_col: int | None = None
+
+    for lineno, line in enumerate(lines, start=1):
+        if line.startswith("## "):
+            holder = _basic_holder(line)
+            specs = None
             continue
-        # 每券：`### N. 名称（面值 X 币种，固定票息Y%）`
-        # issue #11：面值正则放宽为 [\d,.]+ 支持小数（如 4,047.30 BEF）
-        m = re.match(r"^###\s+\d+\.\s*(.+?)（面值\s*([\d,.]+)\s*([A-Za-z一-鿿]{2,8})", line)
-        if not m or not country:
+        cells = _split_table_row(line)
+        if not cells:
+            specs = None
             continue
-        cur_code = m.group(3)
-        face_cur = _cur(cur_code) or (holder_currencies(_bund_holder(country))[0] if country else None)
-        # 票息：同行（`票面固定X%` / `固定票息X%`）或下行
-        rate = None
-        rm = re.search(r"(?:票面?\s*固定\s*票息|票面?\s*固定|固定\s*票息)\s*([\d.]+)\s*%", line)
-        if rm:
-            rate = parse_number(rm.group(1))
-        else:
-            rate = _next_line_rate(lines, idx)
-        recs.append({"country": country, "name": m.group(1).strip(),
-                     "face_value": parse_number(m.group(2)), "currency": face_cur,
-                     "rate_pct": rate, "holder": _bund_holder(country)})
-        country_had_records[country] = True
-    # issue #11：country 已设但无任何记录 → warning 进 ingest_report
-    for c, had in country_had_records.items():
-        if not had:
-            warnings.append(f"country={c} 债券节未产出任何记录（缺 ### N. 行或正则失配）")
+        if holder is None:
+            continue
+        # 表头行：首格含「年份」→ 重建列规格
+        if "年份" in cells[0]:
+            specs, cur_col, total_col = _basic_table_specs(cells)
+            if not specs:
+                warnings.append(f"{path.name} 第{lineno}行 表头未识别出收益列：{' | '.join(cells)}")
+                specs = None
+            continue
+        if specs is None:
+            continue
+        years = _year_span(cells[0])
+        if not years:
+            continue
+        raw_cur = (_basic_currency(cells[cur_col])
+                   if cur_col is not None and cur_col < len(cells) else None)
+        if not raw_cur:
+            warnings.append(f"{path.name} 第{lineno}行 币种无法识别"
+                            f"（{cells[cur_col] if cur_col is not None and cur_col < len(cells) else '?'}），该行跳过")
+            continue
+        row_total = (parse_number(cells[total_col])
+                     if total_col is not None and total_col < len(cells) else None)
+        comp_sum = 0.0
+        for spec in specs:
+            i = spec["idx"]
+            if i >= len(cells):
+                continue
+            amount = parse_number(cells[i])
+            if not amount:
+                continue
+            cur = spec["dual_cur"] if raw_cur == "BEF/LUF" else raw_cur
+            if raw_cur == "BEF/LUF" and not spec["dual_cur"]:
+                warnings.append(f"{path.name} 第{lineno}行 双币(BEF/LUF)格遇到非分列规格，该列跳过")
+                continue
+            comp_sum += amount
+            for y in years:
+                recs.append({"holder": holder, "stream_type": spec["stream_type"],
+                             "group_key": spec["group_key"], "label": spec["label"],
+                             "currency": cur, "year": y, "amount": amount,
+                             "source_line": lineno})
+        if row_total is not None and abs(comp_sum - row_total) > 1.0:
+            warnings.append(f"{path.name} 第{lineno}行（{holder} {cells[0].strip()}）"
+                            f"合计 {row_total:g} ≠ 分量和 {comp_sum:g}")
     return recs, warnings
-
-
-# ---------------- income_rent（惠民租房收益流） ----------------
-def parse_income_rent(path: Path) -> list[dict]:
-    """分国基础表：国家/持有人/套数/币种/1974单套年租金 → 逐年租金推导配置。
-
-    逐年租金 = 单套年租金 × 套数 × 分段复利(1974-84 +7%, 85-99 +3.5%, 00-07 +5%)。
-    """
-    lines = _lines(path)
-    recs: list[dict] = []
-    i = 0
-    while i < len(lines):
-        cells = _split_table_row(lines[i])
-        if len(cells) >= 5 and cells[0] in ("比利时", "荷兰", "丹麦", "瑞典"):
-            cur = _cur(cells[3])
-            m = re.search(r"([\d.]+)\s*([A-Za-z一-鿿]{2,6})", cells[4])
-            recs.append({
-                "country": cells[0], "holder": cells[1].strip(), "units": parse_number(cells[2]),
-                "currency": cur or _cur(cells[1]), "unit_rent": parse_number(m.group(1)) if m else None,
-                "start": 1974,
-            })
-        i += 1
-    return recs
-
-
-# ---------------- income_property（经营性房产收益流） ----------------
-def parse_income_property(path: Path) -> list[dict]:
-    """属地 × 房产 × 1974基准年收入(本土货币) → 逐年营收推导配置。
-
-    逐年 = 属地基准 × 分段复利(1974-2007: +7%→+3.5%→+5%（累计≈5.21）; 2008-16 +3%; 17-22 +2.8%; 23-25 +1.5%)。
-    归属: 比利时/卢森堡→Henri, 荷兰→养外祖父, 丹麦→养外祖母, 瑞典→养祖母。
-    """
-    from app.ingest.holders import holder_currencies
-    lines = _lines(path)
-    recs: list[dict] = []
-    for line in lines:
-        m = re.match(r"\| (卢森堡|比利时|荷兰|丹麦|瑞典) \| 房产([A-Z]+) \| (.+?)\|.*\| ([\d,]+) ([A-Za-z一-鿿]{2,6}) \|", line)
-        if m:
-            recs.append({
-                "country": m.group(1), "prop": "房产" + m.group(2), "name": m.group(3).strip(),
-                "base1974": parse_number(m.group(4)), "currency": _cur(m.group(5)),
-                "holder": {"卢森堡": "Henri Peeters", "比利时": "Henri Peeters",
-                           "荷兰": "养外祖父", "丹麦": "养外祖母", "瑞典": "养祖母"}[m.group(1)],
-            })
-    return recs
-
-
-# ---------------- income_shop（开店收益流） ----------------
-def parse_income_shop(path: Path) -> list[dict]:
-    """时段表 `时间段 | 货币 | … | 合并税后落袋` → 逐年(时段内取落袋均值)。
-
-    归属：开店挂 Henri Peeters 账户（祖父运营）。遇「跨期对比辅助表」后停止（避免 EUR 折算重复段）。
-    """
-    lines = _lines(path)
-    recs: list[dict] = []
-    for line in lines:
-        # 仅当"辅助表"作为表格标题（## 或 #）出现才停，避免正文含"跨期对比"字样误触
-        if line.strip().startswith("#") and ("跨期对比辅助表" in line or "对比辅助表" in line):
-            break
-        m = re.match(r"\| (\d{4})[–-](\d{4}) \| (\w+) \| .* \| ([\d.]+) \|", line)
-        if m:
-            y0, y1, cur, last = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
-            recs.append({"holder": "Henri Peeters", "y0": y0, "y1": y1,
-                         "currency": _cur(cur) or "BEF", "amount": parse_number(last)})
-    return recs
 
 
 # ---------------- salary（薪资收入） ----------------

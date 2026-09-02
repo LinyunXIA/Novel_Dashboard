@@ -144,22 +144,15 @@ def _reload_date_rules(session) -> int:
 def _earliest_affected_year(r) -> int | None:
     """§9.1 受影响起点（issue #120）：从已解析记录推导最早影响年。
 
-    返回 None = 全局性内容（人物/收益曲线/汇率/初始资产/祖产债券自 1947 展开）
+    返回 None = 全局性内容（人物/收益曲线/汇率/初始资产/基本收入，基本收入商业流自 1947）
     → 调用方按 1947 全量处理；否则返回记录中的最小年份，重算只向后传播。
     """
     cat = r.category
-    if cat in ("character", "return_table", "fx", "initial_asset", "income_security"):
+    # issue #211：basic_income 为逐年终值（股债/房产/商业，最早 1947），全局性内容 → 1947
+    if cat in ("character", "return_table", "fx", "initial_asset", "basic_income"):
         return None
     if cat == "timeline":
         ys = [int(x["event_year"]) for x in r.records if x.get("event_year")]
-        return min(ys) if ys else None
-    if cat == "income_shop":
-        ys = [int(x["y0"]) for x in r.records if x.get("y0")]
-        return min(ys) if ys else None
-    if cat == "income_property":
-        return 1974  # 展开窗口固定起点
-    if cat == "income_rent":
-        ys = [int(x.get("start") or 1974) for x in r.records]
         return min(ys) if ys else None
     if cat == "bank":
         ys = [row["date"].year for seg in r.records for row in (seg.get("rows") or [])
@@ -176,9 +169,9 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     - 所有文件类目经 _file_import_state 判定 new/unchanged/changed，
       unchanged 静默跳过、changed 提示待 P2 版本决策并跳过；
     - writer 层另有自然键去重兜底（初始现金 / 家庭支出），兼容无版本记录的存量库。
-    - force=True（issue #114）：仅四类收益文件跳过指纹 gate，且先清除该文件
-      旧 income_stream + finance 镜像行再重导（展开因子等代码口径变更后的重浇灌）；
-      salary 涉及 ledger 行、不支持 force。
+    - force=True（issue #114）：仅收益文件（issue #211 起为 basic_income 基本收入.md）
+      跳过指纹 gate，且先清除该文件旧 income_stream + finance 镜像行再重导
+      （口径变更后的重浇灌）；salary 涉及 ledger 行、不支持 force。
     - force_files（F-P2-06）：`set[str]`，命中文件强制重导入（版本决策「采纳新版本」）。
     commit 前整批事务，失败回滚（由调用方管理 session/commit）。
     """
@@ -186,7 +179,7 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     n_rules = _reload_date_rules(session)
     if n_rules:
         log(f"   ✓ 已装载用户 date_rule {n_rules} 条（超规则日期将按其解析）")
-    ck = 0; ia = {"asset": 0, "cash": 0}; sec = 0; rent = 0; prop = 0; shop = 0
+    ck = 0; ia = {"asset": 0, "cash": 0}; bi = 0
     sal = 0; he = 0; rcur = 0; fx_total = 0; tl_n = 0; bank_n = 0; bank_seg_skip = 0
     blocked_files = 0
     soft_warnings = 0
@@ -203,9 +196,10 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
                 f"（例：{inactive[:3]}）")
     # DESIGN §6.5 摄入顺序锁死：人物(entity) 先入 → 初始资产 → 收益/薪资/支出 → 银行。
     # 收益挂账依赖 entity_id，不能按文件名字典序处理（issue #68）。
+    # issue #211：四类配置推导收益（security/rent/property/shop）整合为 basic_income
+    # （基本收入.md 逐年终值），取代原 income_* 四类位置。
     _ORDER = ("character", "return_table", "timeline", "initial_asset",
-              "income_security", "income_rent", "income_property",
-              "income_shop", "salary", "household_expense", "bank")
+              "basic_income", "salary", "household_expense", "bank")
     ordered = sorted(
         rep.ok,
         key=lambda r: (_ORDER.index(r.category) if r.category in _ORDER else 99, r.file),
@@ -273,13 +267,12 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             ia["asset"] += st["asset"]; ia["cash"] += st["cash"]
             _record_current_version(session, r, source_dir)
             imported_rs.append(r)
-        if r.category in ("income_security", "income_rent", "income_property",
-                          "income_shop", "salary") and r.records:
+        if r.category in ("basic_income", "salary") and r.records:
             bypass = force or bool(force_files and r.file in force_files)
             if not bypass and _skip_by_state(session, r, source_dir, log, force_files):
                 continue
             if force and r.category == "salary":
-                # issue #114：--force 仅支持四类收益文件（只落 income_stream+finance 镜像，
+                # issue #114：--force 仅支持收益文件（只落 income_stream+finance 镜像，
                 # 可按 source_file 安全清除）；salary 涉及账务镜像，维持整文件跳过。
                 # force_files（F-P2-06 版本采纳）不受此限——采纳新版本必须重导。
                 log(f"   ⏭ {r.file}: --force 不支持薪资文件（涉及 ledger 行），跳过")
@@ -305,11 +298,12 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             soft_warnings += _log_soft(log, r.file, crep)
             for rec in r.records:
                 rec.setdefault("source_file", r.file)
-            if r.category == "income_security": sec += writer.import_income_security(session, r.records)["stream"]
-            if r.category == "income_rent": rent += writer.import_income_rent(session, r.records)["stream"]
-            if r.category == "income_property": prop += writer.import_income_property(session, r.records)["stream"]
-            if r.category == "income_shop": shop += writer.import_income_shop(session, r.records)["stream"]
-            if r.category == "salary": sal += writer.import_salary(session, r.records)["stream"]
+            # issue #211：basic_income 记录已逐年展开且自带 stream_type（股债 security /
+            # 租房 rent / 经营房 property / 开店 shop），writer 直写终值。
+            if r.category == "basic_income":
+                bi += writer.import_basic_income(session, r.records)["stream"]
+            if r.category == "salary":
+                sal += writer.import_salary(session, r.records)["stream"]
             _record_current_version(session, r, source_dir)
             imported_rs.append(r)
         if r.category == "household_expense" and r.records:
@@ -366,8 +360,8 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         reason="ingest" if not blocked_files else f"ingest(部分：{blocked_files} 文件被拦)")
     session.flush()
     summary = (
-        f"落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、票息 {sec}、"
-        f"租房 {rent}、经营房 {prop}、开店 {shop}、薪资 {sal}、家庭支出 {he}、"
+        f"落库完成：人物 {ck}、初始资产 {ia['asset']}、现金 {ia['cash']}、基本收入流 {bi}、"
+        f"薪资 {sal}、家庭支出 {he}、"
         f"收益曲线 {rcur}、汇率 {fx_total}、时间线 {tl_n}、银行流水 {bank_n}"
         f"（seg 跳过 {bank_seg_skip}）、2002关池 {closed}"
         f"（EUR承接 {cc['migrated']} / 零结转跳过 {cc['skipped_zero']}）、冲突拦截 {blocked_files}"
@@ -376,7 +370,7 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     )
     return {"summary": summary, "blocked": blocked_files, "soft_warnings": soft_warnings,
             "characters": ck, "initial_assets": ia["asset"], "cash": ia["cash"],
-            "security": sec, "rent": rent, "property": prop, "shop": shop,
+            "basic_income": bi,
             "salary": sal, "household": he, "return_curves": rcur, "fx": fx_total,
             "timeline": tl_n, "ledger": bank_n, "job": job}
 
@@ -592,8 +586,8 @@ def _normalize_conflict_recs(category: str, records: list[dict]) -> list[dict]:
     return out
 
 
-_CAT_STREAM = {"income_security": "security", "income_rent": "rent",
-               "income_property": "property", "income_shop": "shop", "salary": "salary"}
+# issue #211：basic_income 记录自带 stream_type，无需类别归一；仅 salary 保留兜底。
+_CAT_STREAM = {"salary": "salary"}
 
 
 @app.command()

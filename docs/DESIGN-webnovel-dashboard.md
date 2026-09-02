@@ -379,10 +379,8 @@ CREATE TABLE notification (
 | `经济/银行/` | bank |
 | `经济/股票/` | stock_tx |
 | `基准/收益表/*测算表` | return_table（R1–R5，仅供投资） |
-| `基准/收益表/惠民租房.md` | income_rent（房产租金收益流） |
-| `基准/收益表/经营性房产收益.md` | income_property（经营性房产收益流） |
-| `基准/收益表/祖产股票债券收益.md` | income_security（祖产债券/股票收益流） |
-| `基准/收益表/祖父开店.md` | income_shop（开店收益流） |
+| `基准/收益表/基本收入.md` | **basic_income**（五人初始资产逐年收益终值：股债 security / 惠民租房 rent / 经营性房产 property / 祖父开店 shop；issue #211） |
+| `基准/收益表/惠民租房.md`、`经营性房产收益.md`、`祖产股票债券收益.md`、`祖父开店.md` | **SKIP_SUPERSEDED**（已被 基本收入.md 完全取代，issue #211；文件留盘存档，dev/test 全量扫描同样跳过） |
 | `基准/初始资产/*.md` | initial_asset（存量/本金建档） |
 | `基准/薪资/*.md` | salary（逐年薪资收入，取文件税后值） |
 | `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户） |
@@ -408,7 +406,7 @@ CREATE TABLE notification (
 - **stock_tx**：`### 基本信息` 列表 → 常量入 entity.fields；`### 年度明细` 表 → holding_event。拆股/换股链可由 `event_type` 关联出一张 `relationship`（acquired/split）。
 - **return_table**：年度 × R1..R5 表 → return_curve（仅供投资用，与收益流无关）。
 - **initial_asset**：初始资产（现金/债券/股票/房产）→ 存量建档 `initial_asset`；现金进银行、股票债券一组、房产一组。
-- **income_*（租/经营性房/祖产债券/开店）**：收益文件模块化 → 按属地模块拆 → `income_stream`（逐年现金流、挂 entity、直接取文件金额入账，不重算）。归属名 ↔ `entity.name` 失配标需人工。
+- **basic_income（issue #211，整合旧 income_* 四类）**：`基本收入.md` 按人分节（`## 一~四、`；第五节汇总表不导入），节内 x.1 股债表（债券收益/股票收益两列）、x.2 房产表（惠民租房/经营性房产；Henri 为 惠民(祖父)/(先祖)、经营性(祖父)/(先祖) 四列）、4.3 商业表（税后落袋）。年份格支持单年与段（`YYYY–YYYY`，en-dash/hyphen 兼容，段内逐年同值展开）；币种格 `NLG/年` 剥后缀识别，Henri 1974–2001 `BEF/LUF` 双币格按列拆——祖父两列 BEF、先祖两列 LUF（1:1），2002 起全 EUR；0 值不产行（惠民 2008 起归零，issue #28）；`合计` 列做分量对账（不符 → warning）。记录自带 stream_type/group_key/label/currency/year/amount/source_line，writer 仅做 holder 归一（TITLE_ENTITY）+ 落 `income_stream` + `finance_entry` 镜像。旧四个配置推导型 parser/writer 与 `app/core/factors.py` 分段复利因子已随本变更删除。
 - **salary**：养父/养母薪资 → 取文件税后值 → `income_stream(salary)` 挂其账户；跨币种按文件币种进各自本国货币池。
 - **household_expense**：家庭支出 → 取"年度总支出"行 → `ledger` 支出（挂 Henri Peeters 账户）；2002 起停设。
 - **event_movie / event_stock（Phase 2 启用，§19.6）**：基准/事件 的电影/股票事件素材，Phase 1 跳过、Phase 2 由数据调整员导入**不关联账户**，UI 用户按同位手动关联；event_stock → `holding_event`(batch) + `ledger_entry`(买入/卖出/分红/现金并购)。
@@ -430,7 +428,7 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 ```
 人物/ → entity（先导！entity_id 是收益挂账的锚）
 初始资产(*.md) → 存量建档（现金→银行；股票债券一组；房产一组）
-收益文件(4类: 租/经营性房/祖产债券/开店) + 薪资 → 逐年现金流 → 挂对应 entity → 进账户活期
+收益文件(基本收入.md：股债/租/经营性房/开店逐年终值，issue #211) + 薪资 → 逐年现金流 → 挂对应 entity → 进账户活期
 支出文件(家庭支出) → 挂 Henri Peeters 账户 支出
 ```
 
@@ -440,7 +438,8 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 - **股票债券归属粒度**：按**地域颗粒**打包挂一个人/公司（如"丹麦的股票债券"一个包挂某主体）；**包内收益仍分开计算**（每只股/每支债各自算票息），属同域同主体。
 - **房产**：房产A/B/C 全算收益（经营性房产收益 + 惠民租房）；家庭主古堡也列收益。
 - **薪资/收益文件已写死金额/税后/币种**：系统**直接取文件金额入账，不重算税率/CPI/人口分段**（文件即权威，系统只搬运+校验，保"数据算得平"）。
-- **实现注记（issue #69）**：三类收益文件（惠民租房 / 经营性房产 / 祖产股票债券）源 md **仅含基桩值**（1974 基准年收入、单套年租金、面值×固定票息），无逐年金额表。系统按文件自身口径的**分段复利在 ingest 时确定性展开**为逐年 `income_stream`；涨幅分段外置 `app/core/factors.py`（数值与文件说明段一致，集中可核对），security 展开窗口默认 1947–2025 可参配。属「文件权威值 + 系统按文件规则展开」，非黑箱重算；薪资/开店/家庭支出仍直读文件逐年值。
+- **实现注记（issue #211 取代 issue #69 旧链路）**：五人初始资产逐年收益已整合为 `基准/收益表/基本收入.md`，**逐年终值直入** `income_stream`（股债 security / 惠民租房 rent / 经营性房产 property / 祖父开店 shop；因子 A「文件终值权威」，issue #114）。旧的「基桩值 + 分段复利在 ingest 时展开」链路（惠民租房/经营性房产/祖产股票债券三文件 + `app/core/factors.py`，issue #69）与开店时段均值 parser **已全部删除**；旧四文件 detect 改归 `SKIP_SUPERSEDED` 留盘存档。Henri 房产表「先祖」列为卢森堡 LUF 资产、「祖父」列为比利时 BEF（1974–2001，1:1），均挂 Henri Peeters 一人；2002 起统一切 EUR。2008 起惠民租房记 0（无行）、经营性房产为扣全板块人工成本后净额。薪资/家庭支出仍直读文件逐年值。
+  > ⚠️ 数据对账（2026-09 导入时）：`基本收入.md` 第五节「全周期累计汇总」与其明细表在**房产类 6 个口径**上不一致（如 Henri+先祖 房产 BEF/LUF 汇总 81,756,443 vs 明细 236,800,383；养外祖父 房产 EUR 汇总 7,087,075 vs 明细 4,256,896），股债/商业有 ±1~8 舍入级差异；导入以**逐行明细终值**为权威（每行 `合计` 自洽零告警），汇总表待数据调整员在文件侧订正。
 - **起始现金进余额**：初始资产里的**现金 = 直接进对应账户银行作为初始余额**，是后续"钱→收益/投资"的本金种子。
 - **薪资/收益各归各主体账户**：养父薪资 → 养父账户、养母薪资 → 养母账户；收益各进各主体账户；**家庭支出统一记 Henri Peeters 账户**（故事设定，非分摊）。
 - **支出**：家庭支出取"年度总支出"行入账（不重算人口分段/CPI）；**2002 起家庭支出设定停止**（无此文件后续）。
@@ -915,7 +914,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P0-02 | **Ingest** | detect 类别识别 + 解析器(bank/股票表/汇率/人物/时间线) + normalize｜cpi_wage→SKIP_PARAM、stock_tx 显式 Phase2 跳过 (#70) | §6 | ✅ |
 | F-P0-03 | **Ingest** | 导入前冲突检测 hard-block（conflict.py，§11.4 + 金额/余额等）｜软硬分级对齐 §11.4：H5/H1=标、H3 链式闭合预检 (#72) | §11.4 | ✅ |
 | F-P0-04 | **Phase1 摄入** | 初始资产建档(initial_asset) + 现金进余额｜幂等已验证：文件指纹+自然键双保险 (#68) | §6.5 | ✅ |
-| F-P0-05 | **Phase1 摄入** | 收益文件模块化挂账(income_stream)：租/经营性房/祖产债券/开店（薪资在 F-P0-06）｜因子外置 core/factors.py，源文件仅基桩值 (#69) | §6.5/§6.3 | ✅ |
+| F-P0-05 | **Phase1 摄入** | 收益文件模块化挂账(income_stream)：租/经营性房/祖产债券/开店（薪资在 F-P0-06）｜~~因子外置 core/factors.py，源文件仅基桩值 (#69)~~ **#211 起被 F-P2+-06 取代：逐年终值直入，factors.py 已删** | §6.5/§6.3 | ✅ |
 | F-P0-06 | **Phase1 摄入** | 家庭支出(挂 Henri)/薪资各归各账户；2002 BEF/LUF/NLG 关池转 EUR｜家庭支出幂等同 #68 | §6.5/§6.6 | ✅ |
 | F-P0-07 | **DDL** | entity/account(status/closed_on)/ledger_entry/income_stream/initial_asset/snapshot 等 | §5 | ✅ |
 | F-P0-08 | **快照** | 逐年 as-of 快照预计算（snapshot.py）｜三层 scope + from_year 增量 + pool_in_transit(#85)；date 级按 issue #17 A′ 实时累加口径定稿（§21.5）；真实库联调通过 | §8/§19.4 | ✅ |
@@ -966,6 +965,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-03 | **启动脚本** | `Design_Folder/start_dashboard.sh`：`APP_ENV=prod` 起动后端 FastAPI(8001) + 前端 Vite(5173)，仅启服务（不含重置/导入） | §4 | ✅ |
 | F-P2+-04 | **时间线自动生成默认事件** | `Design_Folder/时间线.md` 清为占位后，时间线改由 `timeline-defaults` CLI 据 DB 自动生成默认事件（`app/core/timeline_defaults.py`）：股票首次建仓(holding_event buy)、影视首次(movie_event)、股票事件首次(stock_event)、每年 R1-5 投资(investment+alloc)；`source_file=derive:timeline-defaults`、overlay=False，幂等合并、`--rebuild` 清旧重建 | §12/§19.1 | ✅ |
 | F-P2+-05 | **资产转移** | 图谱资产面板按业务分组（股票债券/惠民租房/经营性房产/现金）把该组 `initial_asset` + 对应 `income_stream`（security/rent/property）改归属到目标 person/company（`app/core/asset_transfer.py`）；普通 UI 可做、服务层校验 422、只改存量不迁历史 ledger、记编年史审计、全量重算(1947)+快照+通知；`POST /entities/{id}/assets/transfer` | §6.8/§19 | ✅ |
+| F-P2+-06 | **基本收入.md 合并收益导入** | 五人初始资产逐年收益整合单文件 `基准/收益表/基本收入.md`（股债/房产/商业逐年终值）→ 新类别 `basic_income`：parser 按人物节（`## 一~四、`，汇总节跳过）× 子表（股债/房产/商业）定位列、年份段逐年展开（en-dash/hyphen 兼容）、`NLG/年` 剥后缀、Henri `BEF/LUF` 双币格按祖父 BEF/先祖 LUF 分列（2002 起 EUR）、0 值不产行、`合计` 列对账 warning；writer 落 income_stream + finance_entry 镜像（1117 行）。**完全取代**旧 4 文件（detect 改 `SKIP_SUPERSEDED`、yaml 置 false、留盘存档）；旧 income_* parser/writer 与 `app/core/factors.py` 分段复利因子删除；前端零改动（复用四类 stream_type）；dev 端到端对账 H1/H2/H3/H5=0 | §6.1/§6.3/§6.5 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1285,7 +1285,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | B21 | bank 列位硬编码 / 点分日期丢行 / 节继承 | `parsers/__init__.py:786-810` | ✅ | 真实台账列序固定；源数据无点分日期 |
 | B22 | 列头「万」单位不读，绝对/万单位混存 | `parsers/__init__.py:593-605` | ✅ | 现网列单位一致，混存未发生 |
 | B23 | `TITLE_ENTITY` 不含 先祖/Maaike/Karel/三宝/管家 | `holders.py:24-37` | ✅ | 无银行账户，by design |
-| B24 | `income_security` 导入期 H2 结构性旁路 | `conflict.py:88-91` docstring | ✅ | 基桩展开不经增量比对，health 兜底 |
+| B24 | ~~`income_security` 导入期 H2 结构性旁路~~ | `conflict.py` check_income_stream_conflict docstring | ✅ 已闭合（#211） | 旧基桩展开链路已删；basic_income 为逐年记录（year+amount+stream_type 自带），全部经导入期 H2 比对，health 兜底照旧 |
 | B25 | timeline 幂等键不含 `date/note` | `writer.py:344-354` | ✅ | insert-only 设计，编辑走 overlay |
 | B26 | `event_movie` 启发式 / `event_stock` 优先级 | `event_movie.py:41-65` / `event_stock.py:29-36` | ✅ | best-effort 解析器自声明 |
 | B27 | `writer.fields` 只增不减 | `writer.py:42-43` | ✅ | 人物档案删字段场景未发生 |

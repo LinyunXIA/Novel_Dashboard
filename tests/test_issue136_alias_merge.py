@@ -37,16 +37,19 @@ def _names(session) -> set[str]:
     return {e.name for e in session.execute(select(Entity)).scalars().all()}
 
 
-def test_writer_canonicalizes_security_holder(session):
-    recs = [{"holder": "养祖父", "name": "测试券", "face_value": 1000.0,
-             "currency": "BEF", "rate_pct": 4.0, "source_file": "f.md"}]
-    stats = writer.import_income_security(session, recs, years=(1980, 1980))
+def test_writer_canonicalizes_basic_income_holder(session):
+    # issue #211：旧 income_security 配置推导链路退役，收益统一走 basic_income 逐年终值
+    recs = [{"holder": "养祖父", "stream_type": "security", "group_key": "祖产债券",
+             "label": "祖产股票债券 · 债券收益", "currency": "BEF", "year": 1980,
+             "amount": 40.0, "source_line": 12, "source_file": "基本收入.md"}]
+    stats = writer.import_basic_income(session, recs)
     assert stats["stream"] == 1
     assert "养祖父" not in _names(session)
     henri = session.execute(
         select(Entity).where(Entity.name == "Henri Peeters")).scalar_one()
     row = session.execute(select(IncomeStream)).scalar_one()
     assert row.entity_id == henri.id
+    assert row.source_line == 12
 
 
 def test_writer_canonicalizes_salary_holder(session):
