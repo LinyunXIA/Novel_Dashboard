@@ -231,9 +231,13 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         if r.category == "character" and r.records:
             imported_rs.append(r)
             ck += writer.import_characters(session, r.records, r.file)["imported"]
+            # issue #209：人物/收益曲线/时间线同为权威基准，导入后记版本，
+            # 否则 diff 屏永远判「新增」、采纳新版本也落不了版（与 fx-authority 对齐）
+            _record_current_version(session, r, source_dir)
         if r.category == "return_table" and r.records:
             imported_rs.append(r)
             rcur += writer.import_return_curves(session, r.records)["n"]
+            _record_current_version(session, r, source_dir)   # issue #209
         if r.category == "return_table" and not r.records and r.warnings:
             # 五轮审计 #177：零条告警达主链路（此前只进 run stdout，ingest 静默）——
             # 落 ingest_report(warn) + 日志，供数据调整员察觉 catch-all 误归档
@@ -244,6 +248,7 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         if r.category == "timeline" and r.records:
             imported_rs.append(r)
             tl_n += writer.import_timeline(session, r.records)["n"]
+            _record_current_version(session, r, source_dir)   # issue #209
         if r.category == "bank" and r.records:
             src = r.file
             if _skip_by_state(session, r, source_dir, log, force_files):
