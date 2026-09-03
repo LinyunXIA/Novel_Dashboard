@@ -314,7 +314,12 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         if r.category == "household_expense" and r.records:
             if _skip_by_state(session, r, source_dir, log, force_files):
                 continue
-            he += writer.import_household_expense(session, r.records)["n"]
+            hst = writer.import_household_expense(session, r.records)
+            he += hst["n"]
+            if hst.get("updated"):
+                # issue #216：同键金额/来源刷新（修正版替换或金额修订）——显式说明而非静默
+                log(f"   ↻ {r.file}: 家庭支出刷新 {hst['updated']} 行"
+                    f"（同键金额/来源更新，新增 {hst['n']} 行）")
             _record_current_version(session, r, source_dir)
             imported_rs.append(r)
     # —— 汇率两轮（issue #116：接入文件指纹 gate；权威表变更 → upsert 更新）——

@@ -384,7 +384,7 @@ CREATE TABLE notification (
 | ~~`基准/收益表/1947-2025 欧洲…测算表.md`、`1983-2025 英国…`、`1989-2025 美国…`、`1999-2025 香港…`、`2002-2025 中国…`~~ | **已删除**（2026-09，issue #214：5 张分地区 R1–R5 表整合为全球五地单文件，1050 个键值逐一核对零差异后移除；detect 的 SKIP_SUPERSEDED 规则保留为防误放回护栏） |
 | `基准/初始资产/*.md` | initial_asset（存量/本金建档） |
 | `基准/薪资/*.md` | salary（逐年薪资收入，取文件税后值） |
-| `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户） |
+| `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户；issue #216 起为修正版——CPI 史实验证/KU Leuven 明细等说明扩充、28 年逐年数值不变，prod 同步激活） |
 | `基准/汇率/` | fx |
 | `人物/` | character |
 | `时间线.md` | timeline |
@@ -409,7 +409,7 @@ CREATE TABLE notification (
 - **initial_asset**：初始资产（现金/债券/股票/房产）→ 存量建档 `initial_asset`；现金进银行、股票债券一组、房产一组。
 - **basic_income（issue #211，整合旧 income_* 四类）**：`基本收入.md` 按人分节（`## 一~四、`；第五节汇总表不导入），节内 x.1 股债表（债券收益/股票收益两列）、x.2 房产表（惠民租房/经营性房产；Henri 为 惠民(祖父)/(先祖)、经营性(祖父)/(先祖) 四列）、4.3 商业表（税后落袋）。年份格支持单年与段（`YYYY–YYYY`，en-dash/hyphen 兼容，段内逐年同值展开）；币种格 `NLG/年` 剥后缀识别，Henri 1974–2001 `BEF/LUF` 双币格按列拆——祖父两列 BEF、先祖两列 LUF（1:1），2002 起全 EUR；0 值不产行（惠民 2008 起归零，issue #28）；`合计` 列做分量对账（不符 → warning）。记录自带 stream_type/group_key/label/currency/year/amount/source_line，writer 仅做 holder 归一（TITLE_ENTITY）+ 落 `income_stream` + `finance_entry` 镜像。旧四个配置推导型 parser/writer 与 `app/core/factors.py` 分段复利因子已随本变更删除。
 - **salary**：养父/养母薪资 → 取文件税后值 → `income_stream(salary)` 挂其账户；跨币种按文件币种进各自本国货币池。
-- **household_expense**：家庭支出 → 取"年度总支出"行 → `ledger` 支出（挂 Henri Peeters 账户）；2002 起停设。
+- **household_expense**：家庭支出 → 取"年度总支出"行 → `ledger` 支出（挂 Henri Peeters 账户）；2002 起停设。parser 按首格「年份」+「总支出」表头定位逐年表（issue #24），修正版（issue #216）前置的计列项目/CPI 验证/累计等表首格非「年份」天然跳过；记录带 source_file。writer 为 **upsert**（issue #216）：(account, date, reason='家庭支出') 同键行金额/来源有变则更新 ledger 并同步 finance_entry 镜像、无变化不写——修正版替换或未来金额修订重跑 ingest 即落地（旧语义下金额修订会同年插入第二笔支出）。
 - **event_movie / event_stock（Phase 2 启用，§19.6）**：基准/事件 的电影/股票事件素材，Phase 1 跳过、Phase 2 由数据调整员导入**不关联账户**，UI 用户按同位手动关联；event_stock → `holding_event`(batch) + `ledger_entry`(买入/卖出/分红/现金并购)。
 - **fx**：`1EUR=40.3399BEF` → exchange_rate(fx_from, fx_to, year)。
 - **character**：`- 字段：值` → entity + relationship（识别 关系 字段）。
@@ -968,6 +968,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-05 | **资产转移** | 图谱资产面板按业务分组（股票债券/惠民租房/经营性房产/现金）把该组 `initial_asset` + 对应 `income_stream`（security/rent/property）改归属到目标 person/company（`app/core/asset_transfer.py`）；普通 UI 可做、服务层校验 422、只改存量不迁历史 ledger、记编年史审计、全量重算(1947)+快照+通知；`POST /entities/{id}/assets/transfer` | §6.8/§19 | ✅ |
 | F-P2+-06 | **基本收入.md 合并收益导入** | 五人初始资产逐年收益整合单文件 `基准/收益表/基本收入.md`（股债/房产/商业逐年终值）→ 新类别 `basic_income`：parser 按人物节（`## 一~四、`，汇总节跳过）× 子表（股债/房产/商业）定位列、年份段逐年展开（en-dash/hyphen 兼容）、`NLG/年` 剥后缀、Henri `BEF/LUF` 双币格按祖父 BEF/先祖 LUF 分列（2002 起 EUR）、0 值不产行、`合计` 列对账 warning；writer 落 income_stream + finance_entry 镜像（1117 行）。**完全取代**旧 4 文件（detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名；旧文件 2026-09 已从 Design_Folder 彻底删除）；旧 income_* parser/writer 与 `app/core/factors.py` 分段复利因子删除；前端零改动（复用四类 stream_type）；dev 端到端对账 H1/H2/H3/H5=0 | §6.1/§6.3/§6.5 | ✅ |
 | F-P2+-07 | **全球五地 R1-R5 整合收益表导入** | 5 张分地区测算表整合为单文件 `基准/收益表/全球五地R1-R5投资风险分级收益测算（史实版）.md`（Markdown 表格型）：parser 按 `## x、XX市场` 节标题分流定地区（欧洲/英国/美国/香港/中国 键不变），仅 `### x.4 逐年收益率（%）` 表入库（表头定位 R1–R5 列、背景列忽略；x.5/§六/0.2 表排除）；新旧 1050 个 (地区,R档,年) 键值全量核对**零差异**。writer 由 ON CONFLICT DO NOTHING 改 **upsert**（同键刷新 rate/source_file，数值修订可落地）；旧 5 文件 detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名并于 2026-09 从 Design_Folder 彻底删除；dev 端到端：1050 行溯源全刷新、二轮幂等 0 写入、H1/H2/H3/H5=0（H4 29 条为 #211 已确认的既有家庭支出口径） | §6.1/§6.3 | ✅ |
+| F-P2+-08 | **家庭支出修正版导入并激活 prod** | `基准/1974-2001家庭支出_修正版.md` 替换旧文件（重命名为标准名 `1974-2001家庭支出.md`，detect/yaml 路径不变）：说明章节扩充（1.2 计列项目表 / 1.3 KU Leuven 明细 / CPI 史实验证 / §五关键节点 / §六累计），28 个年度（1974–2001）总支出数值**逐一核对零差异**，parser 无需改（干扰表首格非「年份」天然排除）。parser 记录补 source_file；writer `import_household_expense` 由自然键跳过改 **upsert**（同键 account+date+reason 刷新 outflow/source_file 并同步 finance_entry 镜像；金额修订不再同年插重复行）；yaml 由 active:false 改 **true（prod 首次激活**，Henri BEF 账户 28 笔支出，H4 负余额为收益不入 ledger 的既有口径）；dev 端到端：ledger/镜像各 28 行溯源落库、二轮幂等 0 写入 | §6.1/§6.3 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 

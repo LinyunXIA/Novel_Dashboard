@@ -359,34 +359,60 @@ def import_salary(session: Session, records: list[dict]) -> dict:
 def import_household_expense(session: Session, records: list[dict]) -> dict:
     """家庭支出 → 逐年 ledger 支出（挂 Henri Peeters 账户，多年一致 BEF）。
 
-    issue #68：自然键去重兜底——(account, date, reason='家庭支出', outflow) 已存在
-    则跳过；兼容早于 source_file_version 机制导入的存量库重复 ingest 场景。
+    issue #68：自然键去重兜底——(account, date, reason='家庭支出') 已存在则跳过；
+    兼容早于 source_file_version 机制导入的存量库重复 ingest 场景。
+    issue #216：改 upsert——同键行金额/来源有变则更新 ledger 并同步 finance_entry
+    镜像（修正版文件替换或未来金额修订时，重跑 ingest 即落地；旧 DO NOTHING 语义
+    下金额修订会同年插入第二笔支出，重复计账）。无变化不写，第二轮 n=0。
     """
-    stats = {"n": 0, "skipped": 0}
+    stats = {"n": 0, "skipped": 0, "updated": 0}
     for rec in records:
         ent = _canonical_person(session, rec["holder"])
         cur = rec.get("currency") or "BEF"
         acc = get_or_create_account(session, ent.id, cur)
         d = resolve_date(rec["year"])
-        dup = session.execute(
-            select(LedgerEntry.id).where(
+        source_file = rec.get("source_file")
+        existing = session.execute(
+            select(LedgerEntry).where(
                 LedgerEntry.account_id == acc.id,
                 LedgerEntry.date == d,
                 LedgerEntry.reason == "家庭支出",
-                LedgerEntry.outflow == rec["amount"],
             ).limit(1)
         ).scalar_one_or_none()
-        if dup is not None:
-            stats["skipped"] += 1
+        if existing is not None:
+            cur_amount = float(existing.outflow) if existing.outflow is not None else None
+            if cur_amount == float(rec["amount"]) and existing.source_file == source_file:
+                stats["skipped"] += 1
+                continue
+            existing.outflow = rec["amount"]
+            existing.source_file = source_file
+            # 同步 finance_entry 镜像（entity/year/label/kind 定位；缺失则补）
+            mirror = session.execute(
+                select(FinanceEntry).where(
+                    FinanceEntry.entity_id == ent.id,
+                    FinanceEntry.year == d.year,
+                    FinanceEntry.kind == "expense",
+                    FinanceEntry.label == "家庭支出",
+                    FinanceEntry.source == "file",
+                ).limit(1)
+            ).scalar_one_or_none()
+            if mirror is not None:
+                mirror.amount = rec["amount"]
+                mirror.source_file = source_file
+            else:
+                _mirror_to_finance(session, entity=ent, cur=cur, year=d.year,
+                                   amount=rec["amount"], label="家庭支出",
+                                   source_file=source_file, kind="expense")
+            stats["updated"] += 1
             continue
         session.add(LedgerEntry(
             account_id=acc.id, date=d, reason="家庭支出",
             outflow=rec["amount"], balance=None, kind="expense",
-            source_file=rec.get("source_file"),
+            source_file=source_file,
         ))
         _mirror_to_finance(session, entity=ent, cur=cur, year=d.year,
                            amount=rec["amount"], label="家庭支出",
-                           source_file=rec.get("source_file"), kind="expense")
+                           source_file=source_file, kind="expense")
         stats["n"] += 1
     return stats
 

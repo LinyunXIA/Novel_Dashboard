@@ -109,7 +109,8 @@ class TestParseHouseholdExpenseHeaderBased:
         recs, warns = parse_household_expense(p)
         assert warns == []
         assert recs[0] == {"holder": "Henri Peeters", "year": 1990,
-                           "amount": 1500000.0, "currency": "BEF"}
+                           "amount": 1500000.0, "currency": "BEF",
+                           "source_file": "1974-2001家庭支出.md"}
         assert recs[1]["amount"] == 1560000.0
 
     def test_total_in_last_column_not_misread(self, tmp_path):
