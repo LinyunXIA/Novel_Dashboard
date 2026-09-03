@@ -337,12 +337,43 @@ def import_salary(session: Session, records: list[dict]) -> dict:
 
     issue #136：holder 经 TITLE_ENTITY 归一挂规范实体；group_key/label 同用规范名，
     保证与账户锚同源。
+
+    issue #220：改**按人替换式**——薪资文件是某人入职至退休的逐年全量台账（salary 流
+    的唯一写入方），导入前先删该 entity 既有 salary income_stream 及 finance_entry
+    镜像（不限 source_file），再批量插入。文件名更替（养父的薪资.md →
+    养父的薪资_CNY修正版.md）或口径修正（USD→CNY）时，老行随替换自然清场，
+    不会出现同年 BEF/USD/CNY 双份薪资；二跑行数恒定（幂等）。
     """
     from app.model.types import StreamType
-    stats = {"stream": 0}
+    stats = {"stream": 0, "replaced": 0}
+    # 归一 holder → entity（去重），再按 entity 清场旧 salary 行
+    ents: dict[str, Entity] = {}
     for rec in records:
-        ent = _canonical_person(session, rec["holder"])
-        if rec.get("after_tax") is None:
+        holder = rec.get("holder")
+        if holder and holder not in ents:
+            ents[holder] = _canonical_person(session, rec["holder"])
+    for ent in ents.values():
+        label = f"{ent.name}薪资税后"
+        old_streams = session.execute(
+            select(IncomeStream).where(
+                IncomeStream.entity_id == ent.id,
+                IncomeStream.stream_type == StreamType.SALARY.value)
+        ).scalars().all()
+        for row in old_streams:
+            session.delete(row)
+            stats["replaced"] += 1
+        old_mirror = session.execute(
+            select(FinanceEntry).where(
+                FinanceEntry.entity_id == ent.id,
+                FinanceEntry.kind == "income",
+                FinanceEntry.label == label)
+        ).scalars().all()
+        for row in old_mirror:
+            session.delete(row)
+    session.flush()
+    for rec in records:
+        ent = ents.get(rec.get("holder"))
+        if ent is None or rec.get("after_tax") is None:
             continue
         session.add(IncomeStream(
             entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=f"{ent.name}薪资",

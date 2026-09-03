@@ -52,6 +52,12 @@ _PREFIX_RULES: list[tuple[str, str]] = [
     ("基准/收益表/1974-2001家庭支出.md", "household_expense"),
     ("基准/收益表/", "return_table"),
     ("基准/初始资产/", "initial_asset"),
+    # issue #220：薪资 CNY 修正版（养父/养母的薪资_CNY修正版.md）取代老文件——
+    # 中国段结算币种 USD→CNY、退休奖金改比利时 Assigned out 退职金口径（2 倍/EUR/18%）、
+    # 养父美国段奖金率修正为 12%。下列 2 个老文件已从 Design_Folder 删除，
+    # SKIP 规则保留为防误放回护栏（与 #211/#218 同例）。
+    ("基准/薪资/养父的薪资.md", "SKIP_SUPERSEDED"),
+    ("基准/薪资/养母的薪资.md", "SKIP_SUPERSEDED"),
     ("基准/薪资/", "salary"),
     ("基准/1974-2001家庭支出.md", "household_expense"),
     ("基准/汇率/", "fx"),

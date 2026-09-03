@@ -383,7 +383,8 @@ CREATE TABLE notification (
 | ~~`基准/收益表/惠民租房.md`、`经营性房产收益.md`、`祖产股票债券收益.md`、`祖父开店.md`~~ | **已删除**（2026-09，issue #211 收尾：被 基本收入.md 完全取代后从 Design_Folder 移除；detect 的 SKIP_SUPERSEDED 规则保留为防误放回护栏） |
 | ~~`基准/收益表/1947-2025 欧洲…测算表.md`、`1983-2025 英国…`、`1989-2025 美国…`、`1999-2025 香港…`、`2002-2025 中国…`~~ | **已删除**（2026-09，issue #214：5 张分地区 R1–R5 表整合为全球五地单文件，1050 个键值逐一核对零差异后移除；detect 的 SKIP_SUPERSEDED 规则保留为防误放回护栏） |
 | `基准/初始资产/*.md` | initial_asset（存量/本金建档） |
-| `基准/薪资/*.md` | salary（逐年薪资收入，取文件税后值） |
+| `基准/薪资/养父\|养母的薪资_CNY修正版.md` | salary（逐年薪资收入，取文件税后值；issue #220 起为 CNY 修正版，按人替换式落库） |
+| ~~`基准/薪资/养父的薪资.md`、`养母的薪资.md`~~ | **已删除**（2026-09，issue #220：被 `_CNY修正版` 完全取代——中国段结算币种 USD→CNY、退休奖金改比利时 Assigned out 退职金口径（2 倍基薪/EUR/18% 优惠税率）、养父美国段奖金率修正为规则声明的 12%；detect 的 SKIP_SUPERSEDED 规则保留为防误放回护栏） |
 | `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户；issue #216 起为修正版——CPI 史实验证/KU Leuven 明细等说明扩充、28 年逐年数值不变，prod 同步激活） |
 | `基准/公司/用工成本/**`（2 个汇总文件） | **SKIP_P1**（主扫描链不导入；由独立 CLI `labor-baseline` 落 labor 三表供 API②，§13.2。issue #218 整合为 `用工成本汇总_12地_CPI修正版.md`（12 地区工资+CPI）+ `各国雇主社保税率汇总（逐年展开版）.md`（11 节覆盖 12 office）；旧 10 国工资分文件 + `税率/` 12 分文件已删除并入） |
 | ~~`基准/CPI工资.md`~~ | **已删除**（2026-09，issue #218：工资增幅/CPI 并入用工成本 12 地汇总；detect 的 SKIP_PARAM 规则保留为防误放回护栏） |
@@ -410,7 +411,7 @@ CREATE TABLE notification (
 - **return_table**：年度 × R1..R5 → return_curve（仅供投资用，与收益流无关）。两种格式：① 全球整合文件（issue #214，`全球五地R1-R5投资风险分级收益测算（史实版）.md`）：Markdown 表格型，`## x、欧洲/英国/美国/香港/中国市场（…）` 节标题定地区（country 键不变），仅 `### x.4 逐年收益率（%）` 表入库（表头按列名定位 R1–R5、末列背景文本忽略；x.5 分阶段复合年化、§六 横向对比、0.2 史实验证表均排除），数值为不带 % 的百分数；② 旧分地区格式（年份标题 + 逐行 `- R1：x%` / 竖线 `R1：x｜…` pair，#163 集满五档封盘、#184 带 % pair 视为附录跳过）。writer 为 **upsert**（issue #214）：新键插入、同键 rate/source_file 有变则 ORM 更新（rate 列 Numeric 读回 Decimal，比较前转 float）、无变化不写——整合文件取代时 1050 行溯源刷新、未来史实数值修订重跑 ingest 即落地。
 - **initial_asset**：初始资产（现金/债券/股票/房产）→ 存量建档 `initial_asset`；现金进银行、股票债券一组、房产一组。
 - **basic_income（issue #211，整合旧 income_* 四类）**：`基本收入.md` 按人分节（`## 一~四、`；第五节汇总表不导入），节内 x.1 股债表（债券收益/股票收益两列）、x.2 房产表（惠民租房/经营性房产；Henri 为 惠民(祖父)/(先祖)、经营性(祖父)/(先祖) 四列）、4.3 商业表（税后落袋）。年份格支持单年与段（`YYYY–YYYY`，en-dash/hyphen 兼容，段内逐年同值展开）；币种格 `NLG/年` 剥后缀识别，Henri 1974–2001 `BEF/LUF` 双币格按列拆——祖父两列 BEF、先祖两列 LUF（1:1），2002 起全 EUR；0 值不产行（惠民 2008 起归零，issue #28）；`合计` 列做分量对账（不符 → warning）。记录自带 stream_type/group_key/label/currency/year/amount/source_line，writer 仅做 holder 归一（TITLE_ENTITY）+ 落 `income_stream` + `finance_entry` 镜像。旧四个配置推导型 parser/writer 与 `app/core/factors.py` 分段复利因子已随本变更删除。
-- **salary**：养父/养母薪资 → 取文件税后值 → `income_stream(salary)` 挂其账户；跨币种按文件币种进各自本国货币池。
+- **salary**：养父/养母薪资 → 取文件税后值 → `income_stream(salary)` 挂其账户；跨币种按文件币种进各自本国货币池。issue #220：① 数据源为 `养父/养母的薪资_CNY修正版.md`（中国任职段结算币种 USD→CNY：养父 1998–2012、养母 1991–2012；退休奖金为表外文字段，历来不入逐年表）；② parser 币种列名改包含匹配（「结算币种」等带前缀写法同样定位）——修复养父表头「结算币种」未命中致 1989 起美国/中国段全部错标 BEF 入库的既有 bug；③ writer 改**按人替换式**：文件即该人入职至退休全量台账（salary 流唯一写入方），导入前先删该 entity 旧 salary `income_stream` + `finance_entry` 镜像（不限 source_file）再插，文件名更替/口径修正时老行自然清场、不会同年 BEF/USD/CNY 双份，二跑幂等；④ 替换语义下 salary 不再走 H2 金额冲突拦截（旧值被权威整段覆盖，仅保留 H1 时间线 soft 提示），`--force`/`force_files` 均可安全重导（#114「salary 不支持 force」约束退役，salary 不触碰 ledger）。
 - **household_expense**：家庭支出 → 取"年度总支出"行 → `ledger` 支出（挂 Henri Peeters 账户）；2002 起停设。parser 按首格「年份」+「总支出」表头定位逐年表（issue #24），修正版（issue #216）前置的计列项目/CPI 验证/累计等表首格非「年份」天然跳过；记录带 source_file。writer 为 **upsert**（issue #216）：(account, date, reason='家庭支出') 同键行金额/来源有变则更新 ledger 并同步 finance_entry 镜像、无变化不写——修正版替换或未来金额修订重跑 ingest 即落地（旧语义下金额修订会同年插入第二笔支出）。
 - **event_movie / event_stock（Phase 2 启用，§19.6）**：基准/事件 的电影/股票事件素材，Phase 1 跳过、Phase 2 由数据调整员导入**不关联账户**，UI 用户按同位手动关联；event_stock → `holding_event`(batch) + `ledger_entry`(买入/卖出/分红/现金并购)。
 - **fx**：`1EUR=40.3399BEF` → exchange_rate(fx_from, fx_to, year)。
@@ -972,6 +973,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-07 | **全球五地 R1-R5 整合收益表导入** | 5 张分地区测算表整合为单文件 `基准/收益表/全球五地R1-R5投资风险分级收益测算（史实版）.md`（Markdown 表格型）：parser 按 `## x、XX市场` 节标题分流定地区（欧洲/英国/美国/香港/中国 键不变），仅 `### x.4 逐年收益率（%）` 表入库（表头定位 R1–R5 列、背景列忽略；x.5/§六/0.2 表排除）；新旧 1050 个 (地区,R档,年) 键值全量核对**零差异**。writer 由 ON CONFLICT DO NOTHING 改 **upsert**（同键刷新 rate/source_file，数值修订可落地）；旧 5 文件 detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名并于 2026-09 从 Design_Folder 彻底删除；dev 端到端：1050 行溯源全刷新、二轮幂等 0 写入、H1/H2/H3/H5=0（H4 29 条为 #211 已确认的既有家庭支出口径） | §6.1/§6.3 | ✅ |
 | F-P2+-08 | **家庭支出修正版导入并激活 prod** | `基准/1974-2001家庭支出_修正版.md` 替换旧文件（重命名为标准名 `1974-2001家庭支出.md`，detect/yaml 路径不变）：说明章节扩充（1.2 计列项目表 / 1.3 KU Leuven 明细 / CPI 史实验证 / §五关键节点 / §六累计），28 个年度（1974–2001）总支出数值**逐一核对零差异**，parser 无需改（干扰表首格非「年份」天然排除）。parser 记录补 source_file；writer `import_household_expense` 由自然键跳过改 **upsert**（同键 account+date+reason 刷新 outflow/source_file 并同步 finance_entry 镜像；金额修订不再同年插重复行）；yaml 由 active:false 改 **true（prod 首次激活**，Henri BEF 账户 28 笔支出，H4 负余额为收益不入 ledger 的既有口径）；dev 端到端：ledger/镜像各 28 行溯源落库、二轮幂等 0 写入 | §6.1/§6.3 | ✅ |
 | F-P2+-09 | **用工成本底稿整合（2 汇总文件取代 23 分文件）** | `基准/CPI工资.md` + 用工成本 10 国工资分文件 + `税率/` 12 分文件（共 23 个）整合为 `基准/公司/用工成本/` 下 2 个汇总文件：`用工成本汇总_12地_CPI修正版.md`（12 地区 `## 地区·` 节，9 列同构表）+ `各国雇主社保税率汇总（逐年展开版）.md`（`### N. 地区` 11 节覆盖 12 office）。`labor_baseline.py` 重写：工资按节切分（`全周期关键指标`/分区标题排除）、涨薪幅度→`wage_growth_pct`、CPI 同比由 2013=100 定基指数相邻年反推（首年 None）；税率区间年（1982-1983/2017-2025）逐年展开、双值格取末值（英国 2025 NIC 15%/£5,000）、上海节兼落外籍 office、节底文字常数入 params（荷兰假期 8%/美国 FUTA cap $7,000/英国养老金 2012+ 3%）；三表改**替换式**导入（唯一写入方即本 CLI）。工资地区 10→12（美国拆纽约/洛杉矶、新增北京），`labor_cost.LOCATION_ALIAS` 同步（北京工资不再代理上海）。旧 23 文件 2026-09 从 Design_Folder 删除；detect SKIP_PARAM/SKIP_P1 规则保留为护栏；yaml 登记 2 汇总文件 active:false（prod 未激活 labor-baseline）。dev 端到端：wage/cpi 各 348 行 ×12 地区（1982–2025 区间）、tax 338 行 ×12 office，二跑幂等 | §6.1/§13.2 | ✅ |
+| F-P2+-10 | **薪资 CNY 修正版替换导入（养父/养母）** | `基准/薪资/养父|养母的薪资.md` → `…_CNY修正版.md`：中国段结算币种 USD→CNY（养父 1998–2012、养母 1991–2012）、退休奖金改比利时 Assigned out 退职金口径（2 倍基薪/EUR/18% 优惠税率，表外文字不入逐年表）、养父美国段奖金率修正为 12%；数值自洽（税后=税前×(1−税率)、分量加总、调任汇率换算）逐一核验。parser 修复「结算币种」列头识别（既有 bug：养父 1989 起 USD/CNY 段全部错标 BEF 入库）；writer `import_salary` 改**按人替换式**（先删该 entity 旧 salary 流+finance 镜像再插，文件名更替/口径修正不双份、二跑幂等）；salary 退出 H2 拦截（替换语义，仅留 H1 soft）、`--force` 对 salary 放开（#114 约束退役）；老 2 文件 2026-09 从 Design_Folder 删除，detect SKIP_SUPERSEDED 护栏；yaml 2 新文件 active:true（prod 首次导入薪资 88 行：养父 BEF20/USD9/CNY15、养母 BEF22/CNY22）。dev 端到端：88 行溯源全新文件、镜像 88、冲突 0、二跑 0 写入 | §6.1/§6.3 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1065,6 +1067,9 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 
 - **ingest --force / force_files 重导链路修复**（#135）：purge 后必须落入冲突检测+重导
   （合并事故曾致「只删不补」）；--force 对 salary 维持整文件跳过。
+  > 注（issue #220，2026-09）：salary 改按人替换式落库后，该约束退役——`--force`/`force_files`
+  > 对薪资文件同样安全（writer 先删该 entity 旧 salary 流+镜像再插，不触碰 ledger），
+  > 见 §6.3 salary 条与 §20 F-P2+-10。
 - **收益归属名归一**（#136）：writer 五个 income/salary 导入 + 银行 + 初始资产统一经
   `holders.TITLE_ENTITY` 归一规范实体；存量职称别名 person 用 CLI
   `python -m app.ingest.main merge-alias-persons [--dry-run]` 合并（含括号注解变体，

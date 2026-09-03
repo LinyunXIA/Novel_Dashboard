@@ -686,6 +686,10 @@ def parse_salary(path: Path) -> tuple[list[dict], list[str]]:
     - 币种识别走 detect_currency，兼容「BEF（法郎）」等带后缀写法
     - 表头缺失 / 金额解析失败 → warning 进 ingest_report（parse.py _call 统一收）
 
+    issue #220：币种列名改包含匹配（「结算币种」等带前缀写法同样定位）——养父薪资
+    表头为「结算币种」，此前精确匹配失败、currency_col=None，1989 起美国/中国段
+    USD/CNY 全部回退默认 BEF 入库。CNY 修正版中国段（CNY）由此正确识别。
+
     返回 (records, warnings)。
     """
     from app.ingest.normalize import detect_currency
@@ -708,7 +712,10 @@ def parse_salary(path: Path) -> tuple[list[dict], list[str]]:
             if "税后" in c:
                 amount_col = j
             elif (detect_currency(c) or c.strip().upper() in _CURRENCIES
-                  or c.strip() in ("币种", "货币", "currency", "Currency")):
+                  # issue #220：列名包含匹配——「结算币种」等带前缀写法同样定位
+                  # （养父薪资表头为「结算币种」，此前定位失败致全段回退默认 BEF）
+                  or "币种" in c or "货币" in c
+                  or c.strip().lower() == "currency"):
                 currency_col = j
         if amount_col is not None:
             header_idx = i
@@ -774,7 +781,10 @@ def parse_household_expense(path: Path) -> tuple[list[dict], list[str]]:
             if "总支出" in c:
                 amount_col = j
             elif (detect_currency(c) or c.strip().upper() in _CURRENCIES
-                  or c.strip() in ("币种", "货币", "currency", "Currency")):
+                  # issue #220：列名包含匹配——「结算币种」等带前缀写法同样定位
+                  # （养父薪资表头为「结算币种」，此前定位失败致全段回退默认 BEF）
+                  or "币种" in c or "货币" in c
+                  or c.strip().lower() == "currency"):
                 currency_col = j
         if amount_col is not None:
             header_idx = i

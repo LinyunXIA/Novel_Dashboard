@@ -50,6 +50,25 @@ class TestParseSalaryHeaderBased:
         assert recs[0]["currency"] == "BEF"
         assert recs[1]["currency"] == "NLG"
 
+    def test_currency_col_named_settlement_currency(self, tmp_path):
+        """issue #220：表头列名「结算币种」（养父薪资实际列名）须定位为币种列。
+
+        此前只认精确「币种/货币」，定位失败致 1989 起 USD/CNY 段全部回退 BEF。
+        """
+        p = _write(tmp_path, "养父的薪资_CNY修正版.md", (
+            "| 年份 | 任职地点 | 年度税前总收入 | 结算币种 | 综合税率 | 年度税后总收入 |\n"
+            "| ---- | -------- | -------------- | -------- | -------- | -------------- |\n"
+            "| 1988 | 比利时   | 2,439,406      | BEF      | 38%      | 1,512,432      |\n"
+            "| 1989 | 美国     | 122,262        | USD      | 28%      | 88,028         |\n"
+            "| 1998 | 中国     | 2,300,203      | CNY      | 20%      | 1,840,162      |\n"
+        ))
+        recs, warns = parse_salary(p)
+        assert warns == []
+        assert [(r["year"], r["currency"]) for r in recs] == [
+            (1988, "BEF"), (1989, "USD"), (1998, "CNY")]
+        assert recs[2]["after_tax"] == 1840162.0
+        assert all(r["holder"] == "养父" for r in recs)
+
     def test_note_column_with_numbers_not_misread(self, tmp_path):
         """issue #24 关键修复点：备注列含「1990」「5%」时不会被错采为税后值。
 

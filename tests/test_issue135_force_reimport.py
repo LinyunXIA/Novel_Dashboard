@@ -4,7 +4,7 @@
 --force(#114 重浇灌) 与 F-P2-06「采纳新版本」均退化为「只删不补」。
 本文件断言：
 1. --force 对收益文件（issue #211 起为 basic_income 基本收入.md）：purge 后行数恢复（不归零）；
-2. --force 对 salary：整文件跳过、不清场（#114 原约束保留）；
+2. --force 对 salary：issue #220 起为按人替换式重导（旧行清除、新行落库，不清零不双份）；
 3. force_files（版本采纳）：同样必须重导恢复。
 """
 from __future__ import annotations
@@ -90,8 +90,12 @@ def test_force_files_adopt_reimports(session, monkeypatch, tmp_path):
     assert _count(session, IncomeStream) == n1 > 0
 
 
-def test_force_skips_salary_without_purge(session, monkeypatch, tmp_path):
-    """#114 原约束：--force 不支持薪资文件——不清场也不重导。"""
+def test_force_replaces_salary_rows(session, monkeypatch, tmp_path):
+    """issue #220：salary 改按人替换式后 --force 可安全重导——旧行清除、新行落库。
+
+    （#114 原约束「--force 不支持薪资文件」随替换式退役：writer 先删该 entity
+    旧 salary 流+镜像再插，不触碰 ledger，文件名更替/口径修正均安全。）
+    """
     _mk_src(tmp_path, SAL_FILE)
     monkeypatch.setattr("app.ingest.main.run_ingest", lambda d: _sal_report())
     import_all(session, tmp_path, log=lambda m: None)
@@ -100,5 +104,6 @@ def test_force_skips_salary_without_purge(session, monkeypatch, tmp_path):
 
     logs: list[str] = []
     import_all(session, tmp_path, log=logs.append, force=True)
-    assert _count(session, IncomeStream) == 1          # 未被 purge（修复前归零）
-    assert any("--force 不支持薪资文件" in m for m in logs)
+    assert _count(session, IncomeStream) == 1          # 替换式：删 1 插 1，不清零不双份
+    assert _count(session, FinanceEntry) == 1
+    assert any("替换式" in m for m in logs)
