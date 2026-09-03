@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.ingest.holders import holder_entity_name
@@ -343,9 +343,17 @@ def import_salary(session: Session, records: list[dict]) -> dict:
     镜像（不限 source_file），再批量插入。文件名更替（养父的薪资.md →
     养父的薪资_CNY修正版.md）或口径修正（USD→CNY）时，老行随替换自然清场，
     不会出现同年 BEF/USD/CNY 双份薪资；二跑行数恒定（幂等）。
+
+    issue #222：文件表外「退职金专项核算」段产出 component='severance' 记录
+    （退休年一次性税后退职金，比利时 Assigned out 口径、EUR），并入 salary 流、
+    group_key/label 用「退职金」与逐年薪资区分；替换清场同时覆盖两类镜像。
     """
     from app.model.types import StreamType
     stats = {"stream": 0, "replaced": 0}
+
+    def _labels(ent: Entity) -> tuple[str, str]:
+        return f"{ent.name}薪资税后", f"{ent.name}退职金税后"
+
     # 归一 holder → entity（去重），再按 entity 清场旧 salary 行
     ents: dict[str, Entity] = {}
     for rec in records:
@@ -353,7 +361,7 @@ def import_salary(session: Session, records: list[dict]) -> dict:
         if holder and holder not in ents:
             ents[holder] = _canonical_person(session, rec["holder"])
     for ent in ents.values():
-        label = f"{ent.name}薪资税后"
+        sal_label, sev_label = _labels(ent)
         old_streams = session.execute(
             select(IncomeStream).where(
                 IncomeStream.entity_id == ent.id,
@@ -366,7 +374,7 @@ def import_salary(session: Session, records: list[dict]) -> dict:
             select(FinanceEntry).where(
                 FinanceEntry.entity_id == ent.id,
                 FinanceEntry.kind == "income",
-                FinanceEntry.label == label)
+                or_(FinanceEntry.label == sal_label, FinanceEntry.label == sev_label))
         ).scalars().all()
         for row in old_mirror:
             session.delete(row)
@@ -375,14 +383,18 @@ def import_salary(session: Session, records: list[dict]) -> dict:
         ent = ents.get(rec.get("holder"))
         if ent is None or rec.get("after_tax") is None:
             continue
+        if rec.get("component") == "severance":
+            group_key, label = f"{ent.name}退职金", f"{ent.name}退职金税后"
+        else:
+            group_key, label = f"{ent.name}薪资", f"{ent.name}薪资税后"
         session.add(IncomeStream(
-            entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=f"{ent.name}薪资",
+            entity_id=ent.id, stream_type=StreamType.SALARY.value, group_key=group_key,
             currency=rec.get("currency"), year=rec["year"], amount=rec["after_tax"],
-            label=f"{ent.name}薪资税后", source_file=rec.get("source_file"),
+            label=label, source_file=rec.get("source_file"),
         ))
         _mirror_to_finance(session, entity=ent, cur=rec.get("currency"),
                            year=rec["year"], amount=rec["after_tax"],
-                           label=f"{ent.name}薪资税后", source_file=rec.get("source_file"))
+                           label=label, source_file=rec.get("source_file"))
         stats["stream"] += 1
     return stats
 
