@@ -220,14 +220,23 @@ def _detect_year_in_lines(lines: list[str]) -> int | None:
 
 
 # ---------------- return_table（收益测算表） ----------------
-def parse_return_table(path: Path) -> list[dict]:
-    """支持两种格式（欧洲/美国/英国=逐行 `- R1：x%`；香港/中国=竖线分隔单行 `R1：x｜R2：y｜…`）。
+def parse_return_table(path: Path) -> list[dict] | tuple[list[dict], list[str]]:
+    """支持三类格式：
 
-    年份来自 `#### 1999（…）` / `## 1999年` 标题。
-    四轮审计 #163：每 (year) 集满 R1-R5 五档即封盘——文末「分阶段复合年化」附录
+    - 全球整合文件（issue #214，Markdown 表格型）：`## 一、欧洲市场（…）` 节标题定地区，
+      `### x.4 逐年收益率（%）` 表逐年给出 R1-R5——见 `_parse_return_table_global`；
+    - 旧分地区文件两种：欧洲/美国/英国=逐行 `- R1：x%`；香港/中国=竖线分隔单行
+      `R1：x｜R2：y｜…`。年份来自 `#### 1999（…）` / `## 1999年` 标题。
+
+    四轮审计 #163：旧格式每 (year) 集满 R1-R5 五档即封盘——文末「分阶段复合年化」附录
     （阶段N/全周期行）与末年明细同 year 且重复，集满后一律忽略。
     """
     lines = _lines(path)
+    # issue #214：全球五地整合文件（史实版）按 `## x、欧洲市场（…）` 节标题识别分流
+    # （地区名+「市场」紧接，避免误吞旧文件「风险分级定义（…资产市场）」类标题）
+    if any(re.match(r"^##\s+[一二三四五]、(?:欧洲|英国|美国|香港|中国)市场", ln)
+           for ln in lines):
+        return _parse_return_table_global(path, lines)
     recs: list[dict] = []
     year = None
     region = _region_from_file(path.name)
@@ -273,6 +282,63 @@ def _region_from_file(fname: str) -> str:
         if k in fname:
             return k
     return fname
+
+
+# 全球整合文件（issue #214）：R1-R5 列名 → risk_lvl
+_RISK_COLS = {f"R{i}": f"R{i}" for i in range(1, 6)}
+
+
+def _parse_return_table_global(
+        path: Path, lines: list[str]) -> tuple[list[dict], list[str]]:
+    """全球五地 R1-R5 整合文件（史实版，Markdown 表格型；issue #214）。
+
+    结构：`## 一、欧洲市场（1947–2025）` 节标题定地区（复用 `_region_from_file`
+    的关键词匹配，产出 欧洲/英国/美国/香港/中国 与消费方键一致）；每节
+    `### x.4 逐年收益率（%）` 为逐年表，表头 `| 年份 | R1 | R2 | R3 | R4 | R5 | 背景 |`，
+    数值为百分数、不带 % 符号，末列背景文本忽略。
+    仅 x.4 逐年表入库：`### x.5 分阶段复合年化`、`## 六、五地全周期横向对比`、
+    `### 0.2 关键年份验证` 等表均不在「逐年收益率」小节内，自然排除。
+    """
+    recs: list[dict] = []
+    warnings: list[str] = []
+    region: str | None = None
+    in_year_table = False
+    col: dict[str, int] | None = None   # R1..R5 -> 列索引
+    for line in lines:
+        if line.startswith("## "):
+            guess = _region_from_file(line)
+            region = guess if guess != line else None
+            in_year_table = False
+            col = None
+            continue
+        if line.startswith("### "):
+            in_year_table = "逐年收益率" in line
+            col = None
+            continue
+        cells = _split_table_row(line)
+        if not in_year_table or region is None or not cells:
+            continue
+        head = cells[0].strip()
+        if "R1" in cells:                       # 表头行：按列名定位 R1-R5
+            col = {c: i for i, c in enumerate(cells) if c in _RISK_COLS}
+            continue
+        if re.match(r"^:?-{2,}:?$", head):      # 分隔行 |---|
+            continue
+        ym = re.match(r"^(19|20)\d{2}$", head)
+        if not ym or col is None:
+            continue
+        year = int(head)
+        for rl, idx in sorted(col.items(), key=lambda kv: kv[1]):
+            raw = cells[idx].strip() if idx < len(cells) else ""
+            rate = parse_number(raw)
+            if rate is None:
+                warnings.append(f"{region} {year} 年 {rl} 收益率无法解析：{raw!r}")
+                continue
+            recs.append({"country": region, "risk_lvl": rl, "year": year,
+                         "rate": rate, "source_file": path.name})
+    if not recs:
+        return [], ["收益测算表（全球表格型）解析出 0 条记录（市场节标题/逐年表格式不识别？）"]
+    return recs, warnings
 
 
 # ---------------- character（人物） ----------------

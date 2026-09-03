@@ -36,6 +36,14 @@ _PREFIX_RULES: list[tuple[str, str]] = [
     ("基准/收益表/经营性房产收益.md", "SKIP_SUPERSEDED"),
     ("基准/收益表/祖产股票债券收益.md", "SKIP_SUPERSEDED"),
     ("基准/收益表/祖父开店.md", "SKIP_SUPERSEDED"),
+    # issue #214：5 张分地区 R1-R5 测算表整合为单文件
+    # 全球五地R1-R5投资风险分级收益测算（史实版）.md（Markdown 表格型，走兜底 return_table）；
+    # 下列旧文件已被完全取代并于 2026-09 从 Design_Folder 删除，SKIP 规则保留为防误放回护栏。
+    ("基准/收益表/1947-2025 欧洲R1-R5投资风险分级收益测算表.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/1983-2025 英国R1-R5投资风险分级收益测算表.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/1989-2025 美国R1-R5投资风险分级收益测算表.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/1999-2025 香港R1-R5投资风险分级收益测算表.md", "SKIP_SUPERSEDED"),
+    ("基准/收益表/2002-2025 中国R1-R5投资风险分级收益测算表.md", "SKIP_SUPERSEDED"),
     ("基准/收益表/1974-2001家庭支出.md", "household_expense"),
     ("基准/收益表/", "return_table"),
     ("基准/初始资产/", "initial_asset"),
