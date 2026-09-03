@@ -751,6 +751,35 @@ def parse_salary(path: Path) -> tuple[list[dict], list[str]]:
             cur = "BEF"
         recs.append({"holder": holder, "year": int(cells[0]),
                      "currency": cur, "after_tax": amount})
+
+    # issue #222：表外「退职金专项核算」段——退休年一次性税后退职金（比利时 Assigned out
+    # 口径：法律雇主 IBM 比利时，2 倍基薪、EUR 计价、18% 优惠税率）。逐年表不含此行；
+    # 取「税后退职金」行 **bold** 段内金额+币种（bold 优先——同行另有税前数，
+    # 如「893,690 × (1-18%) = **732,826 EUR**」），年份取退职金段标题中的 4 位年。
+    sev_year = None
+    for line in lines:
+        if line.lstrip().startswith("#") and "退职金" in line:
+            ym = re.search(r"(\d{4})", line)
+            if ym:
+                sev_year = int(ym.group(1))
+    for line in lines:
+        if "税后退职金" not in line:
+            continue
+        m = re.search(r"\*\*\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]{3})", line)
+        if not m:   # 兜底：行末「数字 币种」
+            m = re.search(r"([\d,]+(?:\.\d+)?)\s*([A-Za-z]{3})\s*$", line.strip())
+        if not m:
+            warns.append(f"{path.name} 退职金行金额/币种解析失败：{line.strip()[:60]}")
+            continue
+        if sev_year is None:
+            warns.append(f"{path.name} 退职金段标题缺年份，该行跳过")
+            continue
+        sev_cur = m.group(2).upper()
+        if sev_cur not in _CURRENCIES:
+            warns.append(f"{path.name} 退职金币种 {sev_cur} 不在白名单，该行跳过")
+            continue
+        recs.append({"holder": holder, "year": sev_year, "currency": sev_cur,
+                     "after_tax": parse_number(m.group(1)), "component": "severance"})
     return recs, warns
 
 
