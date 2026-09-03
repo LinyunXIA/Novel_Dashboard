@@ -230,7 +230,12 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             _record_current_version(session, r, source_dir)
         if r.category == "return_table" and r.records:
             imported_rs.append(r)
-            rcur += writer.import_return_curves(session, r.records)["n"]
+            rst = writer.import_return_curves(session, r.records)
+            rcur += rst["n"]
+            if rst["updated"]:
+                # issue #214：同键数值/来源刷新（如整合文件取代分地区表）——显式说明而非静默
+                log(f"   ↻ {r.file}: 收益曲线刷新 {rst['updated']} 行"
+                    f"（同键数值/来源更新，新增 {rst['inserted']} 行）")
             _record_current_version(session, r, source_dir)   # issue #209
         if r.category == "return_table" and not r.records and r.warnings:
             # 五轮审计 #177：零条告警达主链路（此前只进 run stdout，ingest 静默）——

@@ -254,19 +254,42 @@ def import_fx(session: Session, records: list[dict], update: bool = False) -> di
 
 
 def import_return_curves(session: Session, records: list[dict]) -> dict:
-    """收益测算表 → return_curve（幂等：ON CONFLICT DO NOTHING）。"""
+    """收益测算表 → return_curve（upsert，幂等）。
+
+    issue #214：由 ON CONFLICT DO NOTHING 改为同键更新——全球五地整合文件
+    取代 5 张分地区表时，1050 行数值不变、仅 source_file 溯源需刷新；且未来
+    史实数值修订重跑 ingest 即可落地（DO NOTHING 下同键新值永远进不了库）。
+    新键走 pg_insert ... ON CONFLICT DO NOTHING，同键 rate/source_file 有变走
+    ORM 更新；无变化行不写，第二轮导入 n=0。
+    """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from app.model import ReturnCurve
-    stats = {"n": 0}
+    stats = {"n": 0, "inserted": 0, "updated": 0}
     if not records:
         return stats
-    stmt = pg_insert(ReturnCurve).values([
-        {"country": r["country"], "risk_lvl": r["risk_lvl"], "year": r["year"],
-         "rate": r["rate"], "source_file": r.get("source_file")} for r in records
-    ]).on_conflict_do_nothing(
-        constraint="uq_return_country_risk_year"
-    ).returning(ReturnCurve.id)
-    stats["n"] = len(session.execute(stmt).scalars().all())
+    existing = {(c.country, c.risk_lvl, c.year): c
+                for c in session.query(ReturnCurve).all()}
+    to_insert: list[dict] = []
+    for r in records:
+        key = (r["country"], r["risk_lvl"], r["year"])
+        source_file = r.get("source_file")
+        cur = existing.get(key)
+        # rate 列为 Numeric（读回 Decimal），与 record 的 float 比较前先转 float
+        cur_rate = float(cur.rate) if cur is not None else None
+        if cur is None:
+            to_insert.append({"country": r["country"], "risk_lvl": r["risk_lvl"],
+                              "year": r["year"], "rate": r["rate"],
+                              "source_file": source_file})
+        elif cur_rate != float(r["rate"]) or cur.source_file != source_file:
+            cur.rate = r["rate"]
+            cur.source_file = source_file
+            stats["updated"] += 1
+    if to_insert:
+        stmt = pg_insert(ReturnCurve).values(to_insert).on_conflict_do_nothing(
+            constraint="uq_return_country_risk_year"
+        ).returning(ReturnCurve.id)
+        stats["inserted"] = len(session.execute(stmt).scalars().all())
+    stats["n"] = stats["inserted"] + stats["updated"]
     return stats
 
 

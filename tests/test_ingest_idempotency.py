@@ -166,7 +166,8 @@ def test_authority_files_record_version(session, tmp_path):
     (root / "人物" / "Henri Peeters.md").write_text(
         "- 姓名：Henri Peeters\n- 角色：养祖父\n", encoding="utf-8")
     (root / "基准" / "收益表").mkdir(parents=True)
-    rt_rel = "基准/收益表/1999-2025 香港R1-R5投资风险分级收益测算表.md"
+    # issue #214：文件名避开已被 SKIP_SUPERSEDED 护栏拦截的旧分地区文件名
+    rt_rel = "基准/收益表/香港R1-R5收益测算（版本测试）.md"
     (root / rt_rel).write_text(
         "#### 1999（测试）\n"
         "R1：4.35｜R2：6.12｜R3：8.64｜R4：10.0｜R5：12.0\n", encoding="utf-8")
