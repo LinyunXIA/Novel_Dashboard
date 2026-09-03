@@ -385,6 +385,8 @@ CREATE TABLE notification (
 | `基准/初始资产/*.md` | initial_asset（存量/本金建档） |
 | `基准/薪资/*.md` | salary（逐年薪资收入，取文件税后值） |
 | `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户；issue #216 起为修正版——CPI 史实验证/KU Leuven 明细等说明扩充、28 年逐年数值不变，prod 同步激活） |
+| `基准/公司/用工成本/**`（2 个汇总文件） | **SKIP_P1**（主扫描链不导入；由独立 CLI `labor-baseline` 落 labor 三表供 API②，§13.2。issue #218 整合为 `用工成本汇总_12地_CPI修正版.md`（12 地区工资+CPI）+ `各国雇主社保税率汇总（逐年展开版）.md`（11 节覆盖 12 office）；旧 10 国工资分文件 + `税率/` 12 分文件已删除并入） |
+| ~~`基准/CPI工资.md`~~ | **已删除**（2026-09，issue #218：工资增幅/CPI 并入用工成本 12 地汇总；detect 的 SKIP_PARAM 规则保留为防误放回护栏） |
 | `基准/汇率/` | fx |
 | `人物/` | character |
 | `时间线.md` | timeline |
@@ -615,7 +617,7 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 - 触发：UI 用户在公司图谱屏点「获取/导入」按钮。
 
 ### 13.2 API② 用工成本计算
-- 输入：本地**逐年「用工成本 + 税率」基准**（`基准/公司/用工成本/*.md`、`基准/公司/用工成本/税率/*.md`）。
+- 输入：本地**逐年「用工成本 + 税率」基准**（issue #218 起为 `基准/公司/用工成本/` 下 **2 个汇总文件**：`用工成本汇总_12地_CPI修正版.md`（12 地区 × 年，9 列同构表：人均年薪/涨薪幅度/币种/CPI 定基 2013=100/投资金融年薪…）与 `各国雇主社保税率汇总（逐年展开版）.md`（`### N. 地区` 11 节覆盖 12 office，上海节兼落外籍）；原 10 国工资分文件 + `基准/CPI工资.md` + `税率/` 12 分文件共 23 个已删除并入）。
 - 请求外部 → 返回**当年各公司用工成本支出**。
 - 导入 → 落到各公司下的**支出** `finance_entry(entity_kind='company')` → 增量重算。
 
@@ -634,7 +636,7 @@ class Importer(Protocol):
   `unknown_levels` 统计防未知 level 静默 0% 低估；③ `/public/levels` 字典端点暂不接入
   （LEVEL_PCT 为本方费率映射表，外部字典仅编码展示）；④ 403 权限语义/429 限流由既有
   upstream 错误映射覆盖。
-- **实现（API② 用工成本 · F-P1-10）**：`app/core/labor_cost.py`（本地基准 + 税率公式执行器 + 逐岗位成本；Level/外包/晋级规则表，也是「加薪规则」屏数据源）+ `app/ingest/importers/positions.py`（`GET /public/positions?year=` 拉流入岗岗位 → 逐岗位算成本 → 每公司×年 `finance_entry(entity_kind='company', kind='expense')` 落账）。基准三表 `labor_wage_benchmark / labor_cpi_growth / labor_tax_benchmark`（`python -m app.ingest.main labor-baseline`）。税率公式细节只在后台（含说明文字隐藏项：比利时 CP200 十三薪/双倍假期、英国学徒税 >£3m、日本固定奖金 3 月等）；UI 只展示加薪规则。端点 `POST /labor-cost/compute`、`GET /labor-cost/rules|results`。
+- **实现（API② 用工成本 · F-P1-10）**：`app/core/labor_cost.py`（本地基准 + 税率公式执行器 + 逐岗位成本；Level/外包/晋级规则表，也是「加薪规则」屏数据源）+ `app/ingest/importers/positions.py`（`GET /public/positions?year=` 拉流入岗岗位 → 逐岗位算成本 → 每公司×年 `finance_entry(entity_kind='company', kind='expense')` 落账）。基准三表 `labor_wage_benchmark / labor_cpi_growth / labor_tax_benchmark`（`python -m app.ingest.main labor-baseline`；issue #218 起 `app/ingest/labor_baseline.py` 直读 2 个汇总文件，**替换式**落库——三表唯一写入方即本 CLI：工资按 `## <地区> ·` 节切分（`全周期关键指标` 等非地区节排除）、CPI 同比由定基指数相邻年反推（首年 None）；税率按 `### N. <地区>` 节切分、区间年（1982-1983/2017-2025）逐年展开、双值格取末值（英国 2025 年中改革）、上海节兼落「中国上海外籍」、节底文字常数入 params（荷兰假期 8%、美国 FUTA 工资基 $7,000、英国职业养老金 2012 起 3%）。工资地区由 10 区改 12 地（美国拆纽约/洛杉矶、新增北京），`LOCATION_ALIAS` 同步：纽约/洛杉矶各取本城、北京不再代理上海）。税率公式细节只在后台（含说明文字隐藏项：比利时 CP200 十三薪/双倍假期、英国学徒税 >£3m、日本固定奖金 3 月等）；UI 只展示加薪规则。端点 `POST /labor-cost/compute`、`GET /labor-cost/rules|results`。
 
 ---
 
@@ -969,6 +971,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-06 | **基本收入.md 合并收益导入** | 五人初始资产逐年收益整合单文件 `基准/收益表/基本收入.md`（股债/房产/商业逐年终值）→ 新类别 `basic_income`：parser 按人物节（`## 一~四、`，汇总节跳过）× 子表（股债/房产/商业）定位列、年份段逐年展开（en-dash/hyphen 兼容）、`NLG/年` 剥后缀、Henri `BEF/LUF` 双币格按祖父 BEF/先祖 LUF 分列（2002 起 EUR）、0 值不产行、`合计` 列对账 warning；writer 落 income_stream + finance_entry 镜像（1117 行）。**完全取代**旧 4 文件（detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名；旧文件 2026-09 已从 Design_Folder 彻底删除）；旧 income_* parser/writer 与 `app/core/factors.py` 分段复利因子删除；前端零改动（复用四类 stream_type）；dev 端到端对账 H1/H2/H3/H5=0 | §6.1/§6.3/§6.5 | ✅ |
 | F-P2+-07 | **全球五地 R1-R5 整合收益表导入** | 5 张分地区测算表整合为单文件 `基准/收益表/全球五地R1-R5投资风险分级收益测算（史实版）.md`（Markdown 表格型）：parser 按 `## x、XX市场` 节标题分流定地区（欧洲/英国/美国/香港/中国 键不变），仅 `### x.4 逐年收益率（%）` 表入库（表头定位 R1–R5 列、背景列忽略；x.5/§六/0.2 表排除）；新旧 1050 个 (地区,R档,年) 键值全量核对**零差异**。writer 由 ON CONFLICT DO NOTHING 改 **upsert**（同键刷新 rate/source_file，数值修订可落地）；旧 5 文件 detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名并于 2026-09 从 Design_Folder 彻底删除；dev 端到端：1050 行溯源全刷新、二轮幂等 0 写入、H1/H2/H3/H5=0（H4 29 条为 #211 已确认的既有家庭支出口径） | §6.1/§6.3 | ✅ |
 | F-P2+-08 | **家庭支出修正版导入并激活 prod** | `基准/1974-2001家庭支出_修正版.md` 替换旧文件（重命名为标准名 `1974-2001家庭支出.md`，detect/yaml 路径不变）：说明章节扩充（1.2 计列项目表 / 1.3 KU Leuven 明细 / CPI 史实验证 / §五关键节点 / §六累计），28 个年度（1974–2001）总支出数值**逐一核对零差异**，parser 无需改（干扰表首格非「年份」天然排除）。parser 记录补 source_file；writer `import_household_expense` 由自然键跳过改 **upsert**（同键 account+date+reason 刷新 outflow/source_file 并同步 finance_entry 镜像；金额修订不再同年插重复行）；yaml 由 active:false 改 **true（prod 首次激活**，Henri BEF 账户 28 笔支出，H4 负余额为收益不入 ledger 的既有口径）；dev 端到端：ledger/镜像各 28 行溯源落库、二轮幂等 0 写入 | §6.1/§6.3 | ✅ |
+| F-P2+-09 | **用工成本底稿整合（2 汇总文件取代 23 分文件）** | `基准/CPI工资.md` + 用工成本 10 国工资分文件 + `税率/` 12 分文件（共 23 个）整合为 `基准/公司/用工成本/` 下 2 个汇总文件：`用工成本汇总_12地_CPI修正版.md`（12 地区 `## 地区·` 节，9 列同构表）+ `各国雇主社保税率汇总（逐年展开版）.md`（`### N. 地区` 11 节覆盖 12 office）。`labor_baseline.py` 重写：工资按节切分（`全周期关键指标`/分区标题排除）、涨薪幅度→`wage_growth_pct`、CPI 同比由 2013=100 定基指数相邻年反推（首年 None）；税率区间年（1982-1983/2017-2025）逐年展开、双值格取末值（英国 2025 NIC 15%/£5,000）、上海节兼落外籍 office、节底文字常数入 params（荷兰假期 8%/美国 FUTA cap $7,000/英国养老金 2012+ 3%）；三表改**替换式**导入（唯一写入方即本 CLI）。工资地区 10→12（美国拆纽约/洛杉矶、新增北京），`labor_cost.LOCATION_ALIAS` 同步（北京工资不再代理上海）。旧 23 文件 2026-09 从 Design_Folder 删除；detect SKIP_PARAM/SKIP_P1 规则保留为护栏；yaml 登记 2 汇总文件 active:false（prod 未激活 labor-baseline）。dev 端到端：wage/cpi 各 348 行 ×12 地区（1982–2025 区间）、tax 338 行 ×12 office，二跑幂等 | §6.1/§13.2 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1207,8 +1210,8 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - **激活清单门控**（F-P2+-01）：`Design_Folder/import_files.yaml` 为 prod 严格白名单（`manifest.py`）；
   `require_active_files(env,cfg)` 仅 prod 必读（缺清单报错退出防误全量），dev/test 返回 `None` 全量。
   四个落库入口均按激活集过滤：`ingest`（import_all 过滤 `rep.results`）、`events-movie`/`events-stock`
-  （glob 候选按相对路径过滤）、`labor-baseline`（import_wage/import_cpi/import_tax 各文件按激活集过滤）。
-  清单枚举 Design_Folder 全部 `.md`（含 `基准/事件` 与 `基准/公司/用工成本/税率`、模版/设计文件），默认 `active:false`。
+  （glob 候选按相对路径过滤）、`labor-baseline`（issue #218 起为 import_wage_cpi/import_tax 按 2 个汇总文件激活集过滤）。
+  清单枚举 Design_Folder 全部 `.md`（含 `基准/事件` 与 `基准/公司/用工成本/` 汇总文件、模版/设计文件），默认 `active:false`。
 - **清库重建**（F-P2+-02）：`reset --env <env> [--yes]` 删 **public 全部表**（保留 pgvector 扩展/库本体/DSN）
   → 设 `APP_ENV` 后程序化 `alembic upgrade head`（migrations/env.py 按 APP_ENV 解析 DSN）；`alembic_version` 随表删除，
   `upgrade head` 自 baseline 整链重建。CLI 清单由 14 个增至 **15 个**。

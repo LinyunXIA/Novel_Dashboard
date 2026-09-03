@@ -23,8 +23,13 @@ _PREFIX_RULES: list[tuple[str, str]] = [
     # issue #144：散文件兜底改归 SKIP_*——§6.1「Phase 1 直接跳过」语义，
     # 不再落无 parser 类别每轮报 ❌ 解析器未实现（event CLI 单独导入，不走扫描链）
     ("基准/事件/", "SKIP_PHASE2_EVENT"),
-    ("基准/CPI工资.md", "SKIP_PARAM"),        # issue #70：CPI 与工资增幅基准参数，无消费方显式跳过
-    ("基准/公司/用工成本/", "SKIP_P1"),        # issue #26：P1 §13 范围，Phase1 跳过
+    # issue #218：CPI工资.md 已并入 用工成本/用工成本汇总_12地_CPI修正版.md 并于 2026-09
+    # 从 Design_Folder 删除；规则保留为护栏（主扫描链从不导入此参数文件，误放回也不导入）
+    ("基准/CPI工资.md", "SKIP_PARAM"),        # issue #70/#218：CPI 与工资增幅参数，主扫描链无消费方
+    # issue #26/#218：用工成本底稿（现为 2 个汇总文件：12地CPI修正版 + 各国雇主社保税率
+    # 逐年展开版；原 10 国分文件 + 税率/ 12 文件已删除并入）。主扫描链 P1 跳过；
+    # 由独立 CLI labor-baseline 直读 2 汇总文件落 labor 三表（F-P1-10，DESIGN §13.2）
+    ("基准/公司/用工成本/", "SKIP_P1"),
     ("设计文件/", "SKIP_DOC"),                # issue #26：创作约束笔记，不入库
     ("经济/银行/", "bank"),
     ("经济/股票/", "stock_tx"),
