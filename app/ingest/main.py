@@ -686,12 +686,13 @@ def labor_baseline(env: str = typer.Option(None, "--env"),
                    office: str = typer.Option("", "--office",
                                               help="仅采集指定税率 office（缺省全部；"
                                                    "支持中文或 ISO 缩写 be/lu/nl/dk/se/uk）")):
-    """用工成本基准落库（API② · F-P1-10）：工资(10区)+CPI(10区)+税率(12 office)。
+    """用工成本基准落库（API② · F-P1-10）：工资(12地区)+CPI(12地区)+税率(12 office)。
 
-    从 Design_Folder 解析三份基准 → labor_wage_benchmark/labor_cpi_growth/labor_tax_benchmark。
+    issue #218 起数据源为 用工成本/ 下 2 个汇总文件（12地CPI修正版 + 各国雇主社保税率
+    逐年展开版），替换式落 labor_wage_benchmark/labor_cpi_growth/labor_tax_benchmark。
     """
     from app.config import get_config
-    from app.ingest.labor_baseline import import_labor_baseline, import_wage, import_cpi, import_tax
+    from app.ingest.labor_baseline import import_labor_baseline, import_tax
     # issue #144：ISO 缩写映射（源文件 office 键为中文；此前 --office be 静默 skipped）
     _OFFICE_ALIAS = {"be": "比利时", "lu": "卢森堡", "nl": "荷兰", "dk": "丹麦",
                      "se": "瑞典", "uk": "英国", "gb": "英国"}
