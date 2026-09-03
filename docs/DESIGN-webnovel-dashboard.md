@@ -380,7 +380,7 @@ CREATE TABLE notification (
 | `经济/股票/` | stock_tx |
 | `基准/收益表/*测算表` | return_table（R1–R5，仅供投资） |
 | `基准/收益表/基本收入.md` | **basic_income**（五人初始资产逐年收益终值：股债 security / 惠民租房 rent / 经营性房产 property / 祖父开店 shop；issue #211） |
-| `基准/收益表/惠民租房.md`、`经营性房产收益.md`、`祖产股票债券收益.md`、`祖父开店.md` | **SKIP_SUPERSEDED**（已被 基本收入.md 完全取代，issue #211；文件留盘存档，dev/test 全量扫描同样跳过） |
+| ~~`基准/收益表/惠民租房.md`、`经营性房产收益.md`、`祖产股票债券收益.md`、`祖父开店.md`~~ | **已删除**（2026-09，issue #211 收尾：被 基本收入.md 完全取代后从 Design_Folder 移除；detect 的 SKIP_SUPERSEDED 规则保留为防误放回护栏） |
 | `基准/初始资产/*.md` | initial_asset（存量/本金建档） |
 | `基准/薪资/*.md` | salary（逐年薪资收入，取文件税后值） |
 | `基准/1974-2001家庭支出.md`（及 CPI 基准） | household_expense（家庭支出，挂 Henri 账户） |
@@ -438,7 +438,7 @@ UI 编辑编年史 → 写入 `overlay_dir/编年史.md`（用户数据 md）。
 - **股票债券归属粒度**：按**地域颗粒**打包挂一个人/公司（如"丹麦的股票债券"一个包挂某主体）；**包内收益仍分开计算**（每只股/每支债各自算票息），属同域同主体。
 - **房产**：房产A/B/C 全算收益（经营性房产收益 + 惠民租房）；家庭主古堡也列收益。
 - **薪资/收益文件已写死金额/税后/币种**：系统**直接取文件金额入账，不重算税率/CPI/人口分段**（文件即权威，系统只搬运+校验，保"数据算得平"）。
-- **实现注记（issue #211 取代 issue #69 旧链路）**：五人初始资产逐年收益已整合为 `基准/收益表/基本收入.md`，**逐年终值直入** `income_stream`（股债 security / 惠民租房 rent / 经营性房产 property / 祖父开店 shop；因子 A「文件终值权威」，issue #114）。旧的「基桩值 + 分段复利在 ingest 时展开」链路（惠民租房/经营性房产/祖产股票债券三文件 + `app/core/factors.py`，issue #69）与开店时段均值 parser **已全部删除**；旧四文件 detect 改归 `SKIP_SUPERSEDED` 留盘存档。Henri 房产表「先祖」列为卢森堡 LUF 资产、「祖父」列为比利时 BEF（1974–2001，1:1），均挂 Henri Peeters 一人；2002 起统一切 EUR。2008 起惠民租房记 0（无行）、经营性房产为扣全板块人工成本后净额。薪资/家庭支出仍直读文件逐年值。
+- **实现注记（issue #211 取代 issue #69 旧链路）**：五人初始资产逐年收益已整合为 `基准/收益表/基本收入.md`，**逐年终值直入** `income_stream`（股债 security / 惠民租房 rent / 经营性房产 property / 祖父开店 shop；因子 A「文件终值权威」，issue #114）。旧的「基桩值 + 分段复利在 ingest 时展开」链路（惠民租房/经营性房产/祖产股票债券三文件 + `app/core/factors.py`，issue #69）与开店时段均值 parser **已全部删除**；旧四个源文件于 2026-09 从 Design_Folder **彻底移除**（detect 的 SKIP_SUPERSEDED 规则保留为护栏，yaml 同步除名）。Henri 房产表「先祖」列为卢森堡 LUF 资产、「祖父」列为比利时 BEF（1974–2001，1:1），均挂 Henri Peeters 一人；2002 起统一切 EUR。2008 起惠民租房记 0（无行）、经营性房产为扣全板块人工成本后净额。薪资/家庭支出仍直读文件逐年值。
   > ⚠️ 数据对账（2026-09 导入时）：`基本收入.md` 第五节「全周期累计汇总」与其明细表在**房产类 6 个口径**上不一致（如 Henri+先祖 房产 BEF/LUF 汇总 81,756,443 vs 明细 236,800,383；养外祖父 房产 EUR 汇总 7,087,075 vs 明细 4,256,896），股债/商业有 ±1~8 舍入级差异；导入以**逐行明细终值**为权威（每行 `合计` 自洽零告警），汇总表待数据调整员在文件侧订正。
 - **起始现金进余额**：初始资产里的**现金 = 直接进对应账户银行作为初始余额**，是后续"钱→收益/投资"的本金种子。
 - **薪资/收益各归各主体账户**：养父薪资 → 养父账户、养母薪资 → 养母账户；收益各进各主体账户；**家庭支出统一记 Henri Peeters 账户**（故事设定，非分摊）。
@@ -965,7 +965,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-03 | **启动脚本** | `Design_Folder/start_dashboard.sh`：`APP_ENV=prod` 起动后端 FastAPI(8001) + 前端 Vite(5173)，仅启服务（不含重置/导入） | §4 | ✅ |
 | F-P2+-04 | **时间线自动生成默认事件** | `Design_Folder/时间线.md` 清为占位后，时间线改由 `timeline-defaults` CLI 据 DB 自动生成默认事件（`app/core/timeline_defaults.py`）：股票首次建仓(holding_event buy)、影视首次(movie_event)、股票事件首次(stock_event)、每年 R1-5 投资(investment+alloc)；`source_file=derive:timeline-defaults`、overlay=False，幂等合并、`--rebuild` 清旧重建 | §12/§19.1 | ✅ |
 | F-P2+-05 | **资产转移** | 图谱资产面板按业务分组（股票债券/惠民租房/经营性房产/现金）把该组 `initial_asset` + 对应 `income_stream`（security/rent/property）改归属到目标 person/company（`app/core/asset_transfer.py`）；普通 UI 可做、服务层校验 422、只改存量不迁历史 ledger、记编年史审计、全量重算(1947)+快照+通知；`POST /entities/{id}/assets/transfer` | §6.8/§19 | ✅ |
-| F-P2+-06 | **基本收入.md 合并收益导入** | 五人初始资产逐年收益整合单文件 `基准/收益表/基本收入.md`（股债/房产/商业逐年终值）→ 新类别 `basic_income`：parser 按人物节（`## 一~四、`，汇总节跳过）× 子表（股债/房产/商业）定位列、年份段逐年展开（en-dash/hyphen 兼容）、`NLG/年` 剥后缀、Henri `BEF/LUF` 双币格按祖父 BEF/先祖 LUF 分列（2002 起 EUR）、0 值不产行、`合计` 列对账 warning；writer 落 income_stream + finance_entry 镜像（1117 行）。**完全取代**旧 4 文件（detect 改 `SKIP_SUPERSEDED`、yaml 置 false、留盘存档）；旧 income_* parser/writer 与 `app/core/factors.py` 分段复利因子删除；前端零改动（复用四类 stream_type）；dev 端到端对账 H1/H2/H3/H5=0 | §6.1/§6.3/§6.5 | ✅ |
+| F-P2+-06 | **基本收入.md 合并收益导入** | 五人初始资产逐年收益整合单文件 `基准/收益表/基本收入.md`（股债/房产/商业逐年终值）→ 新类别 `basic_income`：parser 按人物节（`## 一~四、`，汇总节跳过）× 子表（股债/房产/商业）定位列、年份段逐年展开（en-dash/hyphen 兼容）、`NLG/年` 剥后缀、Henri `BEF/LUF` 双币格按祖父 BEF/先祖 LUF 分列（2002 起 EUR）、0 值不产行、`合计` 列对账 warning；writer 落 income_stream + finance_entry 镜像（1117 行）。**完全取代**旧 4 文件（detect 改 `SKIP_SUPERSEDED` 护栏、yaml 除名；旧文件 2026-09 已从 Design_Folder 彻底删除）；旧 income_* parser/writer 与 `app/core/factors.py` 分段复利因子删除；前端零改动（复用四类 stream_type）；dev 端到端对账 H1/H2/H3/H5=0 | §6.1/§6.3/§6.5 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
