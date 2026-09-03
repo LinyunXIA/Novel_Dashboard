@@ -196,6 +196,10 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
         if inactive:
             log(f"   ⏭ {len(inactive)} 个文件未在 import_files.yaml 激活，已跳过"
                 f"（例：{inactive[:3]}）")
+    # issue #223：版本对账——已被整合取代的文件（detect=SKIP_SUPERSEDED）其 is_current
+    # 版本记录失活（旧文件已从磁盘删除、扫描扫不到，故反向从版本表判定），
+    # 否则 diff/版本屏会把已删文件一直挂为「当前版本」。
+    _deactivate_superseded_versions(session, log)
     # DESIGN §6.5 摄入顺序锁死：人物(entity) 先入 → 初始资产 → 收益/薪资/支出 → 银行。
     # 收益挂账依赖 entity_id，不能按文件名字典序处理（issue #68）。
     # issue #211：四类配置推导收益（security/rent/property/shop）整合为 basic_income
@@ -414,6 +418,32 @@ def _purge_income_derived(session, source_file: str) -> int:
 def _select_model_by_source(model, source_file: str):
     from sqlalchemy import select
     return select(model).where(model.source_file == source_file)
+
+
+def _deactivate_superseded_versions(session, log) -> int:
+    """SKIP_SUPERSEDED 文件的 is_current 版本记录置 false（issue #223）。
+
+    整合取代（#211 旧收益 4 文件 / #214 分地区 R1-R5 表 / #218 CPI工资 / #220
+    老薪资表）后旧文件从 Design_Folder 删除，但其历史 source_file_version 记录仍
+    is_current=True——diff/版本屏据版本表展示，已删文件会一直挂为「当前版本」。
+    反向扫描版本表：detect(file_path) 命中 SKIP_SUPERSEDED 护栏即失活（代码层面的
+    「已取代」信号，不依赖磁盘存在性——旧文件早已扫不到）。返回失活条数。
+    """
+    from sqlalchemy import select as _sel
+    from app.ingest.detect import detect
+    from app.model import SourceFileVersion
+    rows = session.execute(
+        _sel(SourceFileVersion).where(SourceFileVersion.is_current.is_(True))
+    ).scalars().all()
+    n = 0
+    for v in rows:
+        if detect(v.file_path).category == "SKIP_SUPERSEDED":
+            v.is_current = False
+            n += 1
+            log(f"   ↻ {v.file_path}: 文件已被整合取代（SKIP_SUPERSEDED），版本 v{v.version} 失活")
+    if n:
+        session.flush()
+    return n
 
 
 def _coerce_line(v) -> int | None:

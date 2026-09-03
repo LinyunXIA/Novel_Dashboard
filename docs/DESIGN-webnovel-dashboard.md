@@ -975,6 +975,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-09 | **用工成本底稿整合（2 汇总文件取代 23 分文件）** | `基准/CPI工资.md` + 用工成本 10 国工资分文件 + `税率/` 12 分文件（共 23 个）整合为 `基准/公司/用工成本/` 下 2 个汇总文件：`用工成本汇总_12地_CPI修正版.md`（12 地区 `## 地区·` 节，9 列同构表）+ `各国雇主社保税率汇总（逐年展开版）.md`（`### N. 地区` 11 节覆盖 12 office）。`labor_baseline.py` 重写：工资按节切分（`全周期关键指标`/分区标题排除）、涨薪幅度→`wage_growth_pct`、CPI 同比由 2013=100 定基指数相邻年反推（首年 None）；税率区间年（1982-1983/2017-2025）逐年展开、双值格取末值（英国 2025 NIC 15%/£5,000）、上海节兼落外籍 office、节底文字常数入 params（荷兰假期 8%/美国 FUTA cap $7,000/英国养老金 2012+ 3%）；三表改**替换式**导入（唯一写入方即本 CLI）。工资地区 10→12（美国拆纽约/洛杉矶、新增北京），`labor_cost.LOCATION_ALIAS` 同步（北京工资不再代理上海）。旧 23 文件 2026-09 从 Design_Folder 删除；detect SKIP_PARAM/SKIP_P1 规则保留为护栏；yaml 登记 2 汇总文件 active:false（prod 未激活 labor-baseline）。dev 端到端：wage/cpi 各 348 行 ×12 地区（1982–2025 区间）、tax 338 行 ×12 office，二跑幂等 | §6.1/§13.2 | ✅ |
 | F-P2+-10 | **薪资 CNY 修正版替换导入（养父/养母）** | `基准/薪资/养父|养母的薪资.md` → `…_CNY修正版.md`：中国段结算币种 USD→CNY（养父 1998–2012、养母 1991–2012）、退休奖金改比利时 Assigned out 退职金口径（2 倍基薪/EUR/18% 优惠税率，表外文字不入逐年表）、养父美国段奖金率修正为 12%；数值自洽（税后=税前×(1−税率)、分量加总、调任汇率换算）逐一核验。parser 修复「结算币种」列头识别（既有 bug：养父 1989 起 USD/CNY 段全部错标 BEF 入库）；writer `import_salary` 改**按人替换式**（先删该 entity 旧 salary 流+finance 镜像再插，文件名更替/口径修正不双份、二跑幂等）；salary 退出 H2 拦截（替换语义，仅留 H1 soft）、`--force` 对 salary 放开（#114 约束退役）；老 2 文件 2026-09 从 Design_Folder 删除，detect SKIP_SUPERSEDED 护栏；yaml 2 新文件 active:true（prod 首次导入薪资 88 行：养父 BEF20/USD9/CNY15、养母 BEF22/CNY22）。dev 端到端：88 行溯源全新文件、镜像 88、冲突 0、二跑 0 写入 | §6.1/§6.3 | ✅ |
 | F-P2+-11 | **退休退职金导入（薪资表外专项段）** | 薪资 CNY 修正版表外「退职金专项核算」入 salary 流：parser 定位「税后退职金」行取 bold 段金额+EUR（养父 **732,826 EUR**、养母 **747,584 EUR**，2012 年；比利时 Assigned out：2 倍基薪/EUR/18% 优惠税率），年份取段标题；component=severance，group_key/label「退职金」与逐年薪资区分，同年与 CNY 薪资币种不同共存；writer 替换清场覆盖薪资+退职金两类镜像。dev 端到端：salary 90 行（88 薪资 + 2 退职金）、镜像 90、冲突 0、二跑 0 写入 | §6.3 | ✅ |
+| F-P2+-12 | **bugfix：diff 屏残留已取代文件版本（SKIP_SUPERSEDED 版本对账）** | #214 五张分地区 R1-R5 表整合删除后，prod diff/版本屏仍展示这 5 个文件——数据零残留（return_curve 1050 行全部溯源新整合文件），但 `source_file_version` 中 5 条 is_current=True 记录未失活（整合时新文件 upsert 刷新曲线溯源，旧文件版本记录无人收尾；旧文件已从磁盘删除、扫描扫不到）。修复：`import_all` 落库前做版本对账 `_deactivate_superseded_versions`——反向扫版本表所有 is_current 记录，`detect(file_path).category == "SKIP_SUPERSEDED"`（代码层面「已取代」信号，不依赖磁盘存在性）即置 is_current=False 并日志留痕；覆盖 #211/#214/#220 全部护栏路径，现行文件不受影响、二跑 0 失活幂等。dev 端到端：老薪资 2 文件 v1 失活、其余 57 条现行记录不动；prod 5 条 R1-R5 残留待下次 prod ingest 自动失活 | §6.1/§21.16 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1265,6 +1266,22 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 - **前端**：资产面板每个 kind 分组加「⇄ 转移」→ 填目标 ID → 提交 → 刷新 graph+assets。
 - **边界**：kind 判定与展示一致（`_init_asset_kind`/`_income_kind`）；账面现值不重算历史 ledger，
   未来派生收益归新主体。
+
+### 21.16 SKIP_SUPERSEDED 版本对账回写（2026-09-03 · #223）
+
+> diff/版本屏据 `source_file_version` 展示；整合取代批（#211/#214/#220）旧文件从磁盘删除后，
+> 其 is_current 版本记录无人收尾，已删文件一直挂为「当前版本」。对应 F-P2+-12。
+
+- **根因**：整合导入只对新文件 upsert（刷新曲线/流溯源），旧文件版本记录不被触碰；旧文件删除后
+  扫描链扫不到，指纹 gate 与文件导入状态表均无机会收尾。prod 受影响 5 条（#214 分地区 R1-R5
+  表，prod 曾激活）；#211 那批 prod 未激活、无版本记录，故无残留。
+- **修复**：`import_all` 落库前调 `_deactivate_superseded_versions(session, log)`——反向扫版本表
+  全部 is_current 记录，`detect(file_path).category == "SKIP_SUPERSEDED"` 即置 is_current=False
+  并日志留痕（`↻ …文件已被整合取代（SKIP_SUPERSEDED），版本 vN 失活`）。SKIP_SUPERSEDED 是
+  代码层面的「已取代」信号，不依赖磁盘存在性；新增整合取代只需在 detect.py 加护栏，版本对账
+  自动覆盖，无需额外登记。
+- **边界**：仅失活版本展示标记，不删历史版本行（diff 历史可溯）；不动任何业务数据；现行文件
+  记录不受影响；二跑 0 失活幂等。
 
 ---
 
