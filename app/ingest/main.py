@@ -169,9 +169,11 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
     - 所有文件类目经 _file_import_state 判定 new/unchanged/changed，
       unchanged 静默跳过、changed 提示待 P2 版本决策并跳过；
     - writer 层另有自然键去重兜底（初始现金 / 家庭支出），兼容无版本记录的存量库。
-    - force=True（issue #114）：仅收益文件（issue #211 起为 basic_income 基本收入.md）
+    - force=True（issue #114）：收益文件（issue #211 起为 basic_income 基本收入.md）
       跳过指纹 gate，且先清除该文件旧 income_stream + finance 镜像行再重导
-      （口径变更后的重浇灌）；salary 涉及 ledger 行、不支持 force。
+      （口径变更后的重浇灌）。issue #220 起 salary 同样可 force/force_files 重导：
+      writer 为按人替换式（先删该 entity 旧 salary 流+镜像再插），文件名更替或
+      口径修正（CNY 修正版）均安全，不触碰 ledger。
     - force_files（F-P2-06）：`set[str]`，命中文件强制重导入（版本决策「采纳新版本」）。
     commit 前整批事务，失败回滚（由调用方管理 session/commit）。
     """
@@ -276,29 +278,33 @@ def import_all(session, source_dir, log=None, force: bool = False, force_files=N
             bypass = force or bool(force_files and r.file in force_files)
             if not bypass and _skip_by_state(session, r, source_dir, log, force_files):
                 continue
-            if force and r.category == "salary":
-                # issue #114：--force 仅支持收益文件（只落 income_stream+finance 镜像，
-                # 可按 source_file 安全清除）；salary 涉及账务镜像，维持整文件跳过。
-                # force_files（F-P2-06 版本采纳）不受此限——采纳新版本必须重导。
-                log(f"   ⏭ {r.file}: --force 不支持薪资文件（涉及 ledger 行），跳过")
-                continue
+            norm = _normalize_conflict_recs(r.category, r.records)
             if bypass:
                 # issue #135 回归修复：清场后必须继续走下方冲突检测+重导。
                 # 此前 purge 后直接 continue，--force(#114) 重浇灌与 F-P2-06「采纳新版本」
                 # 均退化为「只删不补」的数据清零事故。
-                purged = _purge_income_derived(session, r.file)
-                log(f"   ♻ {r.file}: 清除旧派生行 {purged} 条后重导")
-            crep = conflict.check_income_stream_conflict(
-                session, r.file, _normalize_conflict_recs(r.category, r.records))
-            # issue #72：H1 增量瘦版（收益年份 vs 编年史覆盖）随 H2 一并预检
-            crep.merge(conflict.check_timeline_alignment(
-                session, r.file, _normalize_conflict_recs(r.category, r.records)))
-            if crep.blocked:
-                blocked_files += 1
-                for p in crep.problems:
-                    log(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
-                _record_findings(session, r.file, crep)
-                continue
+                if r.category == "basic_income":
+                    purged = _purge_income_derived(session, r.file)
+                    log(f"   ♻ {r.file}: 清除旧派生行 {purged} 条后重导")
+                else:
+                    # issue #220：salary 为按人替换式（writer 内按 entity 清场），
+                    # 文件名更替 / 口径修正版替换时老行自然清除，无需按文件名 purge
+                    log(f"   ♻ {r.file}: 薪资台账按人替换式重导")
+            if r.category == "basic_income":
+                # H2 金额冲突：basic_income 为多文件汇聚的逐年收益，跨文件同键不同值须拦
+                crep = conflict.check_income_stream_conflict(session, r.file, norm)
+                crep.merge(conflict.check_timeline_alignment(session, r.file, norm))
+                if crep.blocked:
+                    blocked_files += 1
+                    for p in crep.problems:
+                        log(f"   ❌ {r.file}: [{p['rule']}] {p['line']}: {p['detail']}")
+                    _record_findings(session, r.file, crep)
+                    continue
+            else:
+                # issue #220：salary 为按人全量替换（薪资文件即该人唯一权威台账），
+                # 旧值被整段覆盖，H2 金额比对不再适用——否则口径修正版（CNY 修正版）
+                # 会被自身老值永久拦死；仅保留 H1 时间线对齐 soft 提示。
+                crep = conflict.check_timeline_alignment(session, r.file, norm)
             _record_findings(session, r.file, crep)
             soft_warnings += _log_soft(log, r.file, crep)
             for rec in r.records:

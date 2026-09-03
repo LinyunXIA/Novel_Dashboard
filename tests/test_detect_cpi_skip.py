@@ -41,6 +41,19 @@ class TestDetectExplicitMappings:
         assert d.category == "SKIP_DOC"
 
 
+class TestIssue220SalarySuperseded:
+    """issue #220：CNY 修正版取代老薪资文件；老文件 SKIP_SUPERSEDED 护栏防误放回。"""
+
+    def test_old_salary_files_superseded(self):
+        assert detect("基准/薪资/养父的薪资.md").category == "SKIP_SUPERSEDED"
+        assert detect("基准/薪资/养母的薪资.md").category == "SKIP_SUPERSEDED"
+        assert is_skip_category("SKIP_SUPERSEDED")
+
+    def test_cny_revision_maps_to_salary(self):
+        assert detect("基准/薪资/养父的薪资_CNY修正版.md").category == "salary"
+        assert detect("基准/薪资/养母的薪资_CNY修正版.md").category == "salary"
+
+
 class TestIsSkipCategory:
     def test_skip_prefix_true(self):
         assert is_skip_category("SKIP_P1") is True
