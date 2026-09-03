@@ -807,7 +807,7 @@ def parse_household_expense(path: Path) -> tuple[list[dict], list[str]]:
         if cur not in _CURRENCIES:
             cur = "BEF"
         recs.append({"holder": "Henri Peeters", "year": int(cells[0]),
-                     "amount": amount, "currency": cur})
+                     "amount": amount, "currency": cur, "source_file": path.name})
     return recs, warns
 
 
