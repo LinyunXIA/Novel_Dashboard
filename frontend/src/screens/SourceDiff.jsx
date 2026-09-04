@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useFetch, useDataOp } from './useDataOp'
 import { ErrorBox } from './ui'
 
-const STATUS_BADGE = { new: '新增', unchanged: '一致', changed: '待决策' }
+const STATUS_BADGE = { new: '新增', unchanged: '一致', changed: '待决策', superseded: '已取代' }
 
 /**
  * 版本 / diff 决策屏（F-P2-06 · §11）：文件变更 → 看 diff → 采纳新版本 / 回退。
@@ -19,6 +19,10 @@ export default function SourceDiff() {
   const op = useDataOp(() => { setRefresh(r => r + 1); diff.refresh() })
 
   const items = files.data?.items || []
+  // issue #226：已整合取代/删除的文件（无生效版本且磁盘已删，如整合后的旧 R1-R5 分表）
+  // 移出主表，折叠只读留痕——无采纳/回退入口（回退会把旧文件写回磁盘复活）。
+  const active = items.filter(f => f.status !== 'superseded')
+  const superseded = items.filter(f => f.status === 'superseded')
   const diffData = diff.data
 
   const selectFile = (f) => {
@@ -52,11 +56,11 @@ export default function SourceDiff() {
         <p className="note">F-P2-06 · §11：文件变更检测 + 采纳新版本 / 回退（复原源文件 + 更新版本）</p>
         <ErrorBox error={op.error} />
 
-        <h4>被跟踪文件（{items.length}）</h4>
+        <h4>被跟踪文件（{active.length}）</h4>
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead><tr><th>文件</th><th>状态</th><th>当前版本</th><th></th></tr></thead>
           <tbody>
-            {items.map(f => (
+            {active.map(f => (
               <tr key={f.file}>
                 <td>{f.file}</td>
                 <td>
@@ -75,9 +79,29 @@ export default function SourceDiff() {
                 </td>
               </tr>
             ))}
-            {!items.length && <tr><td colSpan="4" className="note">暂无被跟踪文件（导入后出现）</td></tr>}
+            {!active.length && <tr><td colSpan="4" className="note">暂无被跟踪文件（导入后出现）</td></tr>}
           </tbody>
         </table>
+
+        {superseded.length > 0 && (
+          <details style={{ marginTop: 12 }}>
+            <summary className="note" style={{ cursor: 'pointer' }}>
+              已整合取代 / 删除（{superseded.length}）——历史版本留痕，不可采纳或回退
+            </summary>
+            <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 8, opacity: 0.7 }}>
+              <tbody>
+                {superseded.map(f => (
+                  <tr key={f.file}>
+                    <td style={{ width: '70%' }}>{f.file}</td>
+                    <td><span className="badge">{STATUS_BADGE.superseded}</span></td>
+                    <td className="mono">—</td>
+                    <td></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
 
         {selVid && (
           <>
