@@ -976,6 +976,7 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
 | F-P2+-10 | **薪资 CNY 修正版替换导入（养父/养母）** | `基准/薪资/养父|养母的薪资.md` → `…_CNY修正版.md`：中国段结算币种 USD→CNY（养父 1998–2012、养母 1991–2012）、退休奖金改比利时 Assigned out 退职金口径（2 倍基薪/EUR/18% 优惠税率，表外文字不入逐年表）、养父美国段奖金率修正为 12%；数值自洽（税后=税前×(1−税率)、分量加总、调任汇率换算）逐一核验。parser 修复「结算币种」列头识别（既有 bug：养父 1989 起 USD/CNY 段全部错标 BEF 入库）；writer `import_salary` 改**按人替换式**（先删该 entity 旧 salary 流+finance 镜像再插，文件名更替/口径修正不双份、二跑幂等）；salary 退出 H2 拦截（替换语义，仅留 H1 soft）、`--force` 对 salary 放开（#114 约束退役）；老 2 文件 2026-09 从 Design_Folder 删除，detect SKIP_SUPERSEDED 护栏；yaml 2 新文件 active:true（prod 首次导入薪资 88 行：养父 BEF20/USD9/CNY15、养母 BEF22/CNY22）。dev 端到端：88 行溯源全新文件、镜像 88、冲突 0、二跑 0 写入 | §6.1/§6.3 | ✅ |
 | F-P2+-11 | **退休退职金导入（薪资表外专项段）** | 薪资 CNY 修正版表外「退职金专项核算」入 salary 流：parser 定位「税后退职金」行取 bold 段金额+EUR（养父 **732,826 EUR**、养母 **747,584 EUR**，2012 年；比利时 Assigned out：2 倍基薪/EUR/18% 优惠税率），年份取段标题；component=severance，group_key/label「退职金」与逐年薪资区分，同年与 CNY 薪资币种不同共存；writer 替换清场覆盖薪资+退职金两类镜像。dev 端到端：salary 90 行（88 薪资 + 2 退职金）、镜像 90、冲突 0、二跑 0 写入 | §6.3 | ✅ |
 | F-P2+-12 | **bugfix：diff 屏残留已取代文件版本（SKIP_SUPERSEDED 版本对账）** | #214 五张分地区 R1-R5 表整合删除后，prod diff/版本屏仍展示这 5 个文件——数据零残留（return_curve 1050 行全部溯源新整合文件），但 `source_file_version` 中 5 条 is_current=True 记录未失活（整合时新文件 upsert 刷新曲线溯源，旧文件版本记录无人收尾；旧文件已从磁盘删除、扫描扫不到）。修复：`import_all` 落库前做版本对账 `_deactivate_superseded_versions`——反向扫版本表所有 is_current 记录，`detect(file_path).category == "SKIP_SUPERSEDED"`（代码层面「已取代」信号，不依赖磁盘存在性）即置 is_current=False 并日志留痕；覆盖 #211/#214/#220 全部护栏路径，现行文件不受影响、二跑 0 失活幂等。dev 端到端：老薪资 2 文件 v1 失活、其余 57 条现行记录不动；prod 5 条 R1-R5 残留待下次 prod ingest 自动失活 | §6.1/§21.16 | ✅ |
+| F-P2+-13 | **bugfix：diff 屏展示层过滤已取代文件 + 回退/采纳防复活（#226，承 F-P2+-12）** | #223 失活版本标记后 diff 屏仍显示 5 张旧 R1-R5 表——展示层两处缺口：① `versioning.list_tracked` 范围为版本表全表 ∪ 磁盘文件、从不过滤失活文件，且 `cur` 找不到 is_current 时**回退 vers[0]** 把旧版当当前版、磁盘缺失时 status 兜底 `unchanged`；② `restore_version` 对「无 current 版本+磁盘已删」文件跳过 #139 校验直接写盘——**点回退会把已整合删除的旧文件写回磁盘复活**。修复：list_tracked 不回退、无 is_current 且磁盘无文件 → 新状态 `superseded`（current_version=None）；restore/adopt 对 detect=SKIP_SUPERSEDED 或无 current 版本一律拒绝（409/422，拦截先于写盘与重导入）；前端 SourceDiff 屏 superseded 行移出主表、折叠为「已整合取代/删除」只读留痕区（无采纳/回退入口），badge 加「已取代」。dev 端到端：老薪资 2 文件判 superseded、56 unchanged/128 new 不变 | §11/§21.16 | ✅ |
 
 ### Phase 3 —— 下阶段（暂缓，2026-08-26 起自 Phase 2 移入）
 
@@ -1282,6 +1283,13 @@ UI 派生操作（投资创建/赎回、划拨换汇、活期结息）的编年�
   自动覆盖，无需额外登记。
 - **边界**：仅失活版本展示标记，不删历史版本行（diff 历史可溯）；不动任何业务数据；现行文件
   记录不受影响；二跑 0 失活幂等。
+- **展示层补丁（issue #226，F-P2+-13）**：#223 只修数据标记，diff 屏仍显示旧文件——
+  `list_tracked`（§11 版本服务）从版本表全表取文件、`cur` 失活后回退 `vers[0]` 冒充当前版、
+  磁盘缺失兜底 `unchanged`；且 `restore_version` 在「无 current 版本+磁盘已删」时跳过 #139
+  校验，点回退会把已整合删除的旧文件**写回磁盘复活**。补丁：list_tracked 不回退，无 is_current
+  且磁盘无文件 → 状态 `superseded`（current_version=None）；restore/adopt 对 SKIP_SUPERSEDED
+  或无 current 版本一律拒绝（RestoreConflict→409 / ValueError→422，先于写盘与重导入）；前端
+  SourceDiff 屏 superseded 行移出主表，折叠为「已整合取代/删除」只读留痕区，无采纳/回退入口。
 
 ---
 
