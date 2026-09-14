@@ -64,16 +64,22 @@ def list_tracked(db: Session, config=None, limit_versions: int = 3) -> list[dict
                 files.add(rel)
     out = []
     for rel, vers in sorted(by_file.items()):
-        cur = next((v for v in vers if v.is_current), vers[0] if vers else None)
+        # issue #226：失活文件（无 is_current 版本）不回退 vers[0] 冒充当前版——
+        # 否则已整合取代/删除的旧文件在 diff 屏照常显示、还带可点的回退入口。
+        cur = next((v for v in vers if v.is_current), None)
         disk = ""
+        disk_exists = False
         if config is not None:
             p = config.source_dir / rel
+            disk_exists = p.exists()
             try:
-                disk = p.read_text(encoding="utf-8") if p.exists() else ""
+                disk = p.read_text(encoding="utf-8") if disk_exists else ""
             except (OSError, UnicodeDecodeError):
                 disk = ""
         if cur is None:
-            status = "new"
+            # 无生效版本：磁盘有文件=未版本化的新文件；磁盘也没有=已被整合取代/删除
+            # （#223 失活的 SKIP_SUPERSEDED 文件即此态），标 superseded 供前端折叠留痕。
+            status = "new" if disk_exists else "superseded"
         else:
             cur_fp = _fingerprint(cur.content)
             status = "unchanged" if _fingerprint(disk) == cur_fp and disk else "changed" if disk else "unchanged"
@@ -136,6 +142,13 @@ def _notify(db: Session, rel: str, status: str, extra: dict | None = None):
 
 def adopt_current(db: Session, config, rel: str) -> dict:
     """采纳新版本：force 重导入该文件（含 recompute/rebuild）→ is_current 更新为新内容 → notification。"""
+    # issue #226：已整合取代文件无可采纳内容（采纳=复活旧文件）；磁盘已删同理，
+    # 否则 force 导入空跑还留一条 adopted 通知。
+    from app.ingest.detect import detect
+    if detect(rel).category == "SKIP_SUPERSEDED":
+        raise RestoreConflict(f"{rel}: 文件已被整合取代（SKIP_SUPERSEDED），不可采纳")
+    if not (config.source_dir / rel).exists():
+        raise ValueError(f"{rel}: 磁盘文件不存在，无法采纳新版本")
     import_all(db, config.source_dir, force_files={rel})
     cur = db.execute(select(SourceFileVersion).where(
         SourceFileVersion.file_path == rel,
@@ -171,10 +184,18 @@ def restore_version(db: Session, config, rel: str, version_id: int) -> dict:
     v = db.get(SourceFileVersion, version_id)
     if v is None or v.file_path != rel:
         raise KeyError(f"版本不存在或不属于该文件: {rel}#{version_id}")
+    # issue #226：已整合取代（SKIP_SUPERSEDED）或无生效版本的文件禁止回退——
+    # 否则下方 _atomic_write 会把已删除的旧文件写回磁盘复活（#139 校验在 cur is None
+    # 时整体跳过），diff 屏与扫描链随之被污染。
+    from app.ingest.detect import detect
+    if detect(rel).category == "SKIP_SUPERSEDED":
+        raise RestoreConflict(f"{rel}: 文件已被整合取代（SKIP_SUPERSEDED），不可回退复活")
     target = _safe_target(config.source_dir, rel)
     cur = db.execute(select(SourceFileVersion).where(
         SourceFileVersion.file_path == rel,
         SourceFileVersion.is_current.is_(True))).scalar_one_or_none()
+    if cur is None:
+        raise RestoreConflict(f"{rel}: 无生效版本（is_current），文件可能已被整合取代或删除，不可回退")
     if cur is not None and target.exists():
         try:
             disk = target.read_text(encoding="utf-8")

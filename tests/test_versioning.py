@@ -165,3 +165,66 @@ def test_adopt_wires_force_import_and_notifies(db, src, monkeypatch):
     v2 = db.execute(select(SourceFileVersion).where(
         SourceFileVersion.version == 2)).scalar_one()
     assert v2.is_current is True
+
+# ---- issue #226：已整合取代（SKIP_SUPERSEDED）文件的展示与回退防护 ----
+
+SUPERSEDED = "基准/收益表/惠民租房.md"   # detect=SKIP_SUPERSEDED（#211 旧收益文件）
+
+
+def test_list_tracked_marks_superseded_when_no_current_and_no_disk(db, src):
+    """无 is_current 版本且磁盘已删 → superseded、current_version=None；现行文件不受影响。"""
+    cfg, _ = src
+    _seed_version(db)                                              # a.md：现行，unchanged
+    _seed_version(db, rel=SUPERSEDED, content="OLD\n", version=1, current=False)
+    res = {x["file"]: x for x in list_tracked(db, cfg)}
+    assert res["a.md"]["status"] == "unchanged"
+    assert res[SUPERSEDED]["status"] == "superseded"
+    assert res[SUPERSEDED]["current_version"] is None
+
+
+def test_list_tracked_disk_file_without_version_is_new_not_superseded(db, src):
+    """磁盘有文件但无版本记录 → new（不被误判 superseded）。"""
+    cfg, _ = src
+    (cfg.source_dir / "fresh.md").write_text("x\n", encoding="utf-8")
+    res = {x["file"]: x for x in list_tracked(db, cfg)}
+    assert res["fresh.md"]["status"] == "new"
+
+
+def test_restore_refused_for_superseded_file(db, src):
+    """SKIP_SUPERSEDED 文件回退 → RestoreConflict；不写盘、is_current 不复活。"""
+    cfg, tmp = src
+    v1 = _seed_version(db, rel=SUPERSEDED, content="OLD\n", version=1, current=False)
+    with pytest.raises(versioning.RestoreConflict):
+        restore_version(db, cfg, SUPERSEDED, v1.id)
+    assert not (cfg.source_dir / SUPERSEDED).exists()               # 旧文件未被写回
+    row = db.execute(select(SourceFileVersion).where(
+        SourceFileVersion.file_path == SUPERSEDED)).scalar_one()
+    assert row.is_current is False
+    _ = tmp
+
+
+def test_restore_refused_when_no_current_version(db, src):
+    """无 is_current 版本的普通文件（版本全失活+磁盘已删）→ 同样拒绝回退。"""
+    cfg, _ = src
+    v1 = _seed_version(db, rel="a.md", content="OLD\n", version=1, current=False)
+    (cfg.source_dir / "a.md").unlink()                              # 磁盘删除
+    with pytest.raises(versioning.RestoreConflict):
+        restore_version(db, cfg, "a.md", v1.id)
+    assert not (cfg.source_dir / "a.md").exists()
+
+
+def test_adopt_refused_for_superseded_or_missing_file(db, src, monkeypatch):
+    """采纳对 SKIP_SUPERSEDED → 409 语义；磁盘不存在 → 422 语义；均不触发 import_all。"""
+    cfg, _ = src
+    called = {"n": 0}
+
+    def fake_import_all(*a, **k):
+        called["n"] += 1
+
+    monkeypatch.setattr(versioning, "import_all", fake_import_all)
+    with pytest.raises(versioning.RestoreConflict):
+        adopt_current(db, cfg, SUPERSEDED)
+    (cfg.source_dir / "a.md").unlink()                              # 现行文件磁盘删除
+    with pytest.raises(ValueError):
+        adopt_current(db, cfg, "a.md")
+    assert called["n"] == 0                                         # 拦截先于重导入
